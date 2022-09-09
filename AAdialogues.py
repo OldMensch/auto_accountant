@@ -327,7 +327,7 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         # TRANSACTION SAVING AND OVERWRITING
         #==============================
         #Creates the new transaction or overwrites the old one
-        new_trans = TransactionFromDict(DATE, TYPE, TO_SAVE)
+        new_trans = Transaction().set_from_dict(TO_SAVE)
 
         #transaction will be unique?
         if (self.t == '' or new_trans.get_hash() != self.t.get_hash()) and MAIN_PORTFOLIO.hasTransaction(new_trans.get_hash()):
@@ -486,7 +486,7 @@ class WalletEditor(Dialogue): #For editing Wallets
                     new_trans = t.toJSON()
                     MAIN_PORTFOLIO.delete_transaction(t.get_hash()) #Changing the wallet name changes the transactions HASH, so we have to remove and re-add it
                     new_trans['wallet'] = NAME 
-                    MAIN_PORTFOLIO.add_transaction(TransactionFromDict(new_trans['date'],new_trans['type'],new_trans))
+                    MAIN_PORTFOLIO.add_transaction(Transaction().set_from_dict(new_trans))
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()

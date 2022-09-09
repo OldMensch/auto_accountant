@@ -760,9 +760,7 @@ class AutoAccountant(tk.Tk):
                 '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
                 '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
                 }
-        ttt('start')
         self.perform_automatic_accounting(tax_report) # TODO: LAGGY! (~222ms for ~12000 transactions)
-        ttt('avg_end')
         for asset in MAIN_PORTFOLIO.assets():
             self.calculate_average_buy_price(asset)
         self.metrics_PORTFOLIO() #~0ms, since its just a few O(1) operations

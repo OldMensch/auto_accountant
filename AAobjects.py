@@ -32,7 +32,7 @@ class Wallet():
     def toJSON(self) -> dict:   return {'description':self._description}
 
 class Transaction():
-    def __init__(self, date:str, type:str, wallet:str=None, description:str='', loss:list=[None,None,None], fee:list=[None,None,None], gain:list=[None,None,None]):
+    def __init__(self, date:str=None, type:str=None, wallet:str=None, description:str='', loss:tuple=(None,None,None), fee:tuple=(None,None,None), gain:tuple=(None,None,None)):
 
         #Set to true for transfers that don't have a partner, and transfers with missing data. Stops metrics() short, and tells the renderer to color this RED
         self.ERROR =    False  
@@ -59,7 +59,13 @@ class Transaction():
             'missing':          (False,[]),
             'dest_wallet':      None,
         }
-        self._precise = {
+        self._metrics = {
+            'loss_quantity' :   None,
+            'fee_quantity' :    None,
+            'gain_quantity' :   None,
+            'loss_price' :      None,
+            'fee_price' :       None,
+            'gain_price' :      None,
             'loss_value':       0,
             'fee_value':        0,
             'gain_value':       0,
@@ -70,86 +76,77 @@ class Transaction():
             'value':    {},
             'quantity': {}
             }
-        self.recalculate()
+        if type: self.recalculate()
 
     #Pre-calculates useful information
     def recalculate(self):
-        self.calc_precise()
-        self.calc_values()
-        self.calc_pqv()
-        self.calc_basis_price()
         self.calc_hash()
         self.calc_has_required_data()
+        if self._data['missing'][0]:    return  # Don't continue performing calculations if we're missing data!
+        self.calc_metrics()
 
-    def calc_precise(self):
-        for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):
-            d = self._data[data]
-            if d:   self._precise[data] = mpf(d)
-            else:   self._precise[data] = None
-    def calc_values(self):
-        TYPE = self._data['type']
-        try:    #Loss value
-            if TYPE in ['purchase','purchase_crypto_fee']:  self._precise['loss_value'] = self._precise['loss_quantity']
-            elif TYPE == 'sale':                            self._precise['loss_value'] = self._precise['gain_quantity']
-            else:                                           self._precise['loss_value'] = self._precise['loss_quantity']*self._precise['loss_price']
-        except: pass
-        try:    #Fee value
-            if TYPE in ['purchase','sale']: self._precise['fee_value'] = self._precise['fee_quantity']
-            else:                           self._precise['fee_value'] = self._precise['fee_quantity']*self._precise['fee_price']
-        except: pass
-        try:    #Gain value
-            if TYPE == 'purchase':  self._precise['gain_value'] = self._precise['loss_quantity']
-            elif TYPE == 'sale':    self._precise['gain_value'] = self._precise['gain_quantity']
-            elif TYPE == 'trade':   self._precise['gain_value'] = self._precise['loss_value']
-            else:                   self._precise['gain_value'] = self._precise['gain_quantity']*self._precise['gain_price']
-        except: pass
-    def calc_pqv(self):
-        for a in set((self._data['loss_asset'],self._data['fee_asset'],self._data['gain_asset'])):
-            if a == None:   continue
-            self._precise['quantity'][a] = 0
-            self._precise['value'][a] = 0
-            self._precise['price'][a] = 0
-            try: 
-                if a == self._data['loss_asset']:   
-                    self._precise['quantity'][a] -= self._precise['loss_quantity']
-                    self._precise['value'][a] -= self._precise['loss_value']
-            except: pass
-            try: 
-                if a ==  self._data['fee_asset']:   
-                    self._precise['quantity'][a] -= self._precise['fee_quantity']
-                    self._precise['value'][a] -= self._precise['fee_value']
-            except: pass
-            try: 
-                if a == self._data['gain_asset']:   
-                    self._precise['quantity'][a] += self._precise['gain_quantity']
-                    self._precise['value'][a] += self._precise['gain_value']
-            except: pass
-            self._precise['value'][a] = abs(self._precise['value'][a])
-            if not zeroish(self._precise['quantity'][a]):  self._precise['price'][a] = abs(self._precise['value'][a]/self._precise['quantity'][a])
-    def calc_basis_price(self):
-        TYPE = self._data['type']
-        LV,FV,GQ = self._precise['loss_value'], self._precise['fee_value'], self._precise['gain_quantity']
-        try:
-            if   TYPE in ('purchase','purchase_crypto_fee'):    self._precise['basis_price'] = (LV+FV)/GQ # Purchase cost basis includes fee
-            elif TYPE in ('gift_in','card_reward','income'):    self._precise['basis_price'] = self._precise['gain_price'] # Fee is defined already
-            elif TYPE == 'trade':                               self._precise['basis_price'] = LV/GQ      # Trade price doesn't include fee
-        except: pass
     def calc_hash(self): #Hash Function - A transaction is unique insofar as its date, type, wallet, and three asset types are unique from any other transaction.
-        # NOTE: The integer returned from this is different every time you run the program, but unique while it runs
         self._data['hash'] = hash((self._data['date'],self._data['type'],self._data['wallet'],self._data['loss_asset'],self._data['fee_asset'],self._data['gain_asset']))
     def calc_has_required_data(self):
         missing = []
         #We assume that the transaction has a type
-        if self._data['fee_asset'] != None and self._data['fee_quantity'] == None:  missing.append('fee_quantity')
-        if self._data['fee_asset'] != None and self._data['fee_price'] == None:     missing.append('fee_price')
+        if self._data['fee_asset'] and not self._data['fee_quantity']:  missing.append('fee_quantity')
+        if self._data['fee_asset'] and not self._data['fee_price']:     missing.append('fee_price')
         for data in valid_transaction_data_lib[self._data['type']]:
-            if data[0:4] == 'fee_': continue    #Ignore fees, we already checked them if the exist
-            if self._data[data] == None:                                            missing.append(data)
-        self._data['missing'] = (len(missing)>0,missing)
+            if data in ('fee_asset','fee_quantity','fee_price'):    continue    #Ignore fees, we already check them
+            if self._data[data] == None:                            missing.append(data)
+        self._data['missing'] = (len(missing)!=0,missing)
+    def calc_metrics(self):
+        for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):
+            d = self._data[data]
+            if d:   self._metrics[data] = mpf(d)
+        
+        # VALUES - the USD value of the quantity of the loss, fee, and gain at time of transaction
+        TYPE = self._data['type']
+        LQ,FQ,GQ = self._metrics['loss_quantity'],self._metrics['fee_quantity'],self._metrics['gain_quantity']
+        LP,FP,GP = self._metrics['loss_price'], self._metrics['fee_price'], self._metrics['gain_price']
+        LV,FV,GV = 0,0,0
+        #Loss value
+        if   TYPE in ('purchase','purchase_crypto_fee'):    LV = LQ
+        elif TYPE == 'sale':                                LV = GQ
+        elif LQ and LP:                                     LV = LQ*LP
+        #Fee value
+        if   TYPE in ['purchase','sale']:                   FV = FQ
+        elif GQ and FP:                                     FV = FQ*FP
+        #Gain value
+        if   TYPE in ('purchase','purchase_crypto_fee'):    GV = LQ
+        elif TYPE == 'sale':                                GV = GQ
+        elif TYPE == 'trade':                               GV = LV
+        elif GQ and GP:                                     GV = GQ*GP
+        
+        self._metrics['loss_value'],self._metrics['fee_value'],self._metrics['gain_value'] = LV,FV,GV
+
+        # PRICE QUANTITY VALUE - The price, quantity, and value
+        LA,FA,GA = self._data['loss_asset'],self._data['fee_asset'],self._data['gain_asset']
+        for a in set((LA,FA,GA)):
+            if a == None:   continue
+            P,Q,V = 0,0,0
+            if a == LA:
+                Q -= LQ
+                V -= LV
+            if a == FA:
+                Q -= FQ
+                V -= FV
+            if a == GA:
+                Q += GQ
+                V += GV
+            V = abs(V)
+            if Q!=0 and V!=0:  P = V/Q 
+
+            self._metrics['price'][a], self._metrics['quantity'][a], self._metrics['value'][a] = P,Q,V
+
+        # BASIS PRICE - The price of the cost basis of this transaction, if it is a gain
+        if   TYPE in ('purchase','purchase_crypto_fee'):    self._metrics['basis_price'] = (LV+FV)/GQ     # Purchase cost basis includes fee
+        elif TYPE == 'trade':                               self._metrics['basis_price'] = LV/GQ          # Trade price doesn't include fee
+        elif GP:                                            self._metrics['basis_price'] = GP             # Gain price is defined already
 
     #Comparison operator overrides
     def __eq__(self, __o: object) -> bool:
-        if type(__o) != Transaction: return False
         return self.get_hash() == __o.get_hash()
     def __lt__(self, __o: object) -> bool:
         # Basically, we try to sort transactions by date, unless they're the same, then we sort by type, unless that's also the same, then by wallet... and so on.
@@ -168,11 +165,10 @@ class Transaction():
         return False
 
     #Modification functions
-    def set_from_dict(self, dict:dict): #Modify the values of this transaction based on a dictionary input 
-        #NOTE - IMPORTANT!!! It's hash might change!!
-        for data in valid_transaction_data_lib[self._data['type']]:     
-            if data in dict:    self._data[data] = dict[data]
+    def set_from_dict(self, dict:dict): #Allows for the creation of a transaction directly from a dictionary
+        self._data.update(dict)
         self.recalculate()
+        return self
 
     #Access functions for basic information
     def date(self) -> str:             return self._data['date']
@@ -180,16 +176,16 @@ class Transaction():
     def wallet(self) -> str:           return self._data['wallet']
     def desc(self) -> str:             return self._data['description']
     def get_hash(self) -> str:         return self._data['hash']
-    def price(self, asset:str) -> str:     return self._precise['price'][asset]
-    def quantity(self, asset:str) -> str:  return self._precise['quantity'][asset]
-    def value(self, asset:str) -> str:     return self._precise['value'][asset]
+    def price(self, asset:str) -> str:     return self._metrics['price'][asset]
+    def quantity(self, asset:str) -> str:  return self._metrics['quantity'][asset]
+    def value(self, asset:str) -> str:     return self._metrics['value'][asset]
 
     def get(self, info:str, asset:str=None) -> str:    
-        if info in ['value','quantity','price']:         return self._precise[info][asset]
+        if info in ['value','quantity','price']:         return self._metrics[info][asset]
         try:                        return self._data[info]
         except:                     return None #If we try to access non-existant data, its basically just "None"
     def precise(self, info:str) -> mpf:
-        try:    return self._precise[info]
+        try:    return self._metrics[info]
         except: return None
 
     def prettyPrint(self, info:str, asset:str=None) -> str:  #pretty printing for anything
@@ -223,11 +219,6 @@ class Transaction():
             if self._data[data] != None:  toReturn[data] = self._data[data]
         return toReturn #This is what we save to JSON for transactions.
    
-def TransactionFromDict(date, type, dict): #Handy little function that allows us to create a new transaction based on a data dictionary
-    trans = Transaction(date, type)
-    trans.set_from_dict(dict)
-    return trans
-
 class Asset():  
     def __init__(self, tickerclass:str, name:str, description:str=''):
         self.ERROR =        False  
@@ -342,10 +333,8 @@ class Portfolio():
     def add_transaction(self, transaction_obj:Transaction):
         if self.hasTransaction(transaction_obj.get_hash()): print('||WARNING|| Overwrote transaction with same hash.')
         self._transactions[transaction_obj.get_hash()] = transaction_obj
-        a = (transaction_obj.get('loss_asset'),transaction_obj.get('fee_asset'),transaction_obj.get('gain_asset'))
-        if a[0] != None:    self.asset(a[0]).add_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
-        if a[1] != None:    self.asset(a[1]).add_transaction(transaction_obj) #Adds this transaction to fee asset's ledger
-        if a[2] != None:    self.asset(a[2]).add_transaction(transaction_obj) #Adds this transaction to gain asset's ledger
+        for a in set((transaction_obj.get('loss_asset'),transaction_obj.get('fee_asset'),transaction_obj.get('gain_asset'))):
+            if a != None: self.asset(a).add_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
     def import_transaction(self, transaction_obj:Transaction): #Merges simultaneous fills from the same order
         if not self.hasTransaction(transaction_obj.get_hash()): self.add_transaction(transaction_obj)
         else:
@@ -387,43 +376,44 @@ class Portfolio():
         if not merge:   self.clear()
 
         # ADDRESSES
-        try:
+        if 'addresses' in JSON:
             for address in JSON['addresses']:
                 if (merge and not overwrite) and self.hasAddress(address):    continue
                 a = JSON['addresses'][address]
                 self.add_address(Address(address, a['wallet']))
-        except: print('||WARNING|| Failed to load addresses from JSON.')
+        else: print('||WARNING|| Failed to find any addresses in JSON.')
         # ASSETS
-        try:
+        if 'assets' in JSON:
             for asset in JSON['assets']:
                 if (merge and not overwrite) and self.hasAsset(asset):    continue
                 a = JSON['assets'][asset]
                 self.add_asset(Asset(asset, a['name'], a['description']))
-        except: print('||WARNING|| Failed to load assets from JSON.')
-        # TRANSACTIONS
-        #try:
-        for t in JSON['transactions']:
-            #try:
-                #Creates a rudimentary transaction, then fills in the data from the JSON. Bad data is cleared upon saving, not loading.
-                trans = TransactionFromDict(t['date'], t['type'], t)
-                if (merge and not overwrite) and self.hasTransaction(trans.get_hash()):    continue     #Don't overwrite identical transactions
-                self.add_transaction(trans)
-        #         except: 
-        #             print('||WARNING|| Transaction ' + t['date'] + ' failed to load.')
-        # except: print('||WARNING|| Failed to load transactions from JSON.')
-        # WALLETS
-        try:
+        else: print('||WARNING|| Failed to find any assets in JSON.')
+        # TRANSACTIONS - NOTE: Lag is ~230ms for ~4000 transactions
+        ttt('start')
+        if 'transactions' in JSON:
+            for t in JSON['transactions']:
+                try:
+                    #Creates a rudimentary transaction, then fills in the data from the JSON. Bad data is cleared upon saving, not loading.
+                    trans = Transaction().set_from_dict(t)
+                    if merge and not overwrite and self.hasTransaction(trans.get_hash()):    continue     #Don't overwrite identical transactions
+                    self.add_transaction(trans) #45ms for ~4000 transactions
+                except:  print('||WARNING|| Transaction ' + t['date'] + ' failed to load.')
+        else: print('||WARNING|| Failed to find any transactions in JSON.')
+        ttt('terminate')
+        #WALLETS
+        if 'wallets' in JSON:
             for wallet in JSON['wallets']:
                 if (merge and not overwrite) and self.hasWallet(wallet):    continue
                 w = JSON['wallets'][wallet]
                 self.add_wallet(Wallet(wallet, w['description']))
-        except: print('||WARNING|| Failed to load wallets from JSON.')
+        else: print('||WARNING|| Failed to find any wallets in JSON.')
 
         self.fixBadAssetTickers()
     
     def fixBadAssetTickers(self): #Fixes tickers that have changed over time, like LUNA to LUNC, or ones that have multiple names like CELO also being CGLD
-        for asset in list(self._assets):
-            if asset in forks_and_duplicate_tickers_lib:
+        for asset in forks_and_duplicate_tickers_lib:
+            if asset in list(self._assets):
                 new_ticker = forks_and_duplicate_tickers_lib[asset][0]
                 if not self.hasAsset(new_ticker):    self.add_asset(Asset(new_ticker, new_ticker.split('z')[0]))  #Add the werd asset name if it hasn't been added already
                 for transaction in list(self.asset(asset)._ledger.values()):
@@ -432,7 +422,7 @@ class Portfolio():
                         self.delete_transaction(transaction.get_hash()) #Delete the old erroneous transaction
                         for data in ['loss_asset','fee_asset','gain_asset']:    #Update all relevant tickers to the new ticker name
                             if data in newTrans and newTrans[data] == asset:    newTrans[data] = new_ticker
-                        self.add_transaction(TransactionFromDict(newTrans['date'],newTrans['type'],newTrans)) #add the fixed transaction back in
+                        self.add_transaction(Transaction().set_from_dict(newTrans)) #add the fixed transaction back in
                 if len(self.asset(asset)._ledger) == 0:  self.delete_asset(asset)
 
     def toJSON(self) -> dict:
