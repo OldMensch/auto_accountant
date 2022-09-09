@@ -4,7 +4,8 @@ import time
 from datetime import datetime, timedelta
 from copy import deepcopy
 import tkinter as tk
-
+import sys
+import os
 
 import decimal
 decimal.getcontext().prec = 100
@@ -70,7 +71,22 @@ def ttt(string:str='reset'):
     elif string == 'average_report':
         print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
 
-
+def center(win): #Code copied from user "Honest Abe" from StackOverflow
+    """
+    centers a tkinter window
+    :param win: the main window or Toplevel window to center
+    """
+    win.update_idletasks()
+    width = win.winfo_width()
+    frm_width = win.winfo_rootx() - win.winfo_x()
+    win_width = width + 2 * frm_width
+    height = win.winfo_height()
+    titlebar_height = win.winfo_rooty() - win.winfo_y()
+    win_height = height + titlebar_height + frm_width
+    x = win.winfo_screenwidth() // 2 - win_width // 2
+    y = win.winfo_screenheight() // 2 - win_height // 2
+    win.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+    win.deiconify()
 
 def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
     '''True if the dates are within second_gap of eachother. False otherwise.'''
@@ -134,6 +150,7 @@ def format_number(number:float, standard:str=None) -> str:
         return '0.00'
 
 
+
 ### LIBRARIES
 ###==========================================
 
@@ -185,25 +202,31 @@ def palette(color:str) -> str:
     return palettelib[color]
 
 
-def initializeIcons():  #unfortunately, this has to be a function, as it has to be declared AFTER the first tkinter instance is initialized
+def loadIcons():  #unfortunately, this has to be a function, as it has to be declared AFTER the first tkinter instance is initialized
     global iconlib
     fs = int(225/setting('font')[1])
     fs15=int(fs*1.5)
+    
+    #Makes the icons work when the images are stored inside the EXE file
+    if hasattr(sys, "_MEIPASS"):    extra_dir = sys._MEIPASS+'/'
+    else:                           extra_dir = ''
     iconlib = {
-        'new' :  tk.PhotoImage(format='PNG', file='icons/new.png').subsample(fs,fs),
-        'load' : tk.PhotoImage(format='PNG', file='icons/load.png').subsample(fs,fs),
-        'save' : tk.PhotoImage(format='PNG', file='icons/save.png').subsample(fs,fs),
-        'settings2' : tk.PhotoImage(format='PNG', file='icons/settings2.png').subsample(fs,fs),
-        'info2' : tk.PhotoImage(format='PNG', file='icons/info2.png').subsample(fs,fs),
-        'profiles' : tk.PhotoImage(format='PNG', file='icons/profiles.png').subsample(fs,fs),
-        'undo' : tk.PhotoImage(format='PNG', file='icons/undo.png').subsample(fs,fs),
-        'redo' : tk.PhotoImage(format='PNG', file='icons/redo.png').subsample(fs,fs),
+        'logo' :  tk.PhotoImage(format='PNG', file=extra_dir+'icons/logo.png'),
 
-        'arrow_up' : tk.PhotoImage(format='PNG', file='icons/arrow_up.png').subsample(fs,fs),
-        'arrow_down' : tk.PhotoImage(format='PNG', file='icons/arrow_down.png').subsample(fs,fs),
+        'new' :  tk.PhotoImage(format='PNG', file=extra_dir+'icons/new.png').subsample(fs,fs),
+        'load' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/load.png').subsample(fs,fs),
+        'save' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/save.png').subsample(fs,fs),
+        'settings2' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/settings2.png').subsample(fs,fs),
+        'info2' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/info2.png').subsample(fs,fs),
+        'profiles' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/profiles.png').subsample(fs,fs),
+        'undo' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/undo.png').subsample(fs,fs),
+        'redo' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/redo.png').subsample(fs,fs),
+
+        'arrow_up' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/arrow_up.png').subsample(fs,fs),
+        'arrow_down' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/arrow_down.png').subsample(fs,fs),
         
-        'settings' : tk.PhotoImage(format='PNG', file='icons/settings.png').subsample(fs15,fs15),
-        'info' : tk.PhotoImage(format='PNG', file='icons/info.png').subsample(fs15,fs15),
+        'settings' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/settings.png').subsample(fs15,fs15),
+        'info' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/info.png').subsample(fs15,fs15),
     }
 
 def icons(icon:str) -> tk.PhotoImage:
@@ -428,13 +451,15 @@ def set_setting(request:str, newValue):
     settingslib[request] = newValue
 
 def saveSettings():
-    json.dump(settingslib, open('settings.json', 'w'), indent=4, sort_keys=True)
+    with open('settings.json', 'w') as file:
+        json.dump(settingslib, file, indent=4, sort_keys=True)
 
 def loadSettings():
     global settingslib
     settingslib = deepcopy(defsettingslib)
     try:
-        settings_JSON = json.load(open('settings.json', 'r'))
+        with open('settings.json', 'r') as file:
+            settings_JSON = json.load(file)
         for setting in defsettingslib:
             try:    
                 if type(settingslib[setting])==type(settings_JSON[setting]): settingslib[setting] = settings_JSON[setting]

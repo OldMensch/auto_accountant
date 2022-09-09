@@ -127,6 +127,7 @@ def getMissingPrice(date, tickerclass):
 ###============================================
 
 def CryptoDataLoop(mainPortREF, online_event):
+
     while True:
         online_event.wait() #waits eternally until we're online
         #Ok, we're online. Process immediately, then wait for 5 minutes. Then we do this check again, and so on.

@@ -1,4 +1,6 @@
 
+
+import tkinter.font as tkf
 from AAdialogue import TextBox
 from AAlib import *
 
@@ -538,6 +540,8 @@ class GRID(tk.Frame): # Displays all the rows of info for assets/transactions/wh
         super().__init__(upper, bg=bg) #Contructs the tk.Frame object
         self.columns = []                           # Dictionary of the columns of the GRID
         self.pagelength = setting('itemsPerPage')   # Number of items to render per page
+        self.right_spacing3 = 0
+        self.right_font = setting('font3',.9)
         self.selection = [None, None]
         self.highlighted = None
         self.header_left_click,self.header_right_click = header_left_click,header_right_click        # Command that triggers when you click on a header
@@ -547,11 +551,12 @@ class GRID(tk.Frame): # Displays all the rows of info for assets/transactions/wh
         # Adds the first column in the grid, the column with the '#' and the numbers
         self.item_indices = (
             tk.Label(self, text='#', font=setting('font', 0.75), fg=palette('grid_text'), bg=palette('grid_header'), relief='groove', bd=1),
-            TextBox(self, state='readonly', fg=palette('grid_text'), bg=palette('grid_highlight'), height=self.pagelength,width=2,font=setting('font'), wrap='none',spacing3=3)
+            TextBox(self, 'N/A', 'readonly', palette('grid_text'), palette('grid_highlight'), setting('font3'), 1, 2, 'none')
         )
         header,textbox = self.item_indices[0],self.item_indices[1]
+
         header.grid(row=0, column=0, sticky='NSEW')
-        textbox.grid(row=1, column=0, sticky='EW')
+        textbox.grid(row=1, column=0, sticky='NSEW')
 
     def _mouse_hover(self, textbox:TextBox, event):
         mouse_text_pos = textbox.index(f"@{event.x},{event.y}").split('.')[0]
@@ -592,7 +597,7 @@ class GRID(tk.Frame): # Displays all the rows of info for assets/transactions/wh
         self.columns.append(
             (
             tk.Button(self, command=p(self.header_left_click, new_index), font=setting('font', 0.75), fg=palette('grid_header_text'), bg=palette('grid_header'), relief='groove', bd=1),
-            TextBox(self, state='readonly', fg=palette('grid_text'), bg=palette('grid_bg'), height=self.pagelength, width=1, font=setting('font3',.9), wrap='none',spacing3=1)
+            TextBox(self, state='readonly', fg=palette('grid_text'), bg=palette('grid_bg'), height=self.pagelength, width=1, font=self.right_font, wrap='none', spacing3=self.right_spacing3)
         ))
         header,textbox = self.columns[new_index][0],self.columns[new_index][1]
         header.grid(row=0, column=new_index+1, sticky='NSEW')
@@ -620,12 +625,57 @@ class GRID(tk.Frame): # Displays all the rows of info for assets/transactions/wh
             textbox.clear_formatting()
             textbox.force_formatting(fg, bg, font, justify)
 
+    def auto_format(self):
+        #Automatically calculates spacing between text and optimal page length
+
+        self.update()
+        total_height = self.winfo_height()
+        header_height = 2*tkf.Font(font=setting('font', 0.75)).metrics('linespace')+4
+        desired_height = (total_height-header_height)//self.pagelength #This is the target # of pixels per row 
+        
+        # Automatically calculates best font size for the row data
+        R = 0
+        textbox_height_right = 0
+        while textbox_height_right <= desired_height:
+            h = tkf.Font(font=(setting('font3')[0], R+1)).metrics('linespace')
+            if h > desired_height: break
+            else:
+                R += 1
+                textbox_height_right = h
+
+        # Automatically calculates best font size for the row indices
+        L = 0
+        textbox_height_left = 0
+        while textbox_height_left <= desired_height:
+            h = tkf.Font(font=(setting('font')[0], L+1)).metrics('linespace')
+            if h > desired_height: break
+            else:
+                L += 1
+                textbox_height_left = h
+        
+        M = max(textbox_height_left,textbox_height_right)
+        diff = textbox_height_right-textbox_height_left
+        BUFFER = (total_height-header_height-(self.pagelength*M))//self.pagelength
+        if diff < 0:    #left is bigger
+            left_spacing3 = BUFFER
+            self.right_spacing3 = -diff+BUFFER
+        else:           #right is bigger
+            left_spacing3 = diff+BUFFER
+            self.right_spacing3 = BUFFER
+        self.right_font = (setting('font3')[0], R)
+        self.item_indices[1].configure(font=(setting('font')[0], L), spacing3=left_spacing3)
+        for c in range(len(self.columns)):
+            self.columns[c][1].configure(font=(setting('font3')[0], R), spacing3=self.right_spacing3)
+
+
+
     def update_page_length(self, n:int):
         set_setting('itemsPerPage', n)
         self.pagelength = n
         self.item_indices[1].configure(height=n)
         for c in range(len(self.columns)):
             self.columns[c][1].configure(height=n)
+        self.auto_format()
 
 
     def grid_render(self, headers:list, sorted_items:list, page:int, specialinfo=None):

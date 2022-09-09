@@ -15,15 +15,23 @@ import math
 
 import threading
 
+#3rd-Party
+try:
+    import pyi_splash   #This allows us to have an instant splash screen, but the module only exists after compiling the program.
+except: pass
+
 class AutoAccountant(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.iconify()
         loadSettings()
-        initializeIcons()
-        self.configure(bg=palette('error')) #you should NOT see this color (except when totally re-rendering all the assets)
-        self.protocol('WM_DELETE_WINDOW', self.comm_quit) #makes closing the window identical to hitting cancel
+        loadIcons()
         self.grab_set()
-        self.focus_set()              #This window is brought to to forefront
+        self.focus_set()
+
+        self.iconphoto(True, icons('logo'))
+        self.configure(bg='#000000') #you should NOT see this color (except when totally re-rendering all the assets)
+        self.protocol('WM_DELETE_WINDOW', self.comm_quit) #makes closing the window identical to hitting cancel
         self.title('Portfolio Manager')
         
         self.undoRedo = [0, 0, 0]  #index of first undosave, index of last undosave, index of currently loaded undosave
@@ -35,22 +43,23 @@ class AutoAccountant(tk.Tk):
         #Sets the timezone to 
         info_format_lib['date']['name'] = info_format_lib['date']['headername'] = info_format_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
+
         self.create_GUI()
         self.create_taskbar()
         self.create_MENU()
 
 
-        self.online_event = threading.Event()
-
         #Try to load last-used JSON file, if the file works and we have it set to start with the last used portfolio
-        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):    self.comm_loadPortfolio(setting('lastSaveDir'))
-        else:                                                                               self.comm_newPortfolio(first=True)
+        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.comm_loadPortfolio(setting('lastSaveDir'))
+        else:                                                                           self.comm_newPortfolio(first=True)
 
+        self.online_event = threading.Event()
         #Now that the hard data is loaded, we need market data
         if setting('offlineMode'):
             #If in Offline Mode, try to load any saved offline market data. If there isn't a file... loads nothing.
             try:
-                marketdatalib.update(json.load(open('#OfflineMarketData.json', 'r')))
+                with open('#OfflineMarketData.json', 'r') as file:
+                    marketdatalib.update(json.load(file))
                 self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
                 self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
                 self.market_metrics()
@@ -75,6 +84,13 @@ class AutoAccountant(tk.Tk):
 
         self.geometry('%dx%d+%d+%d' % (setting('portWidth')/2, setting('portHeight')/2, self.winfo_x()-self.winfo_rootx(),0))#slaps this window in the upper-left-hand corner of the screen
         self.state('zoomed') #starts the window maximized (not same as fullscreen!)
+
+        #Closes the splash screen now that the program is loaded
+        try: pyi_splash.close()
+        except: pass
+
+        self.GUI['GRID'].auto_format() #Automatically adjusts the # of items per page based on your font size
+        self.render()
 
 
 #NOTE: Tax forms have been temporarily disabled to speed up boot time until I implement a better method
@@ -113,7 +129,8 @@ class AutoAccountant(tk.Tk):
         def toggle_offline_mode():
             set_setting('offlineMode',not setting('offlineMode'))
             if setting('offlineMode'): #Changed to Offline Mode
-                json.dump(marketdatalib, open('#OfflineMarketData.json', 'w'), indent=4, sort_keys=True)
+                with open('#OfflineMarketData.json', 'w') as file:
+                    json.dump(marketdatalib, file, indent=4, sort_keys=True)
                 self.online_event.clear()
                 self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
                 self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
@@ -193,12 +210,14 @@ class AutoAccountant(tk.Tk):
         dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 8949')
         if dir == '':   return
         self.metrics(tax_report='8949')
-        open(dir, 'w', newline='').write(TEMP['taxes']['8949'].to_csv())
+        with open(dir, 'w', newline='') as file:
+            file.write(TEMP['taxes']['8949'].to_csv())
     def tax_Form_1099MISC(self):
         dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 1099-MISC')
         if dir == '':   return
         self.metrics(tax_report='1099-MISC')
-        open(dir, 'w', newline='').write(TEMP['taxes']['1099-MISC'].to_csv())
+        with open(dir, 'w', newline='') as file:
+            file.write(TEMP['taxes']['1099-MISC'].to_csv())
 
     def DEBUG_find_all_missing_prices(self):
         for t in MAIN_PORTFOLIO.transactions():
@@ -217,10 +236,10 @@ class AutoAccountant(tk.Tk):
         self.metrics()
         self.render(sort=True)
     def DEBUG_increase_page_length(self):
-        self.GUI['GRID'].update_page_length(setting('itemsPerPage')+1)
+        self.GUI['GRID'].update_page_length(setting('itemsPerPage')+5)
         self.render()
     def DEBUG_decrease_page_length(self):
-        self.GUI['GRID'].update_page_length(setting('itemsPerPage')-1)
+        self.GUI['GRID'].update_page_length(setting('itemsPerPage')-5)
         self.render()
     def DEBUG_grayify(self):
         self.GUI['GRID'].force_formatting(palette('neutral'),palette('menudark'), None, 'center')
@@ -279,7 +298,8 @@ class AutoAccountant(tk.Tk):
         if dir == '':
             return
         self.title('Portfolio Manager - ' + dir)
-        json.dump(MAIN_PORTFOLIO.toJSON(), open(dir, 'w'), sort_keys=True)
+        with open(dir, 'w') as file:
+            json.dump(MAIN_PORTFOLIO.toJSON(), file, sort_keys=True)
         if secondary:   secondary()
         if saveAs:      set_setting('lastSaveDir', dir)
     def comm_newPortfolio(self, first=False):
@@ -293,7 +313,9 @@ class AutoAccountant(tk.Tk):
     def comm_loadPortfolio(self, dir=None):
         if dir == None: dir = askopenfilename( filetypes={('JSON','.json')}, title='Load Portfolio')
         if dir == '':   return
-        try:    decompile = json.load(open(dir, 'r'))    #Attempts to load the file
+        try:    
+            with open(dir, 'r') as file:
+                decompile = json.load(file)    #Attempts to load the file
         except:
             Message(self, 'Error!', 'File couldn\'t be loaded. Probably corrupt or something.' )
             self.comm_newPortfolio(first=True)
@@ -310,7 +332,8 @@ class AutoAccountant(tk.Tk):
         if dir == '':
             return
         try:
-            decompile = json.load(open(dir, 'r'))    #Attempts to load the file
+            with open(dir, 'r') as file:
+                decompile = json.load(file)    #Attempts to load the file
         except:
             Message(self, 'Error!', '\'file\' is an unparseable JSON file. Probably missing commas or brackets.' )
             return
@@ -335,7 +358,8 @@ class AutoAccountant(tk.Tk):
         else:
             #also, closing the program always saves the settings!
             saveSettings()
-            exit(1)
+            import sys
+            sys.exit()
 
     def isUnsaved(self):
         lastSaveDir = setting('lastSaveDir')
@@ -345,7 +369,8 @@ class AutoAccountant(tk.Tk):
             return True     #If you haven't saved anything yet, then yes, its 100% unsaved
         elif not os.path.isfile(lastSaveDir):
             return True     #Only happens if you deleted the file that the program was referencing, while using the program
-        lastSaveHash = hash(json.dumps(json.load(open(lastSaveDir, 'r')))) #hash for last loaded file
+        with open(lastSaveDir, 'r') as file:
+            lastSaveHash = hash(json.dumps(json.load(file))) #hash for last loaded file
         currentDataHash = hash(json.dumps(MAIN_PORTFOLIO.toJSON(), sort_keys=True))
         if currentDataHash == lastSaveHash:
             return False    #Hashes are the same, file is most recent copy
