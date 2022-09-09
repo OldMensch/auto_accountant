@@ -14,8 +14,8 @@ class ToolTip(object):
         self.id = None
         self.x = self.y = 0
         self.STOP = 0
-        self.fadetime = settings("tooltipFade")
-        self.popuptime = settings("tooltipPopup")
+        self.fadetime = settings('tooltipFade')
+        self.popuptime = settings('tooltipPopup')
 
     def showtip(self, text):
         stoporig = self.STOP
@@ -25,15 +25,15 @@ class ToolTip(object):
         self.text = text
         if self.tipwindow or not self.text:
             return
-        x, y, cx, cy = self.widget.bbox("insert")
+        x, y, cx, cy = self.widget.bbox('insert')
         x = x + self.widget.winfo_rootx() + self.widget.winfo_width()
         y = y + cy + self.widget.winfo_rooty() + self.widget.winfo_height()/2
         self.tipwindow = tw = tk.Toplevel(self.widget)
         tw.wm_attributes('-alpha', 0)
         tw.wm_overrideredirect(1)
         tw.wm_attributes('-alpha', 1)
-        label = tk.Label(tw, text=self.text, justify="left", bd=0, bg=palette("tooltipbg"), fg=palette("tooltipfg"), font=settings("font", 0.5))
-        tw.wm_geometry("+%d+%d" % (x, y))
+        label = tk.Label(tw, text=self.text, justify='left', bd=0, bg=palette('tooltipbg'), fg=palette('tooltipfg'), font=settings('font', 0.5))
+        tw.wm_geometry('+%d+%d' % (x, y))
         label.pack(ipadx=1)
 
     def hidetip(self):
