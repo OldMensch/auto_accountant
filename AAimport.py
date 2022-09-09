@@ -7,14 +7,7 @@ from mpmath import mpf as precise
 from mpmath import mp
 from AAlib import PERM
 
-from AAmessageBox import MessageBox
-
-def address_list(): #Creates and returns a list of all wallet addresses, and their associated wallet
-    addresses = {}
-    for wallet in PERM['wallets']:
-        for address in PERM['wallets'][wallet]['addresses']:
-            addresses[address] = wallet
-    return addresses
+from AAdialogues import Message
 
 def finalize_import(mainAppREF, toMerge):
     mainAppREF.init_PERM(toMerge, True)
@@ -60,7 +53,7 @@ def etherscan_findWallet(data, etherscanWallet):    #Figures out the wallet addr
             walletAddress = wallet1
             break
     #If we can't find this address, then either add it under the specified wallet, or create a new wallet with this specified address
-    if walletAddress not in address_list():
+    if walletAddress not in PERM['addresses']:
         if etherscanWallet == None:     
             PERM['wallets']['Unknown Etherum Wallet'] = {'addresses':[walletAddress], 'desc':''}
             return ('Unknown Etherum Wallet', walletAddress)
@@ -68,7 +61,7 @@ def etherscan_findWallet(data, etherscanWallet):    #Figures out the wallet addr
             PERM['wallets'][etherscanWallet]['addresses'].append(walletAddress)
             return (etherscanWallet, walletAddress)
     else:
-        return (address_list()[walletAddress], walletAddress)
+        return (PERM['addresses'][walletAddress], walletAddress)
 
 def etherscan_ETH(mainAppREF, data, etherscanWallet=None):      #Imports the Etherscan transaction history for ETH only
     walletdata = etherscan_findWallet(data, etherscanWallet)
@@ -78,8 +71,8 @@ def etherscan_ETH(mainAppREF, data, etherscanWallet=None):      #Imports the Eth
 
     for t in data.iterrows():
         date = str(datetime.utcfromtimestamp(int(t[1][2]))).replace('-','/')   #Uses the UNIX timestamp, not the 'datetime' column
-        wallet = t[1][4]
-        wallet2 = t[1][5]
+        address = t[1][4]
+        address2 = t[1][5]
         valueIN = t[1][7]
         valueOUT = t[1][8]
         fee = t[1][10]
@@ -103,20 +96,19 @@ def etherscan_ETH(mainAppREF, data, etherscanWallet=None):      #Imports the Eth
             trans['usd'] = str(precise(trans['tokens']) * precise(price))
         elif transType == 'Transfer':
             trans['type'] = 'transfer'
-            if t[1][4] == walletAddress:  #If we are transferring OUT of this ethereum wallet:
-                MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ETH history, since I have not implemented the transfer of assets out of the Metamask wallet. This is since there is an associated fee with transfers, which occurs at the exact same time. ')
+            if address == walletAddress:  #If we are transferring OUT of this ethereum wallet:
+                Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ETH history, since I have not implemented the transfer of assets out of the Metamask wallet. This is since there is an associated fee with transfers, which occurs at the exact same time. ')
                 return
             else:   trans['tokens'] = valueIN   #If we are transferring INTO this ethereum wallet:
         else:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ETH history due to unknown transaction type' + transType + '.')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ETH history due to unknown transaction type' + transType + '.')
             return
         
-        addresses = address_list()
-        if wallet in addresses:     trans['wallet'] = addresses[wallet]
-        else:                       trans['wallet'] = ' MISSINGWALLET'
+        if address in PERM['addresses']:        trans['wallet'] = PERM['addresses'][address]
+        else:                                   trans['wallet'] = ' MISSINGWALLET'
         if trans['type'] == 'transfer':
-            if wallet2 in addresses:    trans['wallet2'] = addresses[wallet2]
-            else:                       trans['wallet2'] = ' MISSINGWALLET'
+            if address2 in PERM['addresses']:   trans['wallet'] = PERM['addresses'][address2]
+            else:                               trans['wallet2'] = ' MISSINGWALLET'
 
         toMerge['assets']['ETHzc']['trans'][date] = trans
         
@@ -138,7 +130,7 @@ def etherscan_ERC20(mainAppREF, data, etherscanWallet='Unknown Ethereum Wallet')
             toMerge['assets'][asset] = {'desc':'', 'name':asset[:-2], 'trans':{}}
         
         if 'ETHzc' not in PERM['assets'] or date not in PERM['assets']['ETHzc']['trans']:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ERC20 transaction history, because Etherscan ETH transaction history was not imported first (or was tampered with).')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Etherscan ERC20 transaction history, because Etherscan ETH transaction history was not imported first (or was tampered with).')
             return
 
         trans = {'desc':'', 'tokens':tokens}
@@ -150,12 +142,11 @@ def etherscan_ERC20(mainAppREF, data, etherscanWallet='Unknown Ethereum Wallet')
         else:
             trans['type'] = 'transfer'
 
-        addresses = address_list()
-        if wallet in addresses:     trans['wallet'] = addresses[wallet]
-        else:                       trans['wallet'] = ' MISSINGWALLET'
+        if walletAddress in PERM['addresses']:  trans['wallet'] = etherscanWallet
+        else:                                   trans['wallet'] = ' MISSINGWALLET'
         if trans['type'] == 'transfer':
-            if wallet2 in addresses:    trans['wallet2'] = addresses[wallet2]
-            else:                       trans['wallet2'] = ' MISSINGWALLET'
+            if wallet2 in PERM['addresses']:    trans['wallet2'] = wallet2
+            else:                               trans['wallet2'] = ' MISSINGWALLET'
 
         toMerge['assets'][asset]['trans'][date] = trans
 
@@ -179,7 +170,7 @@ def coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'):    #Imp
         date = t[1][2].replace('-','/').replace('T',' ')[0:19]
 
         if type == 'deposit' and t[1][5] != 'USD': #Coinbase Pro's CSV doesn't give us enough info to infer where we may have withdrawn our assets to. So, we ignore this. 
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history, since non-USD deposits haven\'t been implemented yet.')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history, since non-USD deposits haven\'t been implemented yet.')
             return
         elif (type == 'deposit' and t[1][5] == 'USD') or (type == 'withdrawal' and t[1][5] == 'USD'): #We don't care about USD going in/out!
             continue
@@ -208,7 +199,7 @@ def coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'):    #Imp
             #Set the USD and tokens, depending on if its a sale or purchase
             if t[1][5] == 'USD':
                 if precise(t[1][3]) > 0:
-                    MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history, since I don\'t know how CB PRO records sales in its history yet.')
+                    Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history, since I don\'t know how CB PRO records sales in its history yet.')
                     return
                 transactions[date]['usd'] = str( precise(transactions[date]['usd']) - precise(t[1][3]) )
             else:
@@ -219,7 +210,7 @@ def coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'):    #Imp
             if precise(transactions[date]['tokens']) > 0:    transactions[date]['type'] = 'purchase'
             else:                                   transactions[date]['type'] = 'sale'
         else:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history due to unimplemented transaction type, \'' + type + '\'')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history due to unimplemented transaction type, \'' + type + '\'')
             return
         
 
@@ -277,7 +268,7 @@ def coinbase(mainAppREF, fileDir, coinbaseWallet='Coinbase'):    #Imports Coinba
 
             toMerge['assets'][asset]['trans'][date] = trans
         else:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + type + '\'')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + type + '\'')
             return
 
     finalize_import(mainAppREF, toMerge)
@@ -338,7 +329,7 @@ def gemini_earn(mainAppREF, data, geminiWallet='Gemini', geminiEarnWallet='Gemin
 
 
         else:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Earn) history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Earn) history due to unimplemented transaction type, \'' + trans_type + '\'')
             return
 
     finalize_import(mainAppREF, toMerge)
@@ -360,7 +351,7 @@ def gemini(mainAppREF, data, geminiWallet='Gemini', geminiEarnWallet='Gemini Ear
         asset = t[1][3]
         if type in ['Buy','Sell']:
             if asset[-3:] != 'USD': #If the last three characters are 'USD'
-                MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini history due to pure crypto market pairs being unimplemented. Market pair ' + type + ' is unsupported.')
+                Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini history due to pure crypto market pairs being unimplemented. Market pair ' + type + ' is unsupported.')
                 return
             else: asset = asset[:-3] + 'zc'     #Removes the 'USD' from the market pair
         else: asset += 'zc'     #If its 'credit' or 'debit', there is no pair, no need to remove the 'USD'
@@ -391,8 +382,8 @@ def gemini(mainAppREF, data, geminiWallet='Gemini', geminiEarnWallet='Gemini Ear
             if t[1][4] == 'Earn Transfer':
                 toMerge['assets'][asset]['trans'][date]['wallet2'] = geminiEarnWallet
             #If we recognize the address of the withdrawal destination, we know what wallet it was.
-            elif data['Withdrawal Destination'][t[0]] in address_list():
-                toMerge['assets'][asset]['trans'][date]['wallet2'] = address_list()[data['Withdrawal Destination'][t[0]]]
+            elif data['Withdrawal Destination'][t[0]] in PERM['addresses']:
+                toMerge['assets'][asset]['trans'][date]['wallet2'] = PERM['addresses'][data['Withdrawal Destination'][t[0]]]
         elif type == 'Buy':
             toMerge['assets'][asset]['trans'][date] = {
             'desc' : t[1][4],
@@ -410,7 +401,7 @@ def gemini(mainAppREF, data, geminiWallet='Gemini', geminiEarnWallet='Gemini Ear
             'usd' : str(precise(data['USD Amount USD'][t[0]]) + precise(data['Fee (USD) USD'][t[0]])),
             }
         else:
-            MessageBox(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'' + type + '\'')
+            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'' + type + '\'')
             return
 
     finalize_import(mainAppREF, toMerge)

@@ -1,7 +1,7 @@
 
 
 
-from AAmessageBox import MessageBox
+from AAdialogues import Message
 from AAlib import *
 from datetime import *
 import json
@@ -61,7 +61,7 @@ def StockDataLoop(mainPortREF):
             for badTicker in INVALID:
                 invalidString += badTicker + ', '
             invalidString = invalidString[:-2]
-            MessageBox(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
+            Message(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
 
         raw_data = raw_data.get_historical_price_data(date_month, date_today, 'daily')    #300ms
 
@@ -134,10 +134,10 @@ def CryptoDataLoop(mainPortREF):
             response = session.get(url, params=parameters)
             data = json.loads(response.text)
         except (ConnectionError, Timeout, TooManyRedirects) as e:
-            MessageBox(mainPortREF, 'CoinMarketCap API Error', e)
+            Message(mainPortREF, 'CoinMarketCap API Error', e)
         if data != None and data['status']['error_message'] != None:
             errmsg = data['status']['error_message']
-            MessageBox(mainPortREF, 'CoinMarketCap API Error', errmsg)
+            Message(mainPortREF, 'CoinMarketCap API Error', errmsg)
 
             ###Removal of all the INVALID token tickers. All remaining valid tokens will still be updated
             INVALID = errmsg.split('\'')[3].split(',')  #creates a list of all the invalid tokens

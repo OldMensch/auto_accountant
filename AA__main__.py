@@ -3,12 +3,8 @@ from AAlib import *
 from AAmarketData import startMarketDataLoops, marketdatalib
 from AAimport import *
 
-from AAassetEditor import AssetEditor
-from AAtransEditor import TransEditor
-from AAprofileManager import ProfileManager
-from AAwalletManager import WalletManager
+from AAdialogues import *
 
-from AAmessageBox import MessageBox
 from AAtooltip import CreateToolTip
 
 #3rd party libraries
@@ -80,6 +76,8 @@ class Portfolio(tk.Tk):
         self.state('zoomed') #starts the window maximized (not same as fullscreen!)
 
 
+#NOTE: Tax forms have been temporarily disabled to speed up boot time until I implement a better method
+
 #TASKBAR, LOADING SAVING MERGING and QUITTING
 #=============================================================
     def create_taskbar(self):
@@ -142,6 +140,11 @@ class Portfolio(tk.Tk):
         accountingmenu.add_radiobutton(label='Last in First Out (LIFO)',        variable=self.accounting_method, value='lifo',    command=p(set_accounting_method, 'lifo'))
         accountingmenu.add_radiobutton(label='Highest in First Out (HIFO)',     variable=self.accounting_method, value='hifo',    command=p(set_accounting_method, 'hifo'))
 
+        #'Taxes' Tab
+        taxmenu = tk.Menu(self, tearoff=0)
+        taskbar.add_cascade(menu=taxmenu, label='Taxes')
+        taxmenu.add_command(label='Generate data for IRS Form 8949', command=self.tax_Form_8949)
+        taxmenu.add_command(label='Generate data for IRS Form 1099-MISC', command=self.tax_Form_1099MISC)
 
         #'DEBUG' Tab
         debugmenu = tk.Menu(self, tearoff=0)
@@ -149,13 +152,30 @@ class Portfolio(tk.Tk):
         debugmenu.add_command(label='Export PERM to DEBUG.json',     command=self.DEBUG_print_PERM)
         debugmenu.add_command(label='Export TEMP to DEBUG.json',     command=self.DEBUG_print_TEMP)
         debugmenu.add_command(label='Export Market Data for Offline Mode.json',     command=self.DEBUG_save_marketdatalib)
+        debugmenu.add_command(label='DEBUG dialogue box',     command=self.DEBUG_dialogue)
+        #debugmenu.add_command(label='Restart Auto-Accountant',     command=self.DEBUG_restart_test)
 
     def restoreDefaultSettings(self):
+        Message(self, 'Error!', 'This would restart the program... but this seems to cause crashing. Will fix eventually.')
+        return
         settingslib.clear()
         settingslib.update(defsettingslib)
         saveSettings()
         self.destroy()
         
+    def tax_Form_8949(self):
+        dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 8949')
+        if dir == '':
+            return
+        open(dir, 'w', newline='').write(TEMP['taxes']['8949'].to_csv())
+
+    def tax_Form_1099MISC(self):
+        dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 1099-MISC')
+        if dir == '':
+            return
+        open(dir, 'w', newline='').write(TEMP['taxes']['1099-MISC'].to_csv())
+
+
     def DEBUG_print_PERM(self):
         json.dump(PERM, open('DEBUG.json', 'w'), sort_keys=True, indent=4)
     def DEBUG_print_TEMP(self):
@@ -165,6 +185,24 @@ class Portfolio(tk.Tk):
         json.dump(toDump, open('DEBUG.json', 'w'), sort_keys=True, indent=4)
     def DEBUG_save_marketdatalib(self):
         json.dump(marketdatalib, open('#OfflineMarketData.json', 'w'), indent=4, sort_keys=True)
+    def DEBUG_dialogue(self):
+        testdialogue = Dialogue(self, "Dialogue Title")
+        testdialogue.add_menu_button("close", command=testdialogue.close)
+        testdialogue.add_label(0, 0, "dayte:")
+        testdialogue.add_label(0, 1, "positive float: ")
+        testdialogue.add_label(0, 2, "float: ")
+        testdialogue.add_label(0, 3, "one-liner:")
+        testdialogue.add_label(0, 4, "description:")
+        date = testdialogue.add_entry(1, 0, '0000/00/00 00:00:00', format='date')
+        posfloat = testdialogue.add_entry(1, 1, '', format='pos_float', charLimit=16)
+        float = testdialogue.add_entry(1, 2, '', format='float', charLimit=16)
+        text = testdialogue.add_entry(1, 3, '', charLimit=10)
+        desc = testdialogue.add_entry(1, 4, 'a\nb\nc', format='description')
+        def printdata():    print(desc.entry())
+        testdialogue.add_menu_button("print data", command=printdata)
+        testdialogue.center_dialogue()
+    def DEBUG_restart_test(self):
+        self.destroy()
 
     def comm_importCoinbase(self):  #Imports COINBASE transaction history into the portfolio
         dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Coinbase/Coinbase Pro Transaction History')
@@ -182,11 +220,11 @@ class Portfolio(tk.Tk):
     def comm_savePortfolio(self, saveAs=False, secondary=None):
         if saveAs or settings('lastSaveDir') == '':
             dir = asksaveasfilename( defaultextension='.JSON', filetypes={('JSON','.json')}, title='Save Portfolio')
-            self.title('Portfolio Manager - ' + dir)
         else:
             dir = settings('lastSaveDir')
         if dir == '':
             return
+        self.title('Portfolio Manager - ' + dir)
         
         json.dump(PERM, open(dir, 'w'), sort_keys=True)
         if secondary != None:   secondary()
@@ -202,27 +240,14 @@ class Portfolio(tk.Tk):
         if not first:
             self.undo_save()
     def comm_loadPortfolio(self, dir=None):
-        if dir == None:  
-            dir = askopenfilename( filetypes={('JSON','.json')}, title='Load Portfolio')
-        if dir == '':
-            return
-        try:
-            try:    decompile = json.load(open(dir, 'r'))    #Attempts to load the file
-            except:
-                MessageBox(self, 'Error!', 'File couldn\'t be loaded. Probably corrupt or something.' )
-                self.comm_newPortfolio(first=True)
-                return
-            try:
-                decompile['assets'] #pulls these data libraries to ensure that this contains the required data
-                decompile['wallets']
-                decompile['profiles']
-                self.init_PERM(decompile)
-            except:
-                MessageBox(self, 'Error!', '\''+dir.split('/').pop()+'\' is missing data.' )
-                return
+        if dir == None: dir = askopenfilename( filetypes={('JSON','.json')}, title='Load Portfolio')
+        if dir == '':   return
+        try:    decompile = json.load(open(dir, 'r'))    #Attempts to load the file
         except:
-            MessageBox(self, 'Error!', '\'file\' is an unparseable JSON file. Probably missing commas or brackets.' )
+            Message(self, 'Error!', 'File couldn\'t be loaded. Probably corrupt or something.' )
+            self.comm_newPortfolio(first=True)
             return
+        self.init_PERM(decompile)
         self.title('Portfolio Manager - ' + dir)
         settingslib['lastSaveDir'] = dir
         self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
@@ -236,17 +261,10 @@ class Portfolio(tk.Tk):
             return
         try:
             decompile = json.load(open(dir, 'r'))    #Attempts to load the file
-            try:
-                decompile['assets'] #pulls these data libraries to ensure that this contains the required data
-                decompile['wallets']
-                decompile['profiles']
-                self.init_PERM(decompile, True)
-            except:
-                MessageBox(self, 'Error!', '\'file\' is missing data.' )
-                return
         except:
-            MessageBox(self, 'Error!', '\'file\' is an unparseable JSON file. Probably missing commas or brackets.' )
+            Message(self, 'Error!', '\'file\' is an unparseable JSON file. Probably missing commas or brackets.' )
             return
+        self.init_PERM(decompile, True)
         settingslib['lastSaveDir'] = '' #resets the savedir. who's to say where a merged portfolio should save to? why should it be the originally loaded file, versus any recently merged ones?
         self.title('Portfolio Manager')
         self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
@@ -259,8 +277,10 @@ class Portfolio(tk.Tk):
         '''Quits the program. Set finalize to TRUE to skip the \'are you sure?' prompt.'''
         if not finalize:   
             if self.isUnsaved():
-                MessageBox(self, 'Unsaved Changes', 'Are you sure you want to quit? This cannot be undone!', defQuitName='Cancel', options=['Quit', 'Save and Quit'], 
-                commands=[p(self.comm_quit, True), p(self.comm_savePortfolio, secondary=p(self.comm_quit, True))], colors=['#ff0000', '#0088ff'])
+                unsavedPrompt = Prompt(self, 'Unsaved Changes', 'Are you sure you want to quit? This cannot be undone!')
+                unsavedPrompt.add_menu_button('Quit', bg="#ff0000", command=p(self.comm_quit, True) )
+                unsavedPrompt.add_menu_button('Save and Quit', bg="#0088ff", command=p(self.comm_savePortfolio, secondary=p(self.comm_quit, True)))
+                unsavedPrompt.center_dialogue()
             else:
                 self.comm_quit(True)
         else:
@@ -269,25 +289,43 @@ class Portfolio(tk.Tk):
             exit(1)
 
     def init_PERM(self, toLoad=None, merge=False):
-        if not merge:
+        if not merge:           #LOADING and NEW
             PERM.clear()
             PERM.update({
+            'addresses' : {},
             'assets' : {},
             'wallets' : {},
             'profiles' : {}
             })
         if toLoad != None:
-            if not merge:     #loading profile
+            errorMsg = ''
+            try:    toLoad['addresses']
+            except: errorMsg += 'addresses, '
+            try:    toLoad['assets']
+            except: errorMsg += 'assets, '
+            try:    toLoad['wallets']
+            except: errorMsg += 'wallets, '
+            try:    toLoad['profiles']
+            except: errorMsg += 'profiles, '
+            if errorMsg != '':  Message(self, 'Load Warning!', 'File contains no ' + errorMsg + '.')
+
+            if not merge:     #LOADING
                 PERM.update(toLoad)
-            else:               #merging profiles
+            else:             #MERGING
                 #Merges assets and transactions. If transactions are of the same ID, the old portfolio is overwritten
-                for asset in list(toLoad['assets']):
-                    if asset not in PERM['assets']:
-                        PERM['assets'][asset] = toLoad['assets'][asset]
-                    else:
-                        PERM['assets'][asset]['trans'].update( toLoad['assets'][asset]['trans'] )
-                PERM['wallets'].update(toLoad['wallets'])
-                PERM['profiles'].update(toLoad['profiles'])
+                try:    PERM['addresses'].update(toLoad['addresses'])   
+                except: None
+                try:
+                    for asset in list(toLoad['assets']):
+                        if asset not in PERM['assets']:
+                            PERM['assets'][asset] = toLoad['assets'][asset]
+                        else:
+                            PERM['assets'][asset]['trans'].update( toLoad['assets'][asset]['trans'] )
+                except: None
+                try:    PERM['wallets'].update(toLoad['wallets'])       
+                except: None
+                try:    PERM['profiles'].update(toLoad['profiles'])     
+                except: None
 
     def isUnsaved(self):
         lastSaveDir = settings('lastSaveDir')
@@ -323,7 +361,7 @@ class Portfolio(tk.Tk):
         self.GUI['buttonFrame'] = tk.Frame(self.GUI['primaryFrame'], bg=palette('accentdark'))
         self.GUI['info'] = tk.Button(self.GUI['buttonFrame'], image=icons('info2'), bg=palette('entry'), command=self.comm_portfolio_info)
         self.GUI['edit'] = tk.Button(self.GUI['buttonFrame'], image=icons('settings2'), bg=palette('entry'))
-        self.GUI['add'] = tk.Button(self.GUI['buttonFrame'], text='+',  bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), command=p(AssetEditor, self, 1))
+        self.GUI['add'] = tk.Button(self.GUI['buttonFrame'], text='+',  bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), command=p(AssetEditor, self))
         self.GUI['summary'] = tk.Label(self.GUI['primaryFrame'], font=settings('font', 0.5), fg=palette('entrycursor'),  bg=palette('accent'))
         self.GUI['back'] = tk.Button(self.GUI['primaryFrame'], text='Return to\nPortfolio', font=settings('font', 0.5),  fg=palette('entrycursor'), bg=palette('entry'), command=p(self.render, None, True))
         self.GUI['page_number'] = tk.Label(self.GUI['primaryFrame'], text='Page XXX of XXX', font=settings('font', 0.5), fg=palette('entrycursor'),  bg=palette('accentdark'))
@@ -333,7 +371,7 @@ class Portfolio(tk.Tk):
         self.GUI['secondaryFrame'] = tk.Frame(self, bg=palette('dark'))
         #The little bar on the bottom
         self.GUI['bottomFrame'] = tk.Frame(self, bg=palette('accent'))
-        self.GUI['bottomLabel'] = tk.Button(self.GUI['bottomFrame'], bd=0, bg=palette('accent'), text='Copyright © 2021 Shane Evanson', fg=palette('entrycursor'), font=settings('font',0.4), command=self.comm_copyright)
+        self.GUI['bottomLabel'] = tk.Button(self.GUI['bottomFrame'], bd=0, bg=palette('accent'), text='Copyright © 2022 Shane Evanson', fg=palette('entrycursor'), font=settings('font',0.4), command=self.comm_copyright)
 
         #GUI RENDERING
         #==============================
@@ -438,12 +476,12 @@ class Portfolio(tk.Tk):
             except: return
             m = tk.Menu(tearoff = 0)
             if self.asset == None:
-                m.add_command(label ='Open ' + self.printInfo('ticker', asset) + ' Ledger', command=p(self._left_click_row, GRID_ROW, None))
+                m.add_command(label ='Open ' + self.printInfo('ticker', asset) + ' Ledger', command=p(self.render, self.sorted[i], True))
                 m.add_command(label ='Edit ' + self.printInfo('ticker', asset), command=p(AssetEditor, self, asset))
                 m.add_command(label ='Show detailed info', command=p(self.comm_asset_info, asset))
                 m.add_command(label ='Delete ' + self.printInfo('ticker', asset), command=p(self.comm_delete_selection, [GRID_ROW, GRID_ROW]))
             else:
-                m.add_command(label ='Edit ' +  self.printInfo('date', self.asset, trans), command=p(self._left_click_row, GRID_ROW, None))
+                m.add_command(label ='Edit ' +  self.printInfo('date', self.asset, trans), command=p(TransEditor, self, self.asset, self.sorted[i]))
                 m.add_command(label ='Delete ' + self.printInfo('date', self.asset, trans), command=p(self.comm_delete_selection, [GRID_ROW, GRID_ROW]))
             try:        m.tk_popup(event.x_root, event.y_root)
             finally:    m.grab_release()
@@ -501,12 +539,13 @@ class Portfolio(tk.Tk):
         self.MENU['newPortfolio'] = tk.Button(self.GUI['menuFrame'],  image=icons('new'), bg=palette('entry'), command=self.comm_newPortfolio)
         self.MENU['loadPortfolio'] = tk.Button(self.GUI['menuFrame'], image=icons('load'), bg=palette('entry'), command=self.comm_loadPortfolio)
         self.MENU['savePortfolio'] = tk.Button(self.GUI['menuFrame'], image=icons('save'), bg=palette('entry'), command=self.comm_savePortfolio)
-        self.MENU['settings'] = tk.Button(self.GUI['menuFrame'], image=icons('settings2'), bg=palette('entry'), command=p(MessageBox, self, 'whoop',  'no settings menu implemented yet!'))
+        self.MENU['settings'] = tk.Button(self.GUI['menuFrame'], image=icons('settings2'), bg=palette('entry'), command=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
 
         self.MENU['undo'] = tk.Button(self.GUI['menuFrame'], image=icons('undo'), bg=palette('entry'), command=p(self._ctrl_z, None))
         self.MENU['redo'] = tk.Button(self.GUI['menuFrame'], image=icons('redo'), bg=palette('entry'), command=p(self._ctrl_y, None))
 
         self.MENU['wallets'] = tk.Button(self.GUI['menuFrame'], text='Wallets',  bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), command=p(WalletManager, self))
+        self.MENU['addresses'] = tk.Button(self.GUI['menuFrame'], text='Addresses',  bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), command=p(AddressManager, self))
         self.MENU['profiles'] = tk.Button(self.GUI['menuFrame'], image=icons('profiles'),  bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'),command=p(ProfileManager, self))
         
         #MENU TOOLTIPS
@@ -521,6 +560,7 @@ class Portfolio(tk.Tk):
             'redo':'Redo last action',
 
             'wallets':'Manage wallets',
+            'addresses':'Manage addresses',
             'profiles':'Manage filter profiles',
         }
         for button in self.MENU:
@@ -536,10 +576,11 @@ class Portfolio(tk.Tk):
         self.MENU['undo']               .grid(column=4,row=0, sticky='NS')
         self.MENU['redo']               .grid(column=5,row=0, sticky='NS', padx=(0,settings('font')[1]))
 
-        self.MENU['wallets']            .grid(column=8,row=0, sticky='NS', padx=(0,settings('font')[1]))
+        self.MENU['wallets']            .grid(column=8,row=0, sticky='NS')
+        self.MENU['addresses']          .grid(column=9,row=0, sticky='NS', padx=(0,settings('font')[1]))
 
-        #NOTE: the profile selection menu is in column #9
-        self.MENU['profiles']           .grid(column=10,row=0, sticky='NS')
+        #NOTE: the profile selection menu is in column #10
+        self.MENU['profiles']           .grid(column=11,row=0, sticky='NS')
 
     def create_PROFILE_MENU(self):
         '''Creates the little dropdown for selecting a profile to filter by'''
@@ -563,7 +604,7 @@ class Portfolio(tk.Tk):
         self.MENU['profileSelect'].configure(bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), highlightthickness=0)
 
         
-        self.MENU['profileSelect']      .grid(column=9,row=0, sticky='NS')
+        self.MENU['profileSelect']      .grid(column=10,row=0, sticky='NS')
 
     def comm_applyProfile(self, *kwargs):
         if kwargs[0] == '-NO FILTER-':  self.profile = ''
@@ -595,14 +636,14 @@ class Portfolio(tk.Tk):
                 self.GRID_set_col(len(settings('header_portfolio')))
                 self.GUI['info'].configure(command=self.comm_portfolio_info)
                 self.GUI['edit'].pack_forget()
-                self.GUI['add'].configure(command=p(AssetEditor, self, 1))
+                self.GUI['add'].configure(command=p(AssetEditor, self))
                 self.GUI['back'].grid_forget()
             else:
                 self.GRID_set_col(len(settings('header_asset')))
                 self.GUI['info'].configure(command=p(self.comm_asset_info, asset))
                 self.GUI['edit'].configure(command=p(AssetEditor, self, asset))
                 self.GUI['edit'].pack(side='left')
-                self.GUI['add'].configure(command=p(TransEditor, self, asset, 1))
+                self.GUI['add'].configure(command=p(TransEditor, self, asset))
                 self.GUI['back'].grid(row=4, column=0, columnspan=2)
 
         #Setting up stuff in the Primary Pane
@@ -877,7 +918,7 @@ class Portfolio(tk.Tk):
         try: displayInfo += format_number(TEMP['metrics'][' PORTFOLIO']['month%'], '.4f') + '%'
         except: displayInfo += MISSINGDATA
         
-        MessageBox(self, 'Overall Stats and Information', displayInfo, width=100, height=25)
+        Message(self, 'Overall Stats and Information', displayInfo, width=100, height=25)
     
     def comm_asset_info(self, a): #A wholistic display of all relevant information to an asset 
         #ASSET CLASS
@@ -894,14 +935,19 @@ class Portfolio(tk.Tk):
             displayInfo += '\n' + assetinfolib[info]['name'] + ': ' + str(self.info(info, a))
 
 
-        MessageBox(self, a.split('z')[0] + ' Stats and Information', displayInfo, width=100, height=25)
+        Message(self, a.split('z')[0] + ' Stats and Information', displayInfo, width=100, height=25)
 
 
 #METRICS
 #=============================================================
     def metrics(self): # Recalculates all static metrics for all assets and the overall protfolio
         '''Calculates and renders all static metrics for all assets, and the overall portfolio'''
-        TEMP['metrics'] = {} #To remove metrics for assets that may no longer exist
+        if 'metrics' not in TEMP:   TEMP['metrics'] = {} #To remove metrics for assets that may no longer exist
+        TEMP['taxes'] = { 
+            '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
+            '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
+            }
+
         for a in PERM['assets']:    self.metrics_ASSET(a, False)
         self.metrics_PORTFOLIO()
         self.market_metrics()
@@ -1020,37 +1066,81 @@ class Portfolio(tk.Tk):
                 holdings[wallet][t] = tokens
                 insert_PG(t, wallet)
                 prices[t] = self.info('price', a, t)
-            elif trans_type in ['sale', 'expense', 'transfer']: 
+
+                # if trans_type == 'gift':    #This adds all 'gifts' to the 1099-MISC. 
+                #     #######################################################################################
+                #     # PROBLEMS WITH THIS IMPLEMENTATION: 
+                #     # Note that, with the current version of this program, that includes Coinbase quiz gifts, gifts from Mom, and any other gifts unrelated to stakin interest (THIS IS WRONG!)
+                #     #######################################################################################
+                #     TEMP['taxes']['1099-MISC'] = TEMP['taxes']['1099-MISC'].append( {'Date acquired':t,  'Value of assets':usd}, ignore_index=True)
+
+            elif trans_type in ['sale', 'expense']: 
                 #Tokens are always, obviously, removed from the wallet from which they were sold. 
                 #The accounting method automatically tells us exactly which assets are first to be sold, as each wallet has now been sorted by the accounting method
-                
+
                 #This is also where we can assess capital gains/loss, AKA realized profit. - 14 ms
-                original_investment_value = precise(0)
+                cost_basis = precise(0)
                 for PG in list(purchases_and_gifts[wallet]):
                     PG_tokens = holdings[wallet][PG]
                     #If we're selling more tokens than can be found in this transaction we have to keep iterating through the sorted list
                     if mp.almosteq(tokens, PG_tokens) or tokens > PG_tokens:
-                        original_investment_value += self.info('usd', a, PG)    #10 ms
+                        cost_basis += self.info('usd', a, PG)    #10 ms
                         holdings[wallet][PG] = precise(0)
-                        if trans_type == 'transfer':     
-                            if PG not in holdings[wallet2]:   holdings[wallet2][PG] =  PG_tokens    #We transfer this transaction fully to the other wallet
-                            else:                             holdings[wallet2][PG] += PG_tokens  #0 ms
-                            if PG not in purchases_and_gifts[wallet2]:      insert_PG(PG, wallet2)
                         tokens -= precise(PG_tokens)    #2 ms
                         #If we have sold all the tokens from a specific transaction, remove it
                         purchases_and_gifts[wallet].remove(PG)
+
+                        #IRS form 8949 report for this sale/expense
+                        # form8949 = {
+                        #     'Description of property':      str(PG_tokens) + ' ' + self.info('ticker', a),
+                        #     'Date acquired':                PG,
+                        #     'Date sold or disposed of':     t,
+                        #     'Proceeds':                     usd * PG_tokens / self.info('tokens', a, t),
+                        #     'Cost or other basis':          self.info('usd', a, PG),   
+                        #     }
+                        # form8949['Gain or (loss)'] = precise(form8949['Proceeds']) - precise(form8949['Cost or other basis'])
+                        # TEMP['taxes']['8949'] = TEMP['taxes']['8949'].append(form8949, ignore_index=True)
+
                     #If we're selling equal to or less than this transactions's # of tokens, just remove it from this one and end the loop
                     else:
-                        original_investment_value += tokens * self.info('price', a, PG) #0 ms
-                        holdings[wallet][PG] -= precise(tokens)
-                        if trans_type == 'transfer':     
-                            if PG not in holdings[wallet2]:   holdings[wallet2][PG] =  tokens    #We transfer the remaining tokens to the other wallet
-                            else:                             holdings[wallet2][PG] += tokens #0 ms
-                            if PG not in purchases_and_gifts[wallet2]:      insert_PG(PG, wallet2)
+                        cost_basis += tokens * self.info('price', a, PG) #0 ms
+                        holdings[wallet][PG] -= tokens
+
+                        # #IRS form 8949 report for this sale/expense
+                        # form8949 = {
+                        #     'Description of property':      str(tokens) + ' ' + self.info('ticker', a),
+                        #     'Date acquired':                PG,
+                        #     'Date sold or disposed of':     t,
+                        #     'Proceeds':                     usd * tokens / self.info('tokens', a, t),
+                        #     'Cost or other basis':          tokens * self.info('price', a, PG),   
+                        #     }
+                        # form8949['Gain or (loss)'] = precise(form8949['Proceeds']) - precise(form8949['Cost or other basis'])
+                        # TEMP['taxes']['8949'] = TEMP['taxes']['8949'].append(form8949, ignore_index=True)
+
                         break     
 
                 #THE CAPITAL GAINS FOR THIS SALE/EXPENSE
-                if trans_type != 'transfer':  capital_gains += usd - original_investment_value
+                capital_gains += usd - cost_basis
+
+            elif trans_type == 'transfer':
+                for PG in list(purchases_and_gifts[wallet]):
+                    PG_tokens = holdings[wallet][PG]
+                    #If we're transferring more tokens than can be found in this transaction we have to keep iterating through the sorted list
+                    if mp.almosteq(tokens, PG_tokens) or tokens > PG_tokens:
+                        holdings[wallet][PG] = precise(0)
+                        if PG not in holdings[wallet2]:   holdings[wallet2][PG] =  PG_tokens    #We transfer this transaction fully to the other wallet
+                        else:                             holdings[wallet2][PG] += PG_tokens  #0 ms
+                        if PG not in purchases_and_gifts[wallet2]:      insert_PG(PG, wallet2)
+                        tokens -= precise(PG_tokens)    #2 ms
+                        #We have transferred all the tokens from a specific transaction, so remove it
+                        purchases_and_gifts[wallet].remove(PG)
+                    #If we're transferring less than this transactions's # of tokens, just remove it from this one and end the loop
+                    else:
+                        holdings[wallet][PG] -= precise(tokens)
+                        if PG not in holdings[wallet2]:   holdings[wallet2][PG] =  tokens    #We transfer the remaining tokens to the other wallet
+                        else:                             holdings[wallet2][PG] += tokens #0 ms
+                        if PG not in purchases_and_gifts[wallet2]:      insert_PG(PG, wallet2)
+                        break    
 
                 
             #And that's it! We calculate the average buy price AFTER figuring out what tokens we have left.
@@ -1253,10 +1343,10 @@ class Portfolio(tk.Tk):
 
 
     def comm_copyright(self):
-        MessageBox(self,
+        Message(self,
         'MIT License', 
 
-        '''Copyright (c) 2021 Shane Evanson
+        '''Copyright (c) 2022 Shane Evanson
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the \'Software\'), to deal
@@ -1283,6 +1373,7 @@ SOFTWARE.''', width=78, height=20)
 
 
 if __name__ == '__main__':
+    #While true loop means that the program will automatically restart, if we destroy the Portfolio
     while True:
         Portfolio().mainloop()
 
