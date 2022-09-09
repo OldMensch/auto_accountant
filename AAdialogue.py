@@ -156,7 +156,7 @@ class EntryBox(tk.Entry):
                     d.insert(i, '0')
                     d.insert(i, '0')
                     self.icursor(i)
-                    for ignore in ['/',' ',':']:
+                    for ignore in ['-',' ',':']:
                         if d.get()[i-1] == ignore:
                             self.icursor(i-1)
                 elif not d.get()[i-1].isdigit():
@@ -165,7 +165,7 @@ class EntryBox(tk.Entry):
                 elif i > 19:
                     d.delete(19)
                     return
-                for ignore in ['/',' ',':']:
+                for ignore in ['-',' ',':']:
                     if d.get()[i] == ignore:
                         e = d.get()[i-1]
                         d.delete(i-1)

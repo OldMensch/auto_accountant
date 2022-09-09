@@ -69,11 +69,13 @@ class Transaction():
 
     #Pre-calculates useful information
     def recalculate(self):
-        self.calc_hash()
-        try:    self.calc_iso_date()    #We try to calculate this, because otherwise, if a transaction is missing some data, it won't display its ISO date
+        self.calc_hash()    #NOTE: Lag is ~4ms for ~4000 transactions
+        #We try to calculate this, because otherwise, if a transaction is missing some data, it won't display its ISO date
+        try:    self.calc_iso_date()    #NOTE: Lag is ~30ms for ~4000 transactions
         except: pass
         self.calc_has_required_data()
-        if self._data['missing'][0]:    return  # Don't continue performing calculations if we're missing data!
+        # Don't continue performing calculations if we're missing data!
+        if self._data['missing'][0]:    return   #NOTE: Lag is ~2ms for ~4000 transactions
         self.calc_metrics()
 
     def calc_hash(self): #Hash Function - A transaction is unique insofar as its date, type, wallet, and three asset types are unique from any other transaction.
@@ -92,9 +94,9 @@ class Transaction():
         self._metrics['date'] = unix_to_local_timezone(self._data['date'])
     def calc_metrics(self):
         # PRECISE METRICS - we pre-convert the data strings to MPFs to significantly increase performance
-        for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):
+        for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):     #NOTE: Lag is ~11ms for ~4000 transactions
             d = self._data[data]
-            if d != None:   self._metrics[data] = mpf(d)
+            if d:   self._metrics[data] = mpf(d)
         
         # VALUES - the USD value of the quantity of the loss, fee, and gain at time of transaction
         TYPE = self._data['type']
@@ -198,7 +200,7 @@ class Transaction():
         color_format = info_format_lib[info]['color']
         if color_format == 'type':                  return (None, palette(self._data['type']))
         elif color_format == 'accounting':
-            if mpf(self.get(info, asset)) < 0:  return (palette('loss'), None)
+            if self.get(info, asset) < 0:  return (palette('loss'), None)
         return (None, None)
 
     def pretty(self, info:str, asset:str=None) -> tuple: #Returns a tuple of pretty info, foreground color, and background color
@@ -281,9 +283,9 @@ class Asset():
         color_format = info_format_lib[info]['color']
         if color_format == 'profitloss':    
             try:    
-                data = self.get(info)
-                if   mpf(data) > 0: return (palette('profit'), None)
-                elif mpf(data) < 0: return (palette('loss'), None)
+                data = self.precise(info)
+                if   data > 0: return (palette('profit'), None)
+                elif data < 0: return (palette('loss'), None)
                 else:                   return (palette('neutral'), None)
             except: return (None, None)
         return (None, None)
@@ -344,7 +346,7 @@ class Portfolio():
                 if NQ and OQ:
                     merged_quantity = OQ + NQ
                     other_trans._data[part+'_quantity'] =   str(merged_quantity)
-                if NP and OP and not appxEqmpf(OP, NP):
+                if NP and OP and not appxEqPrec(OP, NP):
                     other_trans._data[part+'_price'] = str((OQ/merged_quantity*OP)+(NQ/merged_quantity*NP)) #Weighted average of prices
             other_trans.recalculate()
     def add_wallet(self, wallet_obj:Wallet):
@@ -377,7 +379,7 @@ class Portfolio():
                 a = JSON['assets'][asset]
                 self.add_asset(Asset(asset, a['name'], a['description']))
         else: print('||WARNING|| Failed to find any assets in JSON.')
-        # TRANSACTIONS - NOTE: Lag is ~230ms for ~4000 transactions
+        # TRANSACTIONS - NOTE: Lag is ~80ms for ~4000 transactions
         if 'transactions' in JSON:
             for t in JSON['transactions']:
                 try:
@@ -512,7 +514,7 @@ class gain_heap(): #Sorts the gains depending on the accounting method chosen. H
             next_gain = self._heap[0]
             next_gain_quantity = next_gain._quantity
             #We completely disburse a gain
-            gain_is_equivalent = appxEqmpf(quantity, next_gain_quantity)
+            gain_is_equivalent = appxEqPrec(quantity, next_gain_quantity)
             if quantity > next_gain_quantity or gain_is_equivalent:
                 if gain_is_equivalent:  quantity = 0
                 else:                   quantity -= next_gain_quantity

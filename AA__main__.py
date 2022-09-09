@@ -714,7 +714,7 @@ class AutoAccountant(tk.Tk):
         wallets.sort(reverse=True, key=sortByUSD)
         for w in wallets:    #Wallets, a list of wallets by name, and their respective net valuations
             quantity = MAIN_PORTFOLIO.get('wallets')[w]
-            if not zeroish_mpf(quantity):
+            if not zeroish_prec(quantity):
                 message.insert_triplet('\t'+w+':\t\t\t', format_general(quantity, 'alpha', 20), ' USD', fg=DEFCOLOR, font=DEFFONT)
 
         # MASS INFORMATION
@@ -746,7 +746,7 @@ class AutoAccountant(tk.Tk):
         wallets.sort(reverse=True, key=sortByUnits)
         for w in wallets:
             quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w]
-            if not zeroish_mpf(quantity):
+            if not zeroish_prec(quantity):
                 message.insert_triplet('\t' + w + ':\t\t\t', format_general(quantity, 'alpha', 20), ' '+asset.ticker(), fg=DEFCOLOR, font=DEFFONT)
 
         # MASS INFORMATION
@@ -772,7 +772,7 @@ class AutoAccountant(tk.Tk):
                 '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
                 '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
                 }
-        self.perform_automatic_accounting(tax_report) # TODO: LAGGY! (~222ms for ~12000 transactions)
+        self.perform_automatic_accounting(tax_report) # TODO: Laggiest part of the program! (~116ms for ~12000 transactions)
         for asset in MAIN_PORTFOLIO.assets():
             self.calculate_average_buy_price(asset)
         self.metrics_PORTFOLIO() #~0ms, since its just a few O(1) operations
@@ -867,7 +867,7 @@ class AutoAccountant(tk.Tk):
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
             result = holdings[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
-            if not zeroish_mpf(result[0]):  #NOTE: Lag is ~0ms
+            if not zeroish_prec(result[0]):  #NOTE: Lag is ~0ms
                 t.ERROR,t.ERR_MSG = True,'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
 
             #NOTE - Lag is ~27ms including store_quantity, 11ms excluding
@@ -882,7 +882,7 @@ class AutoAccountant(tk.Tk):
             ################################################################################################
             # This might still be broken. ALSO: Have to separate the transactions into short- and long-term
             ################################################################################################
-            if zeroish_mpf(gain._quantity):     return
+            if zeroish_prec(gain._quantity):     return
             if t.type() == 'transfer_out':  return 
             store_date = MAIN_PORTFOLIO.transaction(gain._hash).date()  # Date of aquisition - note: we do this so we don't have to convert the gain's date from UNIX to ISO
             disburse_date = t.date()                                    # Date of disposition

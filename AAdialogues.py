@@ -137,7 +137,7 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         # LABELS AND ENTRY BOXES - all containing their default inputs
         self.add_label(0,0,'',rowspan=3)  #Empty label for decor purposes only
         self.add_label(1,0,'Date (' + setting('timezone') + ')',columnspan=2)
-        self.ENTRIES['date'] = self.add_entry(1, 1, str(datetime.now()).split('.')[0].replace('-','/'), width=24, format='date',columnspan=2)
+        self.ENTRIES['date'] = self.add_entry(1, 1, str(datetime.now()).split('.')[0], width=24, format='date',columnspan=2)
         self.add_label(3,0,'Type')
         self.ENTRIES['type'] =  self.add_dropdown_list(3, 1, pretty_trans.values(), ' -TYPE- ', selectCommand=self.select_type)
         self.add_label(4,0,'Wallet')
@@ -293,7 +293,10 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
             Message(self, 'ERROR!', 'No transaction type was selected.')    #Message and return here otherwise code breaks w/o a type selected
             return
         #valid datetime format? - NOTE: This also converts the date to unix time
-        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'], setting('timezone'))
+        try:        
+            print(TO_SAVE['date'])
+            TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
+            print(TO_SAVE['date'],'\n\n')
         except:     error = 'Invalid date!'
         #selected a wallet? (start out with nothing selected)
         if TO_SAVE['wallet'] == self.ENTRIES['wallet'].defaultItem: error = 'No wallet was selected.'

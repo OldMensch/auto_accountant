@@ -1,21 +1,22 @@
 
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from copy import deepcopy
 import tkinter as tk
 
-from mpmath import mpf
-from mpmath import mp
-mp.dps = 100
-#mp.pretty = True       #Rounds continuous decimals and makes MPFs look nicer... supposedly
-absolute_precision = 1e-80
-relative_precision = 1e-8
+
+import decimal
+decimal.getcontext().prec = 100
+from decimal import Decimal as mpf
+
+absolute_precision = mpf(1e-80)
+relative_precision = mpf(1e-8)
 def appxEq(x,y):    return abs(mpf(x)-mpf(y)) < absolute_precision
 def zeroish(x):     return abs(mpf(x)) < absolute_precision 
 
-def appxEqmpf(x:mpf,y:mpf): return abs(x-y) < absolute_precision
-def zeroish_mpf(x:mpf):     return abs(x) < absolute_precision 
+def appxEqPrec(x:mpf,y:mpf): return abs(x-y) < absolute_precision
+def zeroish_prec(x:mpf):     return abs(x) < absolute_precision 
 
 
 
@@ -78,7 +79,7 @@ def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
 def acceptableDifference(v1:mpf, v2:mpf, percent_gap:float) -> bool:
     '''True if the values are within percent_gap of eachother. False otherwise.\n
         percent_gap is the maximum multiplier between value1 and value2, where 2 is a 1.02 multiplier, 0.5 is a 1.005 multiplier, and so on. '''
-    p = 1+percent_gap/100
+    p = mpf(1+percent_gap/100)
     return v1 < v2 * p and v1 > v2 / p #If value1 is within percent_gap of value2, then it is acceptable
 
 def format_general(data:str, style:str=None, charlimit:int=0) -> str:
@@ -382,18 +383,14 @@ timezones = {
     'CAT':  ('Central African Time',                    -1, 0),
 }
 
-def unix_to_local_timezone(unix_timestamp:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
-    date = datetime.utcfromtimestamp(unix_timestamp)   #Uses the UNIX timestamp, not the 'datetime' column
+def unix_to_local_timezone(unix:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
     if tz_override: tz = timezones[tz_override]
     else:           tz = timezones[setting('timezone')]
-    date += timedelta(hours=tz[1], minutes=tz[2])
-    return str(date).replace('-','/')
-def timezone_to_unix(iso_time:str, tz:str) -> int:
-    date = datetime( int(iso_time[:4]), int(iso_time[5:7]), int(iso_time[8:10]), int(iso_time[11:13]), int(iso_time[14:16]), int(iso_time[17:19]) )
-    tz = timezones[tz]
-    date -= timedelta(hours=tz[1], minutes=tz[2]) #We're going backwards here
-    return (date - datetime(1970, 1, 1)).total_seconds()
-    
+    return str(datetime(1970, 1, 1) + timedelta(hours=tz[1], minutes=tz[2]) + timedelta(seconds=unix))
+def timezone_to_unix(iso:str, tz_override:str=None) -> int:
+    if tz_override: tz = timezones[tz_override]
+    else:           tz = timezones[setting('timezone')]
+    return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
 
 
 defsettingslib = { # A library containing all of the default settings

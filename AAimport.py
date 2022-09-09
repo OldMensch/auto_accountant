@@ -54,7 +54,7 @@ def import_binance(mainAppREF, fileDir, binanceWallet):   #Imports Binance trans
         #This is still here in case I actually broke the date when I re-saved the CSV file
         #date =      t[1][1].replace('-','/')
         date = t[1][1].replace('/',' ').replace(':',' ').split(' ')
-        date = date[2]+'/'+date[0]+'/'+date[1]+' '+date[3]+':'+date[4]+':'+date[5] #TODO TODO TODO: This date might be wrong! I probably messed up my copy of the binance CSV file.
+        date = date[2]+' '+date[0]+' '+date[1]+' '+date[3]+' '+date[4]+' '+date[5] #TODO TODO TODO: This date might be wrong! I probably messed up my copy of the binance CSV file.
         date = timezone_to_unix(date, 'UTC')
         category =  t[1][2]
         operation = t[1][3]
