@@ -1,6 +1,7 @@
 
 from functools import partial as p
 import tkinter as tk
+import datetime
 
 from AAlib import *
 
@@ -61,16 +62,16 @@ class Dialogue(tk.Toplevel):
     # MODULAR FRAMEWORK - commands to add labels, entry boxes, dropdowns, text boxes and more
     #==============================
 
-    def add_label(self, column, row, text, fg=palette('entrycursor'), bg=palette('light')):
+    def add_label(self, column, row, text, fg=palette('entrycursor'), bg=palette('light'), columnspan=1, rowspan=1):
         label = tk.Label(self.GUI['primaryFrame'], text=text, bg=bg, fg=fg, font=settings('font', 0.75))
-        label.grid(column=column,row=row,sticky="NSEW")
+        label.grid(column=column,row=row,columnspan=columnspan,rowspan=rowspan,sticky="NSEW")
         return label
 
-    def add_entry(self, column, row, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, height=8, format=None, charLimit=None):
+    def add_entry(self, column, row, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, height=8, format=None, charLimit=None, columnspan=1,rowspan=1):
         if format == 'description':     box = DescEntry(self.GUI['primaryFrame'], text, fg, bg, insertbackground, width, height)
         elif format == 'auto':          box = AutoEntryBox(self.GUI['primaryFrame'], text, fg, bg, insertbackground, width)
         else:                           box = EntryBox(self.GUI['primaryFrame'], text, fg, bg, insertbackground, width, format, charLimit)
-        box.grid(column=column,row=row,sticky="EW")
+        box.grid(column=column,row=row,columnspan=columnspan,rowspan=rowspan,sticky="NSEW")
         return box
     
     def add_dropdown_list(self, column, row, items, defaultItem='', currentItem='', selectCommand=None):
@@ -135,16 +136,18 @@ class AutoEntryBox(tk.Entry):
             return toReturn
 
 class EntryBox(tk.Entry):
-    def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, format=None, charLimit=None):
+    def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), cursor=palette('entrycursor'), width=32, format=None, charLimit=None, d_fg=palette('entrycursor'), d_bg=palette('dark')):
         '''For entering 1-line text, dates, floats, positive-only floats. Length can be limited.'''
-        super().__init__(upper, text=text, fg=fg, bg=bg, insertbackground=insertbackground, font=('Courier New', settings('font')[1]), width=width)
-
+        super().__init__(upper, text=text, fg=fg, bg=bg, readonlybackground=d_bg, insertbackground=cursor, font=('Courier New', settings('font')[1]), width=width)
         self.format = format
-        self.text = tk.StringVar(self, value=text)
+        self.text = tk.StringVar(self, value=text) #The actual, changing data variable of the entrybox
         self.configure(textvariable=self.text)
+        self.fg, self.d_fg = fg, d_fg
+        self.setting = False #True when we're changing the content of the entry box. Avoids "valid date" and "valid float" checks.
         
         if format in ['float', 'pos_float']: #Floats, and positive-only floats
             def validFloat(new, char):
+                if self.setting: return True
                 if charLimit != None and len(new) > charLimit:  return False
                 if char == ' ':                 return False    # no spaces
                 if new == '' or new == '.':     return True     #these just become 0 when saving
@@ -162,6 +165,7 @@ class EntryBox(tk.Entry):
         elif format == 'date':
             self.configure(justify='center')
             def validDate(d):       #dear fuck why is this so complicated to perform!!!!!!!
+                if self.setting: return True
                 self.selection_clear()
                 i = self.index('insert')
                 if len(d.get()) < 19:
@@ -187,6 +191,7 @@ class EntryBox(tk.Entry):
                         return
                 d.delete(i)
             def validDate2(char):
+                if self.setting: return True
                 if len(char) > 1 or not char.isdigit():
                     return False    
                 return True
@@ -197,6 +202,7 @@ class EntryBox(tk.Entry):
 
         elif charLimit != None:
             def validLength(new):
+                if self.setting: return True
                 if charLimit != None and len(new) > charLimit:  return False
                 return True
             valLength = self.register(validLength)
@@ -209,19 +215,39 @@ class EntryBox(tk.Entry):
             return '0'
         else:   
             return toReturn
+    
+    def set(self, string):
+        '''Changes the content of the entry box to specified string. \n
+        WARNING: This does not check whether the string is a valid input!'''
+        self.setting = True
+        self.text.set(string)
+        self.setting = False
+    
+    def disable(self):  self.configure(state='readonly',fg=self.d_fg)
+    def enable(self):   self.configure(state='normal',fg=self.fg)
+    def clear(self):    self.text.set('')
 
 class DescEntry(tk.Text):
-    def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, height=8):
+    def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, height=8, d_fg=palette('entrycursor'), d_bg=palette('dark')):
         super().__init__(upper, wrap='word', fg=fg, bg=bg, insertbackground=insertbackground, font=('Courier New', settings('font')[1]), height=height ,width=width)
         self.insert(0.0, text)
+        self.fg, self.bg, self.d_fg, self.d_bg = fg, bg, d_fg, d_bg
     def entry(self):
         '''Returns the content of the description box, without whitespace'''
         return self.get(1.0,'end').rstrip().lstrip()
 
+    def disable(self):      self.configure(state='disabled', fg=self.d_fg, bg=self.d_bg)
+    def enable(self):       self.configure(state='normal', fg=self.fg, bg=self.bg)
+    def set(self, string):  
+        self.clear()
+        self.insert(0.0, string)
+    def clear(self):        self.delete(1.0,'end')
+
 class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a SelectionList
-    def __init__(self, upper, items, defaultItem='', currentItem='', selectCommand=None):
+    def __init__(self, upper, items, defaultItem='', currentItem='', selectCommand=None, fg=palette('entrytext'), bg=palette('entry'), d_fg=palette('entrycursor'), d_bg=palette('dark')):
         self.defaultItem = defaultItem
         self.selectCommand = selectCommand
+        self.bg, self.d_bg = bg, d_bg
         if currentItem == '':   self.currentItem = tk.StringVar(upper, defaultItem)
         else:                   self.currentItem = tk.StringVar(upper, currentItem)
 
@@ -232,7 +258,7 @@ class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a
         items.insert(0, defaultItem)
 
         super().__init__(upper, self.currentItem, *items, command=self.select_command)
-        self.configure(bg=palette('entry'), fg=palette('entrycursor'), font=settings('font'), highlightthickness=0)
+        self.configure(fg=fg, bg=bg, font=('Courier New', settings('font')[1]), highlightthickness=0, disabledforeground=d_fg)
     
     def select_command(self, *kwargs):
         if self.selectCommand != None:  self.selectCommand(kwargs[0]) #kwargs[0] is the item just selected. This throws that into your custom command
@@ -240,6 +266,14 @@ class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a
     def entry(self):
         '''Returns the content of the dropdown'''
         return self.currentItem.get()
+    
+    def disable(self):      self.configure(state='disabled', bg=self.d_bg)
+    def enable(self):       self.configure(state='normal', bg=self.bg)
+    def set(self, string):  self.currentItem.set(string)
+    def clear(self):        self.currentItem.set(self.defaultItem)
+
+    
+    
 
 class SelectionList(tk.Frame):  #Selection list object
     def __init__(self, upper, items, checkList, allowMultipleSelection=False, title='', width=32, height=10, truncate=False, sort='alpha', button_command=None):

@@ -1,10 +1,13 @@
-from AAlib import *
+
 from AAdialogue import *
+from AAobjects import *
 from datetime import datetime
 
 from functools import partial as p
 from mpmath import mpf as precise
 from mpmath import mp
+from threading import Event
+
 
 
 class Message(Dialogue): #Simple text popup
@@ -38,9 +41,9 @@ class AssetEditor(Dialogue):    #For editing an asset's name, title, class, and 
         else:               
             super().__init__(upper, 'Edit ' + asset)
             self.ENTRY_ticker =     self.add_entry(1,0,self.asset.split('z')[0],width=24,charLimit=24)
-            self.ENTRY_name =       self.add_entry(1,1,PERM['assets'][asset]['name'],width=24,charLimit=24)
+            self.ENTRY_name =       self.add_entry(1,1,MAIN_PORTFOLIO.asset(asset).name(),width=24,charLimit=24)
             self.DROPDOWN_class =   self.add_dropdown_list(1, 2, self.AssetClasses, '-SELECT CLASS-', assetclasslib[asset.split('z')[1]]['name'])
-            self.ENTRY_desc =       self.add_entry(1,3,PERM['assets'][asset]['desc'],format='description',width=24)
+            self.ENTRY_desc =       self.add_entry(1,3,MAIN_PORTFOLIO.asset(asset).desc(),format='description',width=24)
         self.add_label(0,0,'Ticker')
         self.add_label(0,1,'Name')
         self.add_label(0,2,'Class')
@@ -56,7 +59,8 @@ class AssetEditor(Dialogue):    #For editing an asset's name, title, class, and 
         #DATA CULLING AND CONVERSION PART I
         #==============================
         try:
-            TICKER = self.ENTRY_ticker.entry()+'z'+self.AssetClasses[self.DROPDOWN_class.entry()]
+            TICKERCLASS = self.ENTRY_ticker.entry().upper()+'z'+self.AssetClasses[self.DROPDOWN_class.entry()]
+            CLASS = self.AssetClasses[self.DROPDOWN_class.entry()]
         except: #User hasn't selected an asset class
             Message(self, 'ERROR!', 'Must select an asset class')
             return
@@ -64,130 +68,122 @@ class AssetEditor(Dialogue):    #For editing an asset's name, title, class, and 
         NAME = self.ENTRY_name.entry()
         DESC = self.ENTRY_desc.entry()
         if self.asset == '':    TRANS = {}
-        else:                   TRANS = PERM['assets'][self.asset]['trans']
+        else:                   TRANS = MAIN_PORTFOLIO.transactions()
 
         # CHECKS
         #==============================
         #new ticker will be unique?
-        if TICKER in PERM['assets'] and TICKER != self.asset:
-            Message(self, 'ERROR!', 'An asset already exists with the same ticker and asset class!')
+        if TICKERCLASS != self.asset and MAIN_PORTFOLIO.hasAsset(TICKERCLASS):
+            Message(self, 'ERROR!', 'This asset already exists!')
             return
+        #Can't change ticker or class if there are transactions for this asset.
+        if self.asset not in ['',TICKERCLASS]:
+            if len(MAIN_PORTFOLIO.asset(self.asset)._ledger) > 0:
+                Message(self, 'ERROR!', 'Cannot modify asset ticker or class, due to existing transactions. Delete the transactions to modify this asset.')
+                return
         #Ticker isn't an empty string?
-        if TICKER == '':
+        if TICKERCLASS == '':
             Message(self, 'ERROR!', 'Must enter a ticker')
             return
-        #If not new and the asset class has been changed, make sure all old transactions are still valid under the new asset class
-        if self.asset != '' and self.asset.split('z')[1] != TICKER.split('z')[1]:
-            for t in PERM['assets'][self.asset]['trans']:
-                if PERM['assets'][self.asset]['trans'][t]['type'] not in assetclasslib[TICKER.split('z')[1]]['validTrans']:    #if transaction t's trans. type is NOT one of the valid types...
-                    Message(self, 'ERROR!', 'This asset contains transactions which are impossible for asset class \'' + assetclasslib[TICKER.split('z')[1]]['name'] + '\'.')
-                    return
         #Name isn't an empty string?
         if NAME == '':
             Message(self, 'ERROR!', 'Must enter a name')
             return
 
-
         #ASSET SAVING AND OVERWRITING
         #==============================
         #Create a NEW asset, or overwrite the old one
-        PERM['assets'][TICKER] = {'name':NAME, 'desc':DESC, 'trans':TRANS,}
+        MAIN_PORTFOLIO.add_asset(Asset(TICKERCLASS, NAME, DESC))
+        MAIN_PORTFOLIO.asset(TICKERCLASS)._transactions = TRANS
 
-        if self.asset not in ['',TICKER]: #ID CHANGE: The ID was modified. Deletes the old asset
-            PERM['assets'].pop(self.asset)  #removal of old asset
-            self.updateProfileAssets(TICKER)  #renaming of instances of this asset within profiles
+        #ID CHANGE: The ID was modified. Delete the old asset
+        if self.asset not in ['',TICKERCLASS]:  MAIN_PORTFOLIO.delete_asset(self.asset)
 
-        self.upper.metrics_ASSET(TICKER)
+        self.upper.metrics()
         self.upper.render(self.upper.asset, True)
         self.upper.undo_save()
         self.close()
 
     def delete(self):
-        PERM['assets'].pop(self.asset)      #removal from permanent data
-        self.updateProfileAssets()        #removal from profiles
+        #Not allowed to delete an asset with 
+        if len(MAIN_PORTFOLIO.asset(self.asset)._ledger) > 0:
+            Message(self, 'ERROR!', 'Cannot modify asset ticker or class, due to existing transactions. Delete the transactions to modify this asset.')
+            return
+        MAIN_PORTFOLIO.delete_asset(self.asset) #removal from portfolio
         self.upper.metrics()
         self.upper.render(None, True)
         self.upper.undo_save()
         self.close()
 
-    def updateProfileAssets(self, newID=None):    #Deletes instances of this asset from profiles. Adds 'newID' back into those profiles, if specified
-        '''If an asset name is modified, or An asset is deleted, that change has to be applied to profiles. This does that.'''
-        profiles = PERM['profiles']
-        for p in profiles:
-            if self.asset in profiles[p]['assets']:    #if this asset is in there, pop it
-                profiles[p]['assets'].pop(profiles[p]['assets'].index(self.asset))
-                if newID != None:
-                    profiles[p]['assets'].append(newID)
-
 class TransEditor(Dialogue):    #The most important, and most complex editor. For editing transactions' date, type, wallet, second wallet, tokens, price, usd, and description.
-    def __init__(self, portfolio, asset=None, transaction=''):
-        if asset == None:   raise NameError('||ERROR|| Called \'TransactionEditor\' without specifying \'asset\'')
-        self.portfolio, self.asset, self.transaction = portfolio, asset, transaction
+    def __init__(self, upper, transaction=''):
+        self.upper = upper
+        if transaction == '':   self.t = ''
+        else:                   self.t = MAIN_PORTFOLIO.transaction(transaction)
 
-        if transaction == '':   
-            super().__init__(portfolio, 'Create ' + asset.split('z')[0] + ' Transaction')
-            self.DROPDOWN_type = self.add_dropdown_list(1, 0, assetclasslib[asset.split('z')[1]]['validTrans'], '-SELECT TRANS TYPE-', selectCommand=self.select_type)
-            self.ENTRY_date = self.add_entry(1, 1, #inserts the current datetime for a new transaction
-                    str(datetime.now())[0:4]+'/'
-                    +str(datetime.now())[5:7]+'/'
-                    +str(datetime.now())[8:10]+' '
-                    +str(datetime.now())[11:13]+':'
-                    +str(datetime.now())[14:16]+':'
-                    +str(datetime.now())[17:19],
-                    width=24, format='date')
-            self.DROPDOWN_wallets= self.add_dropdown_list(1, 2, PERM['wallets'], '-SELECT SOURCE WALLET-')
-            self.DROPDOWN_wallets2 = DropdownList(self.GUI['primaryFrame'], PERM['wallets'], '-SELECT DEST. WALLET-')
-            self.ENTRY_tokens = self.add_entry(1,4,'', width=24, format='pos_float')
-            self.ENTRY_usd =    EntryBox(self.GUI['primaryFrame'], '', width=24, format='pos_float')
-            self.ENTRY_price =  EntryBox(self.GUI['primaryFrame'], '', width=24, format='pos_float')
-            self.ENTRY_desc =   self.add_entry(1,7,'', height=8, format='description')
-        else:               
-            super().__init__(portfolio, 'Edit ' + asset.split('z')[0] + ' Transaction')
-            currentTransaction = PERM['assets'][asset]['trans'][transaction]
-            self.DROPDOWN_type = self.add_dropdown_list(1, 0, assetclasslib[asset.split('z')[1]]['validTrans'], '-SELECT TRANS TYPE-', currentTransaction['type'], selectCommand=self.select_type)
-            self.ENTRY_date = self.add_entry(1, 1, transaction, width=24, format='date')
-            self.DROPDOWN_wallets= self.add_dropdown_list(1, 2, PERM['wallets'], '-SELECT SOURCE WALLET-', currentTransaction['wallet'])
-            self.ENTRY_tokens = self.add_entry(1,4,currentTransaction['tokens'], width=24, format='pos_float')
-            self.ENTRY_desc =   self.add_entry(1,7,currentTransaction['desc'], height=8, format='description')
+        # DIALOGUE INITIALIZATION
+        if transaction == '':   super().__init__(upper, 'Create Transaction')
+        else:                   super().__init__(upper, 'Edit Transaction') #Can't make this special, like the date or something... cause we can change ANYTHING and EVERYTHING
 
-            #Type-conditional initializations
-            if currentTransaction['type'] in ['purchase','sale']:
-                self.ENTRY_usd =    EntryBox(self.GUI['primaryFrame'], currentTransaction['usd'], width=24, format='pos_float')
-            else:
-                self.ENTRY_usd =    EntryBox(self.GUI['primaryFrame'], '', width=24, format='pos_float')
-            
-            if currentTransaction['type'] in ['gift','expense']:
-                self.ENTRY_price =  EntryBox(self.GUI['primaryFrame'], currentTransaction['price'], width=24, format='pos_float')
-            else:
-                self.ENTRY_price =  EntryBox(self.GUI['primaryFrame'], '', width=24, format='pos_float')
+        self.ENTRIES = {}
 
-            if currentTransaction['type'] == 'transfer':
-                self.DROPDOWN_wallets2 = DropdownList(self.GUI['primaryFrame'], PERM['wallets'], '-SELECT DEST. WALLET-', currentTransaction['wallet2'])
-            else:
-                self.DROPDOWN_wallets2 = DropdownList(self.GUI['primaryFrame'], PERM['wallets'], '-SELECT DEST. WALLET-')
-        
-        #Auto price and use always initialized without anything inside them
-        self.AUTO_price =   AutoEntryBox(self.GUI['primaryFrame'], '', fg='#ffffff', bg=palette('dark'), width=24, format='auto')
-        self.AUTO_usd =     AutoEntryBox(self.GUI['primaryFrame'], '', fg='#ffffff', bg=palette('dark'), width=24, format='auto')
+        # LABELS AND ENTRY BOXES - all containing their default inputs
+        self.add_label(0,0,'',rowspan=3)  #Empty label for decor purposes only
+        self.add_label(1,0,'Date',columnspan=2)
+        self.ENTRIES['date'] = self.add_entry(1, 1, # default datetime is... right now.
+                str(datetime.now())[0:4]+'/'
+                +str(datetime.now())[5:7]+'/'
+                +str(datetime.now())[8:10]+' '
+                +str(datetime.now())[11:13]+':'
+                +str(datetime.now())[14:16]+':'
+                +str(datetime.now())[17:19],
+                width=24, format='date',columnspan=2)
+        self.add_label(3,0,'Type')
+        self.ENTRIES['type'] =  self.add_dropdown_list(3, 1, pretty_trans.values(), ' -TYPE- ', selectCommand=self.select_type)
+        self.add_label(4,0,'Wallet')
+        self.ENTRIES['wallet']= self.add_dropdown_list(4, 1, MAIN_PORTFOLIO.walletkeys(), ' -WALLET- ')
+        self.add_label(1,2,'Asset',columnspan=2)
+        self.ENTRIES['loss_class'] = self.add_dropdown_list(1, 3, prettyClasses(), 'Fiat')
+        self.ENTRIES['fee_class'] =  self.add_dropdown_list(1, 4, prettyClasses(), '-NO FEE-')
+        self.ENTRIES['gain_class'] = self.add_dropdown_list(1, 5, prettyClasses(), 'Fiat')
+        self.ENTRIES['loss_asset'] = self.add_entry(2, 3, 'USD', width=24, charLimit=24, format='')
+        self.ENTRIES['fee_asset'] =  self.add_entry(2, 4, 'USD', width=24, charLimit=24, format='')
+        self.ENTRIES['gain_asset'] = self.add_entry(2, 5, 'USD', width=24, charLimit=24, format='')
+        self.add_label(3,2,'Quantity')
+        self.ENTRIES['loss_quantity'] = self.add_entry(3, 3, '', width=24, format='pos_float')
+        self.ENTRIES['fee_quantity'] =  self.add_entry(3, 4, '', width=24, format='pos_float')
+        self.ENTRIES['gain_quantity'] = self.add_entry(3, 5, '', width=24, format='pos_float')
+        self.add_label(4,2,'Price (USD)')
+        self.ENTRIES['loss_price'] = self.add_entry(4, 3, '', width=24, format='pos_float')
+        self.ENTRIES['fee_price'] =  self.add_entry(4, 4, '', width=24, format='pos_float')
+        self.ENTRIES['gain_price'] = self.add_entry(4, 5, '', width=24, format='pos_float')
+        self.add_label(0,3,'Loss')
+        self.add_label(0,4,'Fee')
+        self.add_label(0,5,'Gain')
+        self.add_label(0,6,'Desc.')
+        self.ENTRIES['description'] = self.add_entry(1,6,'', height=8, format='description', columnspan=4)
 
-        self.update_auto_price()    #Initializes the boxes to contain the expected information
-        self.update_auto_usd()
+        # ENTRY BOX DATA - if editing, overwrites entry boxes with transaction data
+        if transaction != '':
+            t_obj = MAIN_PORTFOLIO.transaction(transaction)
+            for data in valid_transaction_data_lib[t_obj.type()]:
+                tdata = t_obj.get(data)
+                if tdata == None:    continue       #Ignores missing data. Usually data is missing to save space in JSON.
+                
+                #Update entry box with known data.
+                if data[-6:] == '_asset':
+                    a = MAIN_PORTFOLIO.asset(tdata)
+                    self.ENTRIES[data].set(a.ticker())                              #Set asset ticker entry to ticker
+                    self.ENTRIES[data[:-6]+'_class'].set(a.prettyPrint('class'))    #Set asset class dropdown to class
+                elif data == 'type':
+                    self.ENTRIES[data].set(pretty_trans[tdata])
+                else:
+                    self.ENTRIES[data].set(str(tdata))
 
-        #Makes it so editing text in the ENTRY boxes automatically updates the values in the AUTO boxes
-        self.ENTRY_tokens.text.trace('w', lambda name, index, mode: self.update_auto_price())
-        self.ENTRY_tokens.text.trace('w', lambda name, index, mode: self.update_auto_usd())
-        self.ENTRY_usd.text.trace('w', lambda name, index, mode: self.update_auto_price())
-        self.ENTRY_price.text.trace('w', lambda name, index, mode: self.update_auto_usd())
-
-        #All of the labels
-        self.add_label(0,0,'Type')
-        self.add_label(0,1,'Date')
-        self.label_wallet = self.add_label(0,2,'Wallet')
-        self.label_wallet2 = self.add_label(0,3,'Dest. Wallet')
-        self.add_label(0,4,asset.split('z')[0])
-        self.label_usd = self.add_label(0,5,'USD')
-        self.label_price = self.add_label(0,6,'Price')
-        self.add_label(0,7,'Description')
+        # Traced, automatically fill in gain/loss price, for purchases, sales, and trades
+        self.ENTRIES['loss_quantity'].text.trace('w', lambda name, index, mode: self.auto_purchase_sale_price())
+        self.ENTRIES['gain_quantity'].text.trace('w', lambda name, index, mode: self.auto_purchase_sale_price())
+        self.ENTRIES['loss_price'].text.trace('w', lambda name, index, mode: self.auto_purchase_sale_price())
 
         #Menu buttons
         self.add_menu_button('Cancel', command=self.close)
@@ -195,144 +191,152 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         if transaction != '':   self.add_menu_button('Delete', "#ff0000", command=self.delete)
 
         #Runs 'select_type' to appropriately preset the color and existing entry boxes/labels, when editing an existing transaction
-        if transaction == '':   self.select_type(self.DROPDOWN_type.defaultItem)
-        else:                   self.select_type(currentTransaction['type'])
+        if transaction == '':   self.select_type(self.ENTRIES['type'].defaultItem)
+        else:                   self.select_type(pretty_trans[t_obj.type()])
     
-    def update_auto_price(self):
-        tokens = self.ENTRY_tokens.entry()
-        usd = self.ENTRY_usd.entry()
-        if mp.almosteq(precise(tokens),precise(0)):     return  #We have to stop the calculation if tokens == 0, cause then we'd divide by 0
-        self.AUTO_price.text.set(precise(usd)/precise(tokens))
-    def update_auto_usd(self):
-        tokens = self.ENTRY_tokens.entry()
-        price = self.ENTRY_price.entry()
-        self.AUTO_usd.text.set(precise(tokens)*precise(price))
+    def auto_purchase_sale_price(self): #Updates purchase/sale price when loss_quantity changes for a purchase/sale
+        try:
+            TYPE = uglyTrans(self.ENTRIES['type'].entry())
+            LQ = precise(self.ENTRIES['loss_quantity'].entry())
+            GQ = precise(self.ENTRIES['gain_quantity'].entry())
+            if TYPE == 'purchase':
+                self.ENTRIES['gain_price'].set(str(LQ/GQ))
+            elif TYPE == 'sale':
+                self.ENTRIES['loss_price'].set(str(GQ/LQ))
+            elif TYPE == 'trade':
+                LP = precise(self.ENTRIES['loss_price'].entry())
+                self.ENTRIES['gain_price'].set(str(LQ*LP/GQ))
+        except: return
 
-    def select_type(self, type):
+    def select_type(self, selection):
+        type = uglyTrans(selection)
         #COLOR CHANGES
-        if type == self.DROPDOWN_type.defaultItem:
-            self.DROPDOWN_type.configure(bg='#000000')
+        if selection == self.ENTRIES['type'].defaultItem:
+            self.ENTRIES['type'].configure(bg='#000000')
             self.GUI['mainFrame'].configure(bg=palette('accentdark'))
             self.GUI['title'].configure(bg=palette('accentdark'))
         else:
-            self.DROPDOWN_type.configure(bg=palette(type))
+            self.ENTRIES['type'].configure(bg=palette(type))
             self.GUI['mainFrame'].configure(bg=palette(type+'text'))
             self.GUI['title'].configure(bg=palette(type+'text'))
         
-        #ENTRY BOX & LABEL CHANGES
-        if type == 'transfer':
-            self.label_wallet.configure(text='Source Wallet')
-            self.label_wallet2.grid(column=0, row=3, sticky='NSEW')
-            self.DROPDOWN_wallets2.grid(column=1, row=3, sticky='EW')
+        #ENABLING AND DISABLING
+        if selection == self.ENTRIES['type'].defaultItem:
+            for entry in self.ENTRIES:
+                if entry != 'type': self.ENTRIES[entry].disable()
         else:
-            self.label_wallet.configure(text='Wallet')
-            self.label_wallet2.grid_forget()
-            self.DROPDOWN_wallets2.grid_forget()
-        
-        if type in ['purchase','sale','gift','expense']:
-            self.label_usd.grid(column=0,row=5,sticky='NSEW')
-            self.label_price.grid(column=0,row=6,sticky='NSEW')
-        else:
-            self.label_usd.grid_forget()
-            self.label_price.grid_forget()
+            for entry in self.ENTRIES:
+                if entry == 'type': continue
+                elif entry[-6:] == '_class':   
+                    if entry[:-6]+'_asset' in valid_transaction_data_lib[type]: self.ENTRIES[entry].enable() #Enable class selection only if asset selection possible
+                    else: self.ENTRIES[entry].disable()
+                elif entry in valid_transaction_data_lib[type]:   self.ENTRIES[entry].enable()
+                else:                                           self.ENTRIES[entry].disable()
+            if type == 'purchase':  
+                self.ENTRIES['loss_class'].set('Fiat')
+                self.ENTRIES['fee_class'].set('Fiat')
+                self.ENTRIES['loss_asset'].set('USD')
+                self.ENTRIES['fee_asset'].set('USD')
+            elif type == 'sale':    
+                self.ENTRIES['gain_class'].set('Fiat')
+                self.ENTRIES['fee_class'].set('Fiat')
+                self.ENTRIES['gain_asset'].set('USD')
+                self.ENTRIES['fee_asset'].set('USD')
 
-        if type in ['purchase','sale']:
-            self.ENTRY_usd.grid(column=1,row=5,sticky='EW')
-            self.AUTO_price.grid(column=1,row=6,sticky='EW')
-        else:
-            self.ENTRY_usd.grid_forget()
-            self.AUTO_price.grid_forget()
-        
-        if type in ['gift','expense']:
-            self.AUTO_usd.grid(column=1,row=5,sticky='EW')
-            self.ENTRY_price.grid(column=1,row=6,sticky='EW')
-        else:
-            self.AUTO_usd.grid_forget()
-            self.ENTRY_price.grid_forget()
-            
         self.center_dialogue()
 
     def delete(self):
-        PERM['assets'][self.asset]['trans'].pop(self.transaction)  #deletes the transaction
-        self.upper.undo_save()                          #creates a savepoint after deleting this
-        self.upper.metrics_ASSET(self.asset)            #recalculates metrics for this asset w/o this transaction
-        self.upper.market_metrics_ASSET(self.asset)     #recalculates market-based metrics for this asset, w/o this transaction
-        self.upper.render(self.asset, True)             #re-renders the main portfolio w/o this transaction
+        MAIN_PORTFOLIO.delete_transaction(self.t.get_hash())  #deletes the transaction
+        self.upper.undo_save()                            #creates a savepoint after deleting this
+        self.upper.metrics()                              #recalculates metrics for this asset w/o this transaction
+        self.upper.render(self.upper.asset, True)         #re-renders the main portfolio w/o this transaction
         self.close()
+
     def save(self):
         #DATA CULLING AND CONVERSION
         #==============================
-        DATE = self.ENTRY_date.entry()
-        TO_SAVE = {
-            'type' : self.DROPDOWN_type.entry(),
-            'wallet' : self.DROPDOWN_wallets.entry(),
-            'wallet2' : self.DROPDOWN_wallets2.entry(),
-            'tokens' : self.ENTRY_tokens.entry(),
-            'usd' : self.ENTRY_usd.entry(),
-            'price' : self.ENTRY_price.entry(),
-            'desc' : self.ENTRY_desc.entry(),
-        }
+        TO_SAVE = {}
+        for entry in self.ENTRIES:
+            data = self.ENTRIES[entry].entry()
+            if entry[-6:] == '_asset':  TO_SAVE[entry] = self.ENTRIES[entry].entry().upper() + 'z' + uglyClass(self.ENTRIES[entry[:-6]+'_class'].entry())
+            elif entry == 'type':       TO_SAVE['type'] = uglyTrans(self.ENTRIES['type'].entry())
+            else:                       TO_SAVE[entry] = self.ENTRIES[entry].entry()
 
-        #selected a type? (has to be checked for prior to removing irrelevant data)
-        if TO_SAVE['type'] == self.DROPDOWN_type.defaultItem:
-            Message(self, 'ERROR!', 'No transaction type was selected')
-            return
+        #If 'no fee' was selected, cull all other fee data.
+        if self.ENTRIES['fee_class'].entry() == self.ENTRIES['fee_class'].defaultItem:
+            TO_SAVE['fee_asset'] =    None
+            TO_SAVE['fee_quantity'] = None
+            TO_SAVE['fee_price'] =    None
+        # Short quick-access variables
+        DATE,TYPE = TO_SAVE['date'],TO_SAVE['type']
+        LA,LQ,LP = TO_SAVE['loss_asset'],TO_SAVE['loss_quantity'],TO_SAVE['loss_price']
+        FA,FQ,FP = TO_SAVE['fee_asset'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
+        GA,GQ,GP = TO_SAVE['gain_asset'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
 
-        #Removes data irrelevant to this specific transaction type
-        for data in list(TO_SAVE):
-            if data not in translib[TO_SAVE['type']]:
-                TO_SAVE.pop(data)
 
         # CHECKS
         #==============================
+        # CHECKS FOR GUARANTEED DATA
         error = None
-        #datetime will be unique?
-        if DATE in PERM['assets'][self.asset]['trans'] and DATE != self.transaction:
-            error = p(Message, self, 'ERROR!', 'A transaction already exists with this exact time and date for '+self.asset.split('z')[0]+'!')
 
+        #selected a type?
+        if self.ENTRIES['type'].entry() == self.ENTRIES['type'].defaultItem:
+            Message(self, 'ERROR!', 'No transaction type was selected.')    #Message and return here otherwise code breaks w/o a type selected
+            return  
         #valid datetime format?
         try:        datetime( int(DATE[:4]), int(DATE[5:7]), int(DATE[8:10]), int(DATE[11:13]), int(DATE[14:16]), int(DATE[17:19]) )
-        except:     error = p(Message, self, 'ERROR!', 'Invalid date!')
-
+        except:     error = 'Invalid date!'
         #selected a wallet? (start out with nothing selected)
-        if TO_SAVE['wallet'] == self.DROPDOWN_wallets.defaultItem:
-            error = p(Message, self, 'ERROR!', 'No wallet was selected')
-        #selected a wallet2? (start out with nothing selected)
-        if TO_SAVE['type'] == 'transfer':
-            if TO_SAVE['wallet2'] == self.DROPDOWN_wallets2.defaultItem:
-                error = p(Message, self, 'ERROR!', 'No destination wallet was selected')
-            if TO_SAVE['wallet2'] == TO_SAVE['wallet']:
-                error = p(Message, self, 'ERROR!', 'You cannot transfer from a wallet to itself! A transfer from a wallet to itself isn\'t really a transfer at all, yeah? ')
+        if TO_SAVE['wallet'] == self.ENTRIES['wallet'].defaultItem: error = 'No wallet was selected.'
 
-        #Tokens is non-zero?
-        if mp.almosteq(precise(TO_SAVE['tokens']),0):
-            error = p(Message, self, 'ERROR!', 'Tokens must be non-zero!')
+        # CHECKS FOR POTENTIAL DATA
+        valids = valid_transaction_data_lib[TYPE]
 
-        #USD is non-zero for purchases and sales?
-        if TO_SAVE['type'] in ['purchase', 'sale']:
-            if mp.almosteq(precise(TO_SAVE['usd']),0):
-                error = p(Message, self, 'ERROR!', 'USD must be non-zero!')
-        
-        #Price is non-zero for gifts and expenses?
-        if TO_SAVE['type'] in ['gift','expense']:
-            if mp.almosteq(precise(TO_SAVE['price']),0):
-                error = p(Message, self, 'ERROR!', 'Price must be non-zero!')
+        # Valid loss?
+        if 'loss_asset' in valids and    not MAIN_PORTFOLIO.hasAsset(LA): error = 'Loss asset does not exist in portfolio.'
+        if 'loss_quantity' in valids and zeroish(LQ):                     error = 'Loss quantity must be non-zero.'
+        if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.'
+        # Valid fee?
+        if FA != None: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
+            if                'fee_asset' in valids  and   not MAIN_PORTFOLIO.hasAsset(FA): error = 'Fee asset does not exist in portfolio.'
+            if FQ != None and 'fee_quantity' in valids and zeroish(FQ):                     error = 'Fee quantity must be non-zero.'
+            if FP != None and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
+        # Valid gain?
+        if 'gain_asset' in valids and    not MAIN_PORTFOLIO.hasAsset(GA): error = 'Gain asset does not exist in portfolio.'
+        if 'gain_quantity' in valids and zeroish(GQ):                     error = 'Gain quantity must be non-zero.'
+        if 'gain_price' in valids and    zeroish(GP):                     error = 'Gain price must be non-zero.'
+
+        # If loss/fee asset identical, or fee/gain asset identical, then the loss/fee or fee/gain price MUST be identical
+        if 'loss_price' in valids and FA!=None and LA==FA and not mp.almosteq(precise(LP),precise(FP)): error = 'If the loss and fee assets are the same, their price must be the same.'
+        if 'gain_price' in valids and FA!=None and GA==FA and not mp.almosteq(precise(GP),precise(FP)): error = 'If the fee and gain assets are the same, their price must be the same.'
+
+        # The loss and gain assets can't be identical, that's retarted. That means you would have sold something to buy itself... huh?
+        if LA==GA:    error = 'Loss and Gain asset cannot be the same.'
+
 
         if error != None:
-            error()
+            Message(self, 'ERROR!', error)
             return
 
-        #TRANSACTION SAVING AND OVERWRITING
+        # TRANSACTION SAVING AND OVERWRITING
         #==============================
         #Creates the new transaction or overwrites the old one
-        PERM['assets'][self.asset]['trans'][DATE] = TO_SAVE       
-        #Deletes the old transaction, if we renamed it
-        if self.transaction not in ['', DATE]:        PERM['assets'][self.asset]['trans'].pop(self.transaction)
+        new_trans = Transaction(DATE, TYPE, TO_SAVE['wallet'])                                  # Create rudimentary new transaction
+        for data in valids: new_trans._data[data] = TO_SAVE[data]   # Copy over only relevant data
+        new_trans.calc_values()
 
+        #transaction will be unique?
+        if (self.t == '' or new_trans.get_hash() != self.t.get_hash()) and MAIN_PORTFOLIO.hasTransaction(new_trans.get_hash()):
+            Message(self, 'ERROR!', 'This is too similar to an existing transaction!')
+            return
+
+        MAIN_PORTFOLIO.add_transaction(new_trans)               # Add the new transaction
+        if self.t != '' and new_trans.get_hash() != self.t.get_hash():
+            MAIN_PORTFOLIO.delete_transaction(self.t.get_hash())    # Delete the old transaction if it's hash will have changed
+            
         self.upper.undo_save()
-        self.upper.metrics_ASSET(self.asset)
-        self.upper.market_metrics_ASSET(self.asset)
-        self.upper.render(self.asset, True)
+        self.upper.metrics()
+        self.upper.render(self.upper.asset, True)
         self.close()
 
 
@@ -340,7 +344,7 @@ class AddressManager(Dialogue): #For selecting addresses to edit
     '''Creates a small window for selecting addresses to edit, or creating new addresses'''
     def __init__(self, upper):
         super().__init__(upper, 'Manage Addresses')
-        self.LIST_addresses = self.add_selection_list(0, 0, PERM['addresses'], False, False, width=24, truncate=True, button_command=self.edit_address)
+        self.LIST_addresses = self.add_selection_list(0, 0, MAIN_PORTFOLIO.addresskeys(), False, False, width=24, truncate=True, button_command=self.edit_address)
         self.add_menu_button('Cancel', command=self.close)
         self.add_menu_button('+ Address', palette('purchase'), '#000000', command=p(AddressEditor, self))
         self.center_dialogue()
@@ -349,19 +353,19 @@ class AddressManager(Dialogue): #For selecting addresses to edit
         AddressEditor(self, item)
 
     def refresh_addresses(self):
-        self.LIST_addresses.update_items(PERM['addresses'])
+        self.LIST_addresses.update_items(MAIN_PORTFOLIO.addresskeys())
 
 class AddressEditor(Dialogue): #For editing Addresses
-    '''Creates an address editing window, with master walletEditor \'walletEditor\', target wallet address list in PERM \'target\', and if editing an old address, address \'address\''''
+    '''Creates an address editing window, with master walletEditor \'walletEditor\', target wallet address list in MAIN_PORTFOLIO \'target\', and if editing an old address, address \'address\''''
     def __init__(self, addressManager, address=''):
         self.addressManager = addressManager
         self.address = address
         if address == '':   
             super().__init__(addressManager, 'Create Address')
-            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, PERM['wallets'], '-SELECT WALLET-')
+            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, MAIN_PORTFOLIO.walletkeys(), '-SELECT WALLET-')
         else:               
             super().__init__(addressManager, 'Edit Address')
-            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, PERM['wallets'], '-SELECT WALLET-', PERM['addresses'][address])
+            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, MAIN_PORTFOLIO.walletkeys(), '-SELECT WALLET-', MAIN_PORTFOLIO.address(address).wallet())
         self.ENTRY_address = self.add_entry(0, 0, address, width=52, charLimit=52)
         self.add_menu_button('Cancel', command=self.close)
         self.add_menu_button('Save', '#0088ff', command=self.save)
@@ -369,7 +373,7 @@ class AddressEditor(Dialogue): #For editing Addresses
         self.center_dialogue()
 
     def delete(self):
-        PERM['addresses'].pop(self.address)  #remove the old address
+        MAIN_PORTFOLIO.delete_address(self.address) #remove the old address
         self.addressManager.refresh_addresses()
         self.close()
 
@@ -383,20 +387,20 @@ class AddressEditor(Dialogue): #For editing Addresses
             Message(self, 'ERROR!', 'Must enter something!')
             return
         #new address will be unique?
-        if ADDRESS in PERM['addresses']:
+        if MAIN_PORTFOLIO.hasAddress(ADDRESS):
             Message(self, 'ERROR!', 'This address already exists!')
             return
         #Selected a wallet?
-        if WALLET == '-SELECT WALLET-':
+        if WALLET == self.DROPDOWN_wallets.defaultItem:
             Message(self, 'ERROR!', 'Must select a wallet!')
             return
 
         #ADDRESS SAVING
         #==============================
-        PERM['addresses'][ADDRESS] = WALLET
+        MAIN_PORTFOLIO.add_address(Address(ADDRESS, WALLET))
         #If we've renamed an address, delete the old one.
         if self.address != '' and self.address != ADDRESS:
-            PERM['addresses'].pop(self.address)
+            MAIN_PORTFOLIO.delete_address(self.address)
 
         self.addressManager.refresh_addresses()
         self.close()
@@ -406,7 +410,7 @@ class WalletManager(Dialogue): #For selecting wallets to edit
     '''Creates a small window for selecting wallets to edit, or creating new wallets'''
     def __init__(self, upper):
         super().__init__(upper, 'Manage Wallets')
-        self.walletlist = self.add_selection_list(0, 0, PERM['wallets'], False, False, width=24, button_command=self.edit_wallet)
+        self.walletlist = self.add_selection_list(0, 0, MAIN_PORTFOLIO.walletkeys(), False, False, width=24, button_command=self.edit_wallet)
         self.add_menu_button('Cancel', command=self.close)
         self.add_menu_button('+ Wallet', palette('purchase'), '#000000', command=p(WalletEditor, self))
         self.center_dialogue()
@@ -415,7 +419,7 @@ class WalletManager(Dialogue): #For selecting wallets to edit
         WalletEditor(self, item)
 
     def refresh_wallets(self):
-        self.walletlist.update_items(PERM['wallets'])
+        self.walletlist.update_items(MAIN_PORTFOLIO.walletkeys())
         
 class WalletEditor(Dialogue): #For editing Wallets
     def __init__(self, walletManager, wallet=''):
@@ -426,7 +430,7 @@ class WalletEditor(Dialogue): #For editing Wallets
             self.ENTRY_desc = self.add_entry(1,1,'',format='description',width=24)
         else:
             super().__init__(walletManager, 'Edit '+ wallet +' Wallet')
-            self.ENTRY_desc = self.add_entry(1,1,PERM['wallets'][wallet],format='description',width=24)
+            self.ENTRY_desc = self.add_entry(1,1,MAIN_PORTFOLIO.wallet(wallet).desc(),format='description',width=24)
         #Wallet Name Entry
         self.add_label(0,0,'Name')
         self.ENTRY_name = self.add_entry(1,0,wallet, width=24, charLimit=24)
@@ -439,13 +443,14 @@ class WalletEditor(Dialogue): #For editing Wallets
 
     def delete(self):
         #You can only delete a wallet if its name is not used by any transaction in the portfolio
-        if self.wallet in TEMP['metrics'][' PORTFOLIO']['wallets']:   #is the wallet you're deleting used anywhere in the portfolio?
-            Message(self, 'Error!', 'You cannot delete this wallet, as it is used by existing transactions.') # If so, you can't delete it. 
-            return
+        for t in MAIN_PORTFOLIO.transactions():
+            if t.wallet() == self.wallet:   #is the wallet you're deleting used anywhere in the portfolio?
+                Message(self, 'Error!', 'You cannot delete this wallet, as it is used by existing transactions.') # If so, you can't delete it. 
+                return
 
-        PERM['wallets'].pop(self.wallet)  #destroy the old wallet
-        self.updateProfileWallets()
+        MAIN_PORTFOLIO.delete_wallet(self.wallet)  #destroy the old wallet
         self.updateAddresses() #If we delete a wallet w/ attached addresses, delete those addresses
+        #Don't need to recalculate metrics or rerender AA, since you can only delete wallets if they're not in use
         self.walletManager.refresh_wallets()
         self.close()
 
@@ -455,10 +460,9 @@ class WalletEditor(Dialogue): #For editing Wallets
         # CHECKS
         #==============================
         #new ticker will be unique?
-        for wallet in PERM['wallets']:
-            if wallet.lower() == NAME.lower() and wallet.lower() != self.wallet.lower():
-                Message(self, 'ERROR!', 'A wallet already exists with this name!')
-                return
+        if MAIN_PORTFOLIO.hasWallet(NAME) and NAME != self.wallet:
+            Message(self, 'ERROR!', 'A wallet already exists with this name!')
+            return
         #Name isn't an empty string?
         if NAME == '':
             Message(self, 'ERROR!', 'Must enter a name for this wallet')
@@ -466,60 +470,67 @@ class WalletEditor(Dialogue): #For editing Wallets
 
         #WALLET SAVING AND OVERWRITING
         #==============================
-        PERM['wallets'][NAME] = DESC #Creates the new wallet, or overwrites the existing one's description
+        MAIN_PORTFOLIO.add_wallet(Wallet(NAME, DESC))   #Creates the new wallet, or overwrites the existing one's description
 
-        if self.wallet != '' and self.wallet != NAME:   #WALLET RE-NAMED
+        if self.wallet not in ['', NAME]:   #WALLET RE-NAMED
             #destroy the old wallet
-            PERM['wallets'].pop(self.wallet)   
+            MAIN_PORTFOLIO.delete_wallet(self.wallet) 
             self.updateAddresses(NAME)  
-            self.updateTransWallets(NAME)
-            self.updateProfileWallets(NAME)
+            for t in MAIN_PORTFOLIO.transactions():
+                if t.wallet() == self.wallet:   t._data['wallet'] = NAME    #sets wallet name to the new name for all relevant transactions
         
+            #Only reload metrics and rerender, if we rename a wallet
+            self.upper.upper.metrics()
+            self.upper.upper.render(self.upper.upper.asset, True)
+
         self.upper.refresh_wallets()
         self.close()
 
     def updateAddresses(self, newWalletName=None):
         '''If a wallet name is modified, or a wallet is deleted, modifies or deletes addresses accordingly'''
-        for address in list(PERM['addresses']):
-            if PERM['addresses'][address] == self.wallet:
-                if newWalletName == None:   PERM['addresses'].pop(address) #If this address's corresponding wallet has been deleted, delete it
-                else:                       PERM['addresses'][address] = newWalletName
+        for address in MAIN_PORTFOLIO.addresses():
+            if address.wallet() == self.wallet:
+                if newWalletName == None:   MAIN_PORTFOLIO.delete_address(address) #If this address's corresponding wallet has been deleted, delete it too
+                else:                       address._wallet = newWalletName #Otherwise we just renamed it, just rename it in the address object.
 
-    def updateTransWallets(self, newWalletName=None):
-        '''If a wallet name is modified, applies that to all relevant transactions.'''
-        for a in PERM['assets']:
-            #if self.wallet in TEMP['metrics'][a]['wallets']:   #skips assets that make no use of this wallet. Increases efficiency.
-                for t in PERM['assets'][a]['trans']:
-                    currTrans = PERM['assets'][a]['trans'][t]
-                    if currTrans['wallet'] == self.wallet:
-                        currTrans['wallet'] =  newWalletName            #sets wallet name to new name
-                    if currTrans['type'] == 'TRANSFER' and currTrans['wallet2'] == self.wallet:
-                        currTrans['wallet2'] =  newWalletName            #sets wallet2 name to new name
 
-    def updateProfileWallets(self, newWalletName=None):
-        '''If a wallet name is modified, or a wallet is deleted, applies that to all relevant profiles. '''
-        for p in PERM['profiles']:
-            wallets = PERM['profiles'][p]['wallets']
-            if self.wallet in wallets:    #if this asset is in there, pop it
-                wallets.remove(self.wallet)
-                if newWalletName != None:
-                    wallets.append(newWalletName)
+class ImportationDialogue(Dialogue): #For selecting addresses to edit
+    '''Allows user to specify one or two wallets which transactions will be imported to, for Gemini, Gemini Earn, Coinbase, etc.'''
+    def __init__(self, upper, continue_command, wallet_name):
+        super().__init__(upper, 'Manage Addresses')
+        self.add_label(0,0,wallet_name)
+        self.wallet = self.add_dropdown_list(1, 0, MAIN_PORTFOLIO.walletkeys(), ' -SELECT WALLET- ')
+        self.add_menu_button('Cancel', command=self.close)
+        self.add_menu_button('Import', palette('purchase'), '#000000', command=p(self.complete, continue_command, wallet_name))
+        self.center_dialogue()
+    
+    def complete(self, continue_command, wallet_name):
+        result = self.wallet.entry()
+        if result == self.wallet.defaultItem:   
+            Message(self, 'ERROR!','Must select a '+wallet_name+'.')
+            return
+        self.close()
+        continue_command(result)   #Runs the comm_importGemini or comm_importCoinbase, or whatever command again, but with wallet data
+    
 
+
+##########################################################################################
+# TODO TODO TODO - The profile manager needs a total rework with the removal of profiles
+##########################################################################################
 
 class ProfileManager(Dialogue):
     def __init__(self, upper):
         super().__init__(upper, 'Manage Profiles')
-        self.portfolio = upper
+        self.upper = upper
 
         #Used when closing, to check whether we should re-render the main portfolio
-        self.hashold = hash(json.dumps(PERM['profiles'], sort_keys=True))
+        self.hashold = hash(json.dumps(MAIN_PORTFOLIO.toJSON(), sort_keys=True))
 
-        self.LIST_profiles = self.add_selection_list(0,0,PERM['profiles'], True, False, 'Select a Profile', width=24, height=10, button_command=self.select_profile)
-        self.LIST_profiles.add_menu_button('+ Profile', palette('purchase'), '#000000', command=p(ProfileEditor, self))
+        self.LIST_profiles = self.add_selection_list(0,0,MAIN_PORTFOLIO.profilekeys(), True, False, 'Select a Profile', width=24, height=10, button_command=self.select_profile)
         self.editProfileButton = self.LIST_profiles.add_menu_button('Rename', palette('transfer'), '#000000', command=self.edit_profile)
         self.LIST_profiles.menu_buttons[1].configure(state='disabled')
-        self.LIST_wallets = self.add_selection_list(1,0,PERM['wallets'], True, True, 'Filter by Wallet', width=24, height=10, button_command=self.select_wallet)
-        self.LIST_assets = self.add_selection_list(2,0,self.assets_nice_print(PERM['assets']), True, True, 'Filter by Asset', width=24, height=10, button_command=self.select_asset)
+        self.LIST_wallets = self.add_selection_list(1,0,MAIN_PORTFOLIO.walletkeys(), True, True, 'Filter by Wallet', width=24, height=10, button_command=self.select_wallet)
+        self.LIST_assets = self.add_selection_list(2,0,self.assets_nice_print(MAIN_PORTFOLIO.assetkeys()), True, True, 'Filter by Asset', width=24, height=10, button_command=self.select_asset)
         self.LIST_classes = self.add_selection_list(3,0,self.classes_nice_print(assetclasslib), True, True, 'Filter by Class', width=24, height=10, button_command=self.select_class)
         self.LIST_wallets.add_menu_button('Clear All', command=self.LIST_wallets.clear_selection)
         self.LIST_assets.add_menu_button('Clear All', command=self.LIST_assets.clear_selection)
@@ -532,14 +543,11 @@ class ProfileManager(Dialogue):
 
         self.center_dialogue()
 
-    def edit_profile(self):
-        ProfileEditor(self, self.LIST_profiles.selection[0])
-
     def select_profile(self, item, selectionList):
         if item in selectionList:
-            self.LIST_wallets.set_selection(PERM['profiles'][item]['wallets'])
-            self.LIST_assets.set_selection(self.assets_nice_print(PERM['profiles'][item]['assets']))
-            self.LIST_classes.set_selection(self.classes_nice_print(PERM['profiles'][item]['classes']))
+            self.LIST_wallets.set_selection(MAIN_PORTFOLIO.profile(item).wallets())
+            self.LIST_assets.set_selection(self.assets_nice_print(MAIN_PORTFOLIO.profile(item).assets()))
+            self.LIST_classes.set_selection(self.classes_nice_print(MAIN_PORTFOLIO.profile(item).classes()))
             self.LIST_wallets.enable()
             self.LIST_assets.enable()
             self.LIST_classes.enable()
@@ -553,17 +561,17 @@ class ProfileManager(Dialogue):
             self.LIST_classes.disable()
             self.LIST_profiles.menu_buttons[1].configure(state='disabled')
     def select_wallet(self, item, selectionList):
-        if item in selectionList:   PERM['profiles'][self.LIST_profiles.selection[0]]['wallets'].append(item)
-        else:                       PERM['profiles'][self.LIST_profiles.selection[0]]['wallets'].remove(item)
+        if item in selectionList:   MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).wallets().append(item)
+        else:                       MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).wallets().remove(item)
     def select_asset(self, item, selectionList):
         ID = item.split(' ')[0]+'z'+item.split(' ')[1][1]
-        if item in selectionList:   PERM['profiles'][self.LIST_profiles.selection[0]]['assets'].append(ID)
-        else:                       PERM['profiles'][self.LIST_profiles.selection[0]]['assets'].remove(ID)
+        if item in selectionList:   MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).assets().append(ID)
+        else:                       MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).assets().remove(ID)
     def select_class(self, item, selectionList):
         for c in assetclasslib:
             if assetclasslib[c]['name'] == item:    ID = c
-        if item in selectionList:   PERM['profiles'][self.LIST_profiles.selection[0]]['classes'].append(ID)
-        else:                       PERM['profiles'][self.LIST_profiles.selection[0]]['classes'].remove(ID)
+        if item in selectionList:   MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).classes().append(ID)
+        else:                       MAIN_PORTFOLIO.profile(self.LIST_profiles.selection[0]).classes().remove(ID)
 
     def classes_nice_print(self, toBeNiced):
         niceList = []
@@ -577,67 +585,24 @@ class ProfileManager(Dialogue):
         return niceList
 
     def refresh_profiles(self):
-        self.LIST_profiles.update_items(PERM['profiles'])
+        self.LIST_profiles.update_items(MAIN_PORTFOLIO.profilekeys())
         self.select_profile(None, [])   #Effectively just clears and disables the whole interface
 
     def close(self):
         #resets the selected profile, if it was deleted/renamed
-        if self.portfolio.profile not in PERM['profiles']:      self.portfolio.profile = ''
+        if not MAIN_PORTFOLIO.hasProfile(self.upper.profile):   self.upper.profile = ''
         
         #Re-renders the portfolio, if we've actually made changes
-        hashnew = hash(json.dumps(PERM['profiles'], sort_keys=True))
+        hashnew = hash(json.dumps(MAIN_PORTFOLIO.toJSON(), sort_keys=True))
         if self.hashold != hashnew:
-            self.portfolio.create_PROFILE_MENU()    #Redoes the dropdown filtered list
-            self.portfolio.metrics()
-            self.portfolio.render(self.portfolio.asset, True)
-            self.portfolio.undo_save()
+            self.upper.create_PROFILE_MENU()    #Redoes the dropdown filtered list
+            self.upper.metrics()
+            self.upper.render(self.upper.asset, True)
+            self.upper.undo_save()
 
-        self.portfolio.grab_set()
-        self.portfolio.focus_set()
+        self.upper.grab_set()
+        self.upper.focus_set()
         self.destroy()
-
-class ProfileEditor(Dialogue):
-    def __init__(self, profileManager, profile=''):
-        self.profileManager = profileManager
-        self.profile = profile
-
-        if profile == '': #New profile
-            super().__init__(profileManager, 'Create Profile')
-        else:
-            super().__init__(profileManager, 'Edit Profile')
-        self.ENTRY_name = self.add_entry(1,0,profile, width=24, charLimit=24)
-        self.add_menu_button('Cancel', command=self.close)
-        self.add_menu_button('Save', '#0088ff', command=self.save)
-        if profile != '':    self.add_menu_button('Delete', "#ff0000", command=self.delete)
-        self.center_dialogue()
-
-    def delete(self):
-        PERM['profiles'].pop(self.profile)
-        self.profileManager.refresh_profiles()
-        self.close()
-
-    def save(self):
-        NAME = self.ENTRY_name.entry()
-
-        #CHECKS
-        #====================
-        #Name is unique?
-        if NAME in PERM['profiles'] and NAME != self.profile:
-            Message(self, 'ERROR!', 'A profile already exists with this name!')
-            return
-        #Name isn't an empty string?
-        if NAME == '':
-            Message(self, 'ERROR!', 'Must enter a name for this profile')
-            return
-        
-        #SAVING AND OVERWRITING
-        if self.profile == '':    #New profile
-            PERM['profiles'][NAME] = { 'wallets':[], 'classes':[], 'assets':[] }
-        elif NAME != self.profile:  #Renamed profile
-            PERM['profiles'][NAME] = PERM['profiles'][self.profile]
-            PERM['profiles'].pop(self.profile)
-        self.profileManager.refresh_profiles()
-        self.close()
 
 
 

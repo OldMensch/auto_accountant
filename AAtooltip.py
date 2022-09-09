@@ -1,56 +1,62 @@
 import tkinter as tk
-from typing import overload
 from AAlib import *
-from threading import Thread
+import threading
 from functools import partial as p
 import time
 
-#CREDIT: Credit to the guy on StackOverflow that I found this from! thank you!
 
-class ToolTip(object):
-    def __init__(self, widget):
+class ToolTipWindow(object):
+    def __init__(self):
+        #Important variables
+        self.text = ''
+        self.widget = None
+        self.tipwindow = None
+
+        #Tooltip Window
+        self.tipwindow = tk.Toplevel(self.widget)
+        self.tipwindow.wm_attributes('-alpha', 0)   #Invisible
+        self.tipwindow.wm_overrideredirect(1)
+        self.label = tk.Label(self.tipwindow, justify='left', bd=0, bg=palette('tooltipbg'), fg=palette('tooltipfg'), font=settings('font', 0.5))
+        self.label.pack(ipadx=1)
+
+        #Threading
+        self.leave_event = threading.Event()
+        self.leave_event.set()
+        self.enter_event = threading.Event()
+        threading.Thread(target=self.tooltip, daemon=True, args=(self.enter_event, self.leave_event)).start()
+
+
+    def tooltip(self, enter_event, leave_event):
+        leave_flag = True
+        enter_flag = False
+        while True:
+            if enter_flag: #You are hovering over a button. If you dont leave first, this "times out", and displays the tooltip
+                leave_flag = leave_event.wait(0.5) #Waits for 1 second before popup
+                #If user leaves before we should do the popup
+                if not leave_flag: #User stays long enough, change text, move window to right location, display the tooltip
+                    self.label.config(text=self.text)
+                    x, y, cx, cy = self.widget.bbox('insert')
+                    x = x +      self.widget.winfo_rootx() + self.widget.winfo_width()
+                    y = y + cy + self.widget.winfo_rooty() + self.widget.winfo_height()/2
+                    self.tipwindow.wm_attributes('-alpha', 1)
+                    self.tipwindow.wm_geometry('+%d+%d' % (x, y))
+                    self.tipwindow.lift()
+                    leave_flag = leave_event.wait() #Waits however long until user leaves the button
+                    self.tipwindow.wm_attributes('-alpha', 0)   
+            
+            enter_flag = enter_event.wait() #Waits however long until user hovers over a button again
+
+    def enter(self, widget, text, event):
         self.widget = widget
-        self.tipwindow = None
-        self.id = None
-        self.x = self.y = 0
-        self.STOP = 0
-        self.fadetime = settings('tooltipFade')
-        self.popuptime = settings('tooltipPopup')
-
-    def showtip(self, text):
-        stoporig = self.STOP
-        time.sleep(self.popuptime)
-        if self.STOP != stoporig:
-            return
         self.text = text
-        if self.tipwindow or not self.text:
-            return
-        x, y, cx, cy = self.widget.bbox('insert')
-        x = x + self.widget.winfo_rootx() + self.widget.winfo_width()
-        y = y + cy + self.widget.winfo_rooty() + self.widget.winfo_height()/2
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_attributes('-alpha', 0)
-        tw.wm_overrideredirect(1)
-        tw.wm_attributes('-alpha', 1)
-        label = tk.Label(tw, text=self.text, justify='left', bd=0, bg=palette('tooltipbg'), fg=palette('tooltipfg'), font=settings('font', 0.5))
-        tw.wm_geometry('+%d+%d' % (x, y))
-        label.pack(ipadx=1)
+        self.enter_event.set()
+        self.leave_event.clear()
 
-    def hidetip(self):
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            for i in range(0,self.fadetime):
-                tw.wm_attributes('-alpha',(self.fadetime-i)/self.fadetime)
-                time.sleep(0.01)
-            tw.destroy()
+    def leave(self, event):
+        self.leave_event.set()
+        self.enter_event.clear()
 
-def CreateToolTip(widget, text):
-    toolTip = ToolTip(widget)
-    def enter(event):
-        Thread(target=p(toolTip.showtip, text), daemon=True).start()
-    def leave(event):
-        toolTip.STOP += 1
-        Thread(target=toolTip.hidetip, daemon=True).start()
-    widget.bind('<Enter>', enter)
-    widget.bind('<Leave>', leave)
+    def CreateToolTip(self, widget, displayText):
+        widget.bind('<Enter>', p(self.enter, widget, displayText))
+        widget.bind('<Leave>', self.leave)
+
