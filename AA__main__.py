@@ -1,57 +1,38 @@
 #In-house
-from AAlib import marketdatalib
+from AAlib import *
 from AAmarketData import getMissingPrice, startMarketDataLoops
-from AAimport import *
-from AAdialogues import *
-from AAtooltip import ToolTipWindow
+import AAimport
+from AAdialogs import *
+import pandas as pd
 
 
 #Default Python
-import tkinter as tk
-from functools import partial as p
-from tkinter.filedialog import *
-import os
 import math
 
 import threading
 
-#3rd-Party
-try:
-    import pyi_splash   #This allows us to have an instant splash screen, but the module only exists after compiling the program.
-except: pass
 
-class AutoAccountant(tk.Tk):
+class AutoAccountant(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.iconify()
-        loadSettings()
-        loadIcons()
-        self.grab_set()
-        self.focus_set()
-
-        self.iconphoto(True, icons('logo'))
-        self.configure(bg='#000000') #you should NOT see this color (except when totally re-rendering all the assets)
-        self.protocol('WM_DELETE_WINDOW', self.comm_quit) #makes closing the window identical to hitting cancel
-        self.title('Portfolio Manager')
+        
+        self.setWindowIcon(icon('icon'))
+        self.setWindowTitle('Portfolio Manager')
         
         self.undoRedo = [0, 0, 0]  #index of first undosave, index of last undosave, index of currently loaded undosave
         self.rendered = ('portfolio', None) #'portfolio' renders all the assets. 'asset' combined with the asset tickerclass renders that asset
         self.page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
         self.sorted = []
-        self.ToolTips = ToolTipWindow(self.get_mouse_pos)
-        self.mouse_pos = (0,0)
         #Sets the timezone to 
         info_format_lib['date']['name'] = info_format_lib['date']['headername'] = info_format_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
-
-        self.create_GUI()
-        self.create_taskbar()
-        self.create_MENU()
-
+        self.__init_gui__()
+        self.__init_taskbar__()
+        self.__init_menu__()
 
         #Try to load last-used JSON file, if the file works and we have it set to start with the last used portfolio
-        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.comm_loadPortfolio(setting('lastSaveDir'))
-        else:                                                                           self.comm_newPortfolio(first=True)
+        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'))
+        else:                                                                           self.new(first=True)
 
         self.online_event = threading.Event()
         #Now that the hard data is loaded, we need market data
@@ -59,161 +40,189 @@ class AutoAccountant(tk.Tk):
             #If in Offline Mode, try to load any saved offline market data. If there isn't a file... loads nothing.
             try:
                 with open('#OfflineMarketData.json', 'r') as file:
-                    marketdatalib.update(json.load(file))
-                self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-                self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
+                    data = json.load(file)
+                    data['_timestamp']
+                    marketdatalib.update(data)
+                self.GUI['offlineIndicator'].setText('OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
+                self.GUI['offlineIndicator'].show() #Turns on a bright red indicator, which lets you know you're in offline mode
                 self.market_metrics()
-                self.render(sort=True)
             except:
-                self.online_event.set()
-                print('||ERROR|| Failed to load offline market data! Change the setting to go online.')
+                self.toggle_offline_mode()
+                print('||ERROR|| Failed to load offline market data! Going online.')
         else:
             self.online_event.set()
+            self.GUI['offlineIndicator'].hide()
 
         #We always turn on the threads for gethering market data. Even without internet, they just wait for the internet to turn on.
         startMarketDataLoops(self, self.online_event)
 
         #GLOBAL BINDINGS
         #==============================
-        self.bind('<Motion>', self._mouse)
-        self.bind('<MouseWheel>', self._mousewheel)
-        self.bind('<Control-z>', self._ctrl_z)
-        self.bind('<Control-y>', self._ctrl_y)
-        self.bind('<Escape>', self._esc)
-        self.bind('<Delete>', self._del)
+        self.wheelEvent = self._mousewheel                                          # Last/Next page
+        QShortcut(QKeySequence(self.tr("Ctrl+S")), self, self.save)   # Save
+        QShortcut(QKeySequence(self.tr("Ctrl+A")), self, self._ctrl_a)              # Select all rows of data
+        QShortcut(QKeySequence(self.tr("Ctrl+Y")), self, self._ctrl_y)              # Undo
+        QShortcut(QKeySequence(self.tr("Ctrl+Z")), self, self._ctrl_z)              # Redo
+        QShortcut(QKeySequence(self.tr("Esc")), self, self._esc)                    # Unselect, close window
+        QShortcut(QKeySequence(self.tr("Del")), self, self._del)                    # Delete selection
+        QShortcut(QKeySequence(self.tr("F11")), self, self._f11)                    # Fullscreen
 
-        self.geometry('%dx%d+%d+%d' % (setting('portWidth')/2, setting('portHeight')/2, self.winfo_x()-self.winfo_rootx(),0))#slaps this window in the upper-left-hand corner of the screen
-        self.state('zoomed') #starts the window maximized (not same as fullscreen!)
 
-        #Closes the splash screen now that the program is loaded
-        try: pyi_splash.close()
+        #Closes the PyInstaller splash screen now that the program is loaded
+        try: exec("""import pyi_splash\npyi_splash.close()""") # exec() is used so that VSCode ignores the "I can't find this module error"
         except: pass
 
-        self.GUI['GRID'].auto_format() #Automatically adjusts the # of items per page based on your font size
-        self.render()
+        self.render(sort=True) # Sorts and renders portfolio for the first time
+        self.showMaximized()
 
+        self.lastResizeTime = datetime.now()-timedelta(1)
+        self.installEventFilter(self)
+
+    def eventFilter(self, obj:QObject, event:QEvent, *args):
+        if event.type() == QEvent.Resize:
+            self.lastResizeTime = datetime.now()
+        if event.type() in (QEvent.HoverEnter, QEvent.NonClientAreaMouseButtonRelease) and datetime.now()-self.lastResizeTime < timedelta(hours=1):
+            self.GUI['GRID'].doResizification()
+            self.lastResizeTime = datetime.now()-timedelta(1)
+        return QWidget.eventFilter(self, self, event)
+
+        
 
 #NOTE: Tax forms have been temporarily disabled to speed up boot time until I implement a better method
 
 #TASKBAR, LOADING SAVING MERGING and QUITTING
 #=============================================================
-    def create_taskbar(self):
+    def __init_taskbar__(self):
         self.TASKBAR = {}
-        self.TASKBAR['taskbar'] = tk.Menu(self, tearoff=0)     #The big white bar across the top of the window
-        self.configure(menu=self.TASKBAR['taskbar'])
+        taskbar = self.TASKBAR['taskbar'] = QMenuBar(self)     #The big white bar across the top of the window
+        self.setMenuBar(taskbar)
 
         #'File' Tab
-        self.TASKBAR['file'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['file'], label='File')
-        self.TASKBAR['file'].add_command(label='New',     command=self.comm_newPortfolio)
-        self.TASKBAR['file'].add_command(label='Load...',    command=self.comm_loadPortfolio)
-        self.TASKBAR['file'].add_command(label='Save',    command=self.comm_savePortfolio)
-        self.TASKBAR['file'].add_command(label='Save As...', command=p(self.comm_savePortfolio, True))
-        self.TASKBAR['file'].add_command(label='Merge Portfolio', command=self.comm_mergePortfolio)
-        importmenu = tk.Menu(self, tearoff=0)
-        self.TASKBAR['file'].add_cascade(menu=importmenu, label='Import')
-        importmenu.add_command(label='Import Binance History',      command=self.comm_import_binance)
-        importmenu.add_command(label='Import Coinbase History',     command=self.comm_import_coinbase)
-        importmenu.add_command(label='Import Coinbase Pro History', command=self.comm_import_coinbase_pro)
-        importmenu.add_command(label='Import Etherscan History',    command=self.comm_import_etherscan)
-        importmenu.add_command(label='Import Gemini History',       command=self.comm_import_gemini)
-        importmenu.add_command(label='Import Gemini Earn History',  command=self.comm_import_gemini_earn)
-        importmenu.add_command(label='Import Yoroi Wallet History', command=self.comm_import_yoroi)
-        self.TASKBAR['file'].add_separator()
-        self.TASKBAR['file'].add_command(label='QUIT', command=self.comm_quit)
+        file = self.TASKBAR['file'] = QMenu('File')
+        taskbar.addMenu(file)
+        file.addAction('New',               self.new)
+        file.addAction('Load...',           self.load)
+        file.addAction('Save',              self.save)
+        file.addAction('Save As...',        p(self.save, True))
+        file.addAction('Merge Portfolio',   self.merge)
+        importmenu = QMenu('Import')
+        file.addMenu(importmenu)
+        importmenu.addAction('Import Binance History',      self.import_binance)
+        importmenu.addAction('Import Coinbase History',     self.import_coinbase)
+        importmenu.addAction('Import Coinbase Pro History', self.import_coinbase_pro)
+        importmenu.addAction('Import Etherscan History',    self.import_etherscan)
+        importmenu.addAction('Import Gemini History',       self.import_gemini)
+        importmenu.addAction('Import Gemini Earn History',  self.import_gemini_earn)
+        importmenu.addAction('Import Yoroi Wallet History', self.import_yoroi)
+        file.addSeparator()
+        file.addAction('QUIT', self.quit)
 
         #'Settings' Tab
-        self.TASKBAR['settings'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['settings'], label='Settings')
+        settings = self.TASKBAR['settings'] = QMenu('Settings')
+        taskbar.addMenu(settings)
 
-        def toggle_offline_mode():
-            set_setting('offlineMode',not setting('offlineMode'))
-            if setting('offlineMode'): #Changed to Offline Mode
-                with open('#OfflineMarketData.json', 'w') as file:
-                    json.dump(marketdatalib, file, indent=4, sort_keys=True)
-                self.online_event.clear()
-                self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-                self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
-            else:                           #Changed to Online Mode
-                self.online_event.set()
-                self.GUI['offlineIndicator'].forget() #Removes the offline indicator
+        self.offlineMode = QAction('Offline Mode', parent=settings, triggered=self.toggle_offline_mode, checkable=True, checked=setting('offlineMode'))
+        settings.addAction(self.offlineMode)
 
-        self.TASKBAR['settings'].values = {}
-        self.TASKBAR['settings'].values['offlineMode'] = tk.BooleanVar(value=setting('offlineMode'))
-
-        self.TASKBAR['settings'].add_checkbutton(label='Offline Mode', command=toggle_offline_mode, variable=self.TASKBAR['settings'].values['offlineMode'])
 
         def set_timezone(tz:str):
             set_setting('timezone', tz)                         # Change the timezone setting itself
             for transaction in MAIN_PORTFOLIO.transactions():   # Recalculate the displayed ISO time on all of the transactions
                 transaction.calc_iso_date()
             info_format_lib['date']['name'] = info_format_lib['date']['headername'] = info_format_lib['date']['name'].split('(')[0]+'('+tz+')'
-            self.render()   #Only have to re-render, since metrics is based on the UNIX time
+            self.render()   #Only have to re-render w/o recalculating metrics, since metrics is based on the UNIX time
+        timezonemenu = self.TASKBAR['timezone'] = QMenu('Timezone')
+        settings.addMenu(timezonemenu)
 
-
-        self.TASKBAR['timezone'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['settings'].add_cascade(menu=self.TASKBAR['timezone'], label='Timezone')
-        self.TASKBAR['settings'].values['timezone'] = tk.StringVar(value='('+setting('timezone')+') '+timezones[setting('timezone')][0])
+        timezoneActionGroup = QActionGroup(timezonemenu)
         for tz in timezones:
-            self.TASKBAR['timezone'].add_radiobutton(label='('+tz+') '+timezones[tz][0], command=p(set_timezone, tz), variable=self.TASKBAR['settings'].values['timezone'])
+            timezonemenu.addAction(QAction('('+tz+') '+timezones[tz][0], parent=timezonemenu, triggered=p(set_timezone, tz), actionGroup=timezoneActionGroup, checkable=True, checked=(setting('timezone') == tz)))
 
-        #'About' Tab
-        self.TASKBAR['about'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['about'], label='About')
-        self.TASKBAR['about'].add_command(label='MIT License', command=self.comm_copyright)
+        def light_mode(): app.setStyleSheet('')
+        def dark_mode():  app.setStyleSheet(qdarkstyle.load_stylesheet_pyside2())
+        appearancemenu = self.TASKBAR['appearance'] = QMenu('Appearance')
+        settings.addMenu(appearancemenu)
+        appearancemenu.addAction('Light Mode', light_mode)
+        appearancemenu.addAction('Dark Mode', dark_mode)
 
-        #'Info' Tab
-        self.TASKBAR['info'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['info'], label='Info')
-
-        def toggle_header(info):
-            if info in setting('header_portfolio'):    self.hide_header(info)
-            else:                                       self.show_header(info)
-
-        self.TASKBAR['info'].values = {}
-        for info in assetinfolib:
-            self.TASKBAR['info'].values[info] = tk.BooleanVar(value=info in setting('header_portfolio')) #Default value true if in the header list
-            self.TASKBAR['info'].add_checkbutton(label=info_format_lib[info]['name'], command=p(toggle_header, info), variable=self.TASKBAR['info'].values[info])
-
-        #'Accounting' Tab
-        self.TASKBAR['accounting'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['accounting'], label='Accounting')
+        #'Accounting' Submenu
+        accountingmenu = self.TASKBAR['accounting'] = QMenu('Accounting Method')
+        settings.addMenu(accountingmenu)
         def set_accounting_method(method):
             set_setting('accounting_method', method)
             self.metrics()
             self.render(sort=True)
-        self.accounting_method = tk.StringVar()
-        self.accounting_method.set(setting('accounting_method'))
-        self.TASKBAR['accounting'].add_radiobutton(label='First in First Out (FIFO)',       variable=self.accounting_method, value='fifo',    command=p(set_accounting_method, 'fifo'))
-        self.TASKBAR['accounting'].add_radiobutton(label='Last in First Out (LIFO)',        variable=self.accounting_method, value='lifo',    command=p(set_accounting_method, 'lifo'))
-        self.TASKBAR['accounting'].add_radiobutton(label='Highest in First Out (HIFO)',     variable=self.accounting_method, value='hifo',    command=p(set_accounting_method, 'hifo'))
+        accountingactions = {}
+        accountingActionGroup = QActionGroup(accountingmenu)
+        accountingactions['fifo'] = QAction('First in First Out (FIFO)',   parent=accountingmenu, triggered=p(set_accounting_method, 'fifo'), actionGroup=accountingActionGroup, checkable=True)
+        accountingactions['lifo'] = QAction('Last in First Out (LIFO)',    parent=accountingmenu, triggered=p(set_accounting_method, 'lifo'), actionGroup=accountingActionGroup, checkable=True)
+        accountingactions['hifo'] = QAction('Highest in First Out (HIFO)', parent=accountingmenu, triggered=p(set_accounting_method, 'hifo'), actionGroup=accountingActionGroup, checkable=True)
+        for method in accountingactions:
+            accountingmenu.addAction(accountingactions[method])
+            if setting('accounting_method') == method: accountingactions[method].setChecked(True)
+
+        #'About' Tab
+        about = self.TASKBAR['about'] = QMenu('About')
+        taskbar.addMenu(about)
+        about.addAction('MIT License', self.copyright)
+
+        #'Info' Tab
+        infomenu = self.TASKBAR['info'] = QMenu('Info')
+        taskbar.addMenu(infomenu)
+        
+        self.infoactions = {
+            info:QAction(info_format_lib[info]['name'], parent=infomenu, triggered=p(self.toggle_header, info), checkable=True, checked=(info in setting('header_portfolio'))) for info in assetinfolib
+            }
+        for action in self.infoactions:   infomenu.addAction(action)
 
         #'Taxes' Tab
-        self.TASKBAR['taxes'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['taxes'], label='Taxes')
-        self.TASKBAR['taxes'].add_command(label='Generate data for IRS Form 8949', command=self.tax_Form_8949)
-        self.TASKBAR['taxes'].add_command(label='Generate data for IRS Form 1099-MISC', command=self.tax_Form_1099MISC)
+        taxes = self.TASKBAR['taxes'] = QMenu('Taxes')
+        taskbar.addMenu(taxes)
+        taxes.addAction('Generate data for IRS Form 8949', self.tax_Form_8949)
+        taxes.addAction('Generate data for IRS Form 1099-MISC', self.tax_Form_1099MISC)
 
         #'DEBUG' Tab
-        self.TASKBAR['DEBUG'] = tk.Menu(self, tearoff=0)
-        self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['DEBUG'], label='DEBUG')
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG find all missing price data',     command=self.DEBUG_find_all_missing_prices)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG delete all transactions, by wallet',     command=self.DEBUG_delete_all_of_asset)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG increase page length',     command=self.DEBUG_increase_page_length)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG decrease page length',     command=self.DEBUG_decrease_page_length)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG grayify',     command=self.DEBUG_grayify)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG time report',     command=p(ttt, 'average_report'))
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG time reset',     command=p(ttt, 'reset'))
+        DEBUG = self.TASKBAR['DEBUG'] = QMenu('DEBUG')
+        taskbar.addMenu(DEBUG)
+        DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
+        DEBUG.addAction('DEBUG delete all transactions, by wallet',     self.DEBUG_delete_all_of_asset)
+        DEBUG.addAction('DEBUG increase page length',     self.DEBUG_increase_page_length)
+        DEBUG.addAction('DEBUG decrease page length',     self.DEBUG_decrease_page_length)
+        DEBUG.addAction('DEBUG time report',     p(ttt, 'average_report'))
+        DEBUG.addAction('DEBUG time reset',     p(ttt, 'reset'))
 
+    def toggle_offline_mode(self):
+        if setting('offlineMode'):  #Changed from Offline to Online Mode
+            self.online_event.set()
+            self.GUI['offlineIndicator'].hide() #Removes the offline indicator
+        else:                       #Changed to from Online to Offline Mode
+            if '_timestamp' in marketdatalib:   # Saves marketdatalib for offline use, if we have any data to save
+                with open('#OfflineMarketData.json', 'w') as file:
+                    json.dump(marketdatalib, file, indent=4, sort_keys=True)
+            else:                               # If we don't have data to save, try to load old data. If that fails... we're stuck in Online Mode
+                try:
+                    with open('#OfflineMarketData.json', 'r') as file:
+                        data = json.load(file)
+                        data['_timestamp']
+                        marketdatalib.update(data)
+                except:
+                    Message(self, 'Offline File Error', 'Failed to load offline market data cache. Staying in online mode.')
+            self.online_event.clear()
+            self.GUI['offlineIndicator'].setText('OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
+            self.GUI['offlineIndicator'].show() #Turns on a bright red indicator, which lets you know you're in offline mode
+            self.metrics()
+            self.render()
+        set_setting('offlineMode',not setting('offlineMode'))
+        self.offlineMode.setChecked(setting('offlineMode'))
         
     def tax_Form_8949(self):
-        dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 8949')
+        dir = QFileDialog.getOpenFileName(self, 'Save data for IRS Form 8949', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
         if dir == '':   return
         self.metrics(tax_report='8949')
         with open(dir, 'w', newline='') as file:
             file.write(TEMP['taxes']['8949'].to_csv())
     def tax_Form_1099MISC(self):
-        dir = asksaveasfilename( defaultextension='.CSV', filetypes={('CSV','.csv')}, title='Save data for IRS Form 1099-MISC')
+        dir = QFileDialog.getOpenFileName(self, 'Save data for IRS Form 1099-MISC', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
         if dir == '':   return
         self.metrics(tax_report='1099-MISC')
         with open(dir, 'w', newline='') as file:
@@ -241,94 +250,91 @@ class AutoAccountant(tk.Tk):
     def DEBUG_decrease_page_length(self):
         self.GUI['GRID'].update_page_length(setting('itemsPerPage')-5)
         self.render()
-    def DEBUG_grayify(self):
-        self.GUI['GRID'].force_formatting(palette('neutral'),palette('menudark'), None, 'center')
 
-    def comm_import_binance(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_binance, 'Binance Wallet') 
+    def import_binance(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_binance, 'Binance Wallet') 
         else:
-            dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Binance Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Binance Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            import_binance(self, dir, wallet)
-    def comm_import_coinbase(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_coinbase, 'Coinbase Wallet') 
+            AAimport.binance(self, dir, wallet)
+    def import_coinbase(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_coinbase, 'Coinbase Wallet') 
         else:
-            dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Coinbase Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            import_coinbase(self, dir, wallet)
-    def comm_import_coinbase_pro(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_coinbase_pro, 'Coinbase Pro Wallet') 
+            AAimport.coinbase(self, dir, wallet)
+    def import_coinbase_pro(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_coinbase_pro, 'Coinbase Pro Wallet') 
         else:
-            dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Coinbase Pro Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Pro Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            import_coinbase_pro(self, dir, wallet)
-    def comm_import_etherscan(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_etherscan, 'Ethereum Wallet') 
+            AAimport.coinbase_pro(self, dir, wallet)
+    def import_etherscan(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_etherscan, 'Ethereum Wallet') 
         else:
-            ETHdir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Etherscan ETH Transaction History')
+            ETHdir = QFileDialog.getOpenFileName(self, 'Import Etherscan ETH Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if ETHdir == '':   return
-            ERC20dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Etherscan ERC-20 Transaction History')
+            ERC20dir = QFileDialog.getOpenFileName(self, 'Import Etherscan ERC-20 Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if ERC20dir == '':   return
-            import_etherscan(self, ETHdir, ERC20dir, wallet)
-    def comm_import_gemini(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_gemini, 'Gemini Wallet') 
+            AAimport.etherscan(self, ETHdir, ERC20dir, wallet)
+    def import_gemini(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_gemini, 'Gemini Wallet') 
         else:
-            dir = askopenfilename( filetypes={('XLSX','.xlsx')}, title='Import Gemini Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Gemini Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
             if dir == '':   return
-            import_gemini(self, dir, wallet)
-    def comm_import_gemini_earn(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_gemini_earn, 'Gemini Earn Wallet') 
+            AAimport.gemini(self, dir, wallet)
+    def import_gemini_earn(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_gemini_earn, 'Gemini Earn Wallet') 
         else:
-            dir = askopenfilename( filetypes={('XLSX','.xlsx')}, title='Import Gemini Earn Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Gemini Earn Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
             if dir == '':   return
-            import_gemini_earn(self, dir, wallet)
-    def comm_import_yoroi(self, wallet=None):
-        if wallet == None:    ImportationDialogue(self, self.comm_import_yoroi, 'Yoroi Wallet') 
+            AAimport.gemini_earn(self, dir, wallet)
+    def import_yoroi(self, wallet=None):
+        if wallet == None:    ImportationDialog(self, self.import_yoroi, 'Yoroi Wallet') 
         else:
-            dir = askopenfilename( filetypes={('CSV','.csv')}, title='Import Yoroi Wallet Transaction History')
+            dir = QFileDialog.getOpenFileName(self, 'Import Yoroi Wallet Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            import_yoroi(self, dir, wallet)
+            AAimport.yoroi(self, dir, wallet)
 
-
-    def comm_savePortfolio(self, saveAs=False, secondary=None):
-        if saveAs or setting('lastSaveDir') == '':
-            dir = asksaveasfilename( defaultextension='.JSON', filetypes={('JSON','.json')}, title='Save Portfolio')
+    def save(self, saveAs=False):
+        if saveAs or not os.path.isfile(setting('lastSaveDir')):
+            dir = QFileDialog.getSaveFileName(self, 'Save Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         else:
+            if not self.isUnsaved(): return
             dir = setting('lastSaveDir')
         if dir == '':
             return
-        self.title('Portfolio Manager - ' + dir)
+        self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         with open(dir, 'w') as file:
             json.dump(MAIN_PORTFOLIO.toJSON(), file, sort_keys=True)
-        if secondary:   secondary()
         if saveAs:      set_setting('lastSaveDir', dir)
-    def comm_newPortfolio(self, first=False):
+    def new(self, first=False):
         set_setting('lastSaveDir', '')
         MAIN_PORTFOLIO.clear()
-        self.title('Portfolio Manager')
+        self.setWindowTitle('Portfolio Manager')
         self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
         self.metrics()
         self.render(('portfolio',None), True)
         if not first:   self.undo_save()
-    def comm_loadPortfolio(self, dir=None):
-        if dir == None: dir = askopenfilename( filetypes={('JSON','.json')}, title='Load Portfolio')
+    def load(self, dir=None):
+        if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':   return
         try:    
             with open(dir, 'r') as file:
                 decompile = json.load(file)    #Attempts to load the file
         except:
             Message(self, 'Error!', 'File couldn\'t be loaded. Probably corrupt or something.' )
-            self.comm_newPortfolio(first=True)
+            self.new(first=True)
             return
         MAIN_PORTFOLIO.loadJSON(decompile)
-        self.title('Portfolio Manager - ' + dir)
+        self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         set_setting('lastSaveDir', dir)
         self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
         self.metrics()
         self.render(('portfolio',None), True)
         self.undo_save()  
-    def comm_mergePortfolio(self): #Doesn't overwrite current portfolio by default.
-        dir = askopenfilename( filetypes={('JSON','.json')}, title='Load Portfolio for Merging')
+    def merge(self): #Doesn't overwrite current portfolio by default.
+        dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':
             return
         try:
@@ -339,27 +345,25 @@ class AutoAccountant(tk.Tk):
             return
         MAIN_PORTFOLIO.loadJSON(decompile, True, False)
         set_setting('lastSaveDir', '') #resets the savedir. who's to say where a merged portfolio should save to? why should it be the originally loaded file, versus any recently merged ones?
-        self.title('Portfolio Manager')
+        self.setWindowTitle('Portfolio Manager')
         self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
         self.metrics()
         self.render(('portfolio',None), True)
         self.undo_save()
 
-    def comm_quit(self, finalize=False):
-        '''Quits the program. Set finalize to TRUE to skip the \'are you sure?' prompt.'''
-        if not finalize:   
-            if self.isUnsaved():
-                unsavedPrompt = Prompt(self, 'Unsaved Changes', 'Are you sure you want to quit? This cannot be undone!')
-                unsavedPrompt.add_menu_button('Quit', bg='#ff0000', command=p(self.comm_quit, True) )
-                unsavedPrompt.add_menu_button('Save and Quit', bg='#0088ff', command=p(self.comm_savePortfolio, secondary=p(self.comm_quit, True)))
-                unsavedPrompt.center_dialogue()
-            else:
-                self.comm_quit(True)
+    def quit(self, event=None):
+        if event: event.ignore() # Prevents program from closing if you hit the main window's 'X' button, instead I control whether it closes here.
+        def save_and_quit():
+            self.save()
+            app.quit()
+
+        if self.isUnsaved():
+            unsavedPrompt = Prompt(self, 'Unsaved Changes', 'Are you sure you want to quit? This cannot be undone!')
+            unsavedPrompt.add_menu_button('Quit', app.quit, styleSheet=style('delete'))
+            unsavedPrompt.add_menu_button('Save and Quit', save_and_quit, styleSheet=style('save'))
+            unsavedPrompt.show()
         else:
-            #also, closing the program always saves the settings!
-            saveSettings()
-            import sys
-            sys.exit()
+            app.quit()
 
     def isUnsaved(self):
         lastSaveDir = setting('lastSaveDir')
@@ -380,145 +384,168 @@ class AutoAccountant(tk.Tk):
 
 #OVERARCHING GUI FRAMEWORK
 #=============================================================
-    def create_GUI(self):
+    def __init_gui__(self):
         #GUI CREATION
         #==============================
         self.GUI = {}
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(1, weight=1)
 
+        #Contains everything
+        self.GUI['masterLayout'] = QGridLayout(spacing=0, margin=(0))
+        self.GUI['masterFrame'] = QWidget(self, layout=self.GUI['masterLayout'])
         #contains the menu
-        self.GUI['menuFrame'] = tk.Frame(self, bg=palette('menudark'))
+        self.GUI['menuLayout'] = QHBoxLayout()
+        self.GUI['menuFrame'] = QFrame(layout=self.GUI['menuLayout'])
         #contains the big title and overall stats for the portfolio/asset 
-        self.GUI['primaryFrame'] = tk.Frame(self, bg=palette('accentdark'))
-        self.GUI['title'] = tk.Label(self.GUI['primaryFrame'], width=16, text='Auto-Accountant', font=setting('font', 1.5), fg=palette('entrytext'),  bg=palette('accent'))
-        self.GUI['subtitle'] = tk.Label(self.GUI['primaryFrame'], text='Overall Portfolio', font=setting('font', 1), fg=palette('entrycursor'),  bg=palette('accent'))
-        self.GUI['buttonFrame'] = tk.Frame(self.GUI['primaryFrame'], bg=palette('accentdark'))
-        self.GUI['info'] = tk.Button(self.GUI['buttonFrame'], image=icons('info2'), bg=palette('entry'), command=self.comm_portfolio_info)
-        self.GUI['edit'] = tk.Button(self.GUI['buttonFrame'], image=icons('settings2'), bg=palette('entry'))
-        self.GUI['new_asset'] =       tk.Button(self.GUI['buttonFrame'], text='+ Asset',  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'), command=p(AssetEditor, self))
-        self.GUI['new_transaction'] = tk.Button(self.GUI['buttonFrame'], text='+ Trans',  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'), command=p(TransEditor, self))
-        self.GUI['info_pane'] = TextBox(self.GUI['primaryFrame'], state='readonly', font=setting('font', 1.5), fg=palette('entrycursor'),  bg=palette('accent'), width=1)
-        self.GUI['back'] = tk.Button(self.GUI['primaryFrame'], text='Return to\nPortfolio', font=setting('font', 0.5),  fg=palette('entrycursor'), bg=palette('entry'), command=p(self.render, ('portfolio',None), True))
-        self.GUI['page_number'] = tk.Label(self.GUI['primaryFrame'], text='Page XXX of XXX', font=setting('font', 0.5), fg=palette('entrycursor'),  bg=palette('accentdark'))
-        self.GUI['page_next'] = tk.Button(self.GUI['primaryFrame'], image=icons('arrow_down'), bg=palette('entry'), command=self.comm_page_next)
-        self.GUI['page_last'] = tk.Button(self.GUI['primaryFrame'], image=icons('arrow_up'), bg=palette('entry'), command=self.comm_page_last)
+        self.GUI['sidePanelLayout'] = QGridLayout()
+        self.GUI['sidePanelFrame'] = QFrame(layout=self.GUI['sidePanelLayout'], frameShape=QFrame.Panel, frameShadow=QFrame.Shadow.Plain, lineWidth=20, midLineWidth=20)
+        self.GUI['title'] = QLabel('Auto-Accountant', alignment=Qt.AlignCenter, styleSheet=style('title'))
+        self.GUI['subtitle'] = QLabel('Overall Portfolio', alignment=Qt.AlignCenter, styleSheet=style('subtitle'))
+        self.GUI['info_pane'] = QLabel(alignment=Qt.AlignHCenter, styleSheet=style('info_pane'))
+        self.GUI['back'] = QPushButton('Return to\nPortfolio', clicked=p(self.render, ('portfolio',None), True))
+        self.GUI['page_number'] = QLabel('Page XXX of XXX', alignment=Qt.AlignCenter)
+        self.GUI['page_next'] = QPushButton(icon=icon('arrow_down'), iconSize=icon('size'), clicked=self.page_next)
+        self.GUI['page_prev'] = QPushButton(icon=icon('arrow_up'), iconSize=icon('size'),  clicked=self.page_prev)
+        #contains the buttons for opening editors, info displays, etc.
+        self.GUI['buttonLayout'] = QHBoxLayout()
+        self.GUI['buttonFrame'] = QWidget(layout=self.GUI['buttonLayout'])
+        self.GUI['info'] = QPushButton(icon=icon('info2'), iconSize=icon('size'),  clicked=self.portfolio_stats_and_info)
+        self.GUI['edit'] = QPushButton(icon=icon('settings2'), iconSize=icon('size'))
+        self.GUI['new_asset'] = QPushButton('+ Asset', clicked=p(AssetEditor, self), fixedHeight=icon('size2').height())
+        self.GUI['new_transaction'] = QPushButton('+ Trans', clicked=p(TransEditor, self), fixedHeight=icon('size2').height())
         #contains the list of assets/transactions
         self.GUI['GRID'] = GRID(self, self.set_sort, self._header_menu, self._left_click_row, self._right_click_row)
         #The little bar on the bottom
-        self.GUI['bottomFrame'] = tk.Frame(self, bg=palette('accent'))
-        self.GUI['copyright'] = tk.Button(self.GUI['bottomFrame'], bd=0, bg=palette('accent'), text='Copyright © 2022 Shane Evanson', fg=palette('entrycursor'), font=setting('font',0.4), command=self.comm_copyright)
-        self.GUI['offlineIndicator'] = tk.Label(self.GUI['bottomFrame'], bd=0, bg='#ff0000', text=' OFFLINE MODE ', fg='#ffffff', font=setting('font',0.4))
+        self.GUI['bottomLayout'] = QHBoxLayout()
+        self.GUI['bottomFrame'] = QFrame(layout=self.GUI['bottomLayout'])
+        self.GUI['copyright'] = QPushButton('Copyright © 2022 Shane Evanson', clicked=self.copyright)
+        self.GUI['offlineIndicator'] = QLabel(' OFFLINE MODE ')
+        self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=style('progressBar'))
 
-        #GUI RENDERING
+        #GUI PLACEMENT
         #==============================
-        self.GUI['menuFrame']       .grid(column=0,row=0, columnspan=2, sticky='EW')
+        #Self - The main QApplication
+        self.setCentralWidget(self.GUI['masterFrame']) #Makes the master frame fill the entire main window
+        #Master Frame - Contains everything
+        self.GUI['masterLayout'].setRowStretch(1, 1) # The side panel and GRID absorb vertical stretching
+        self.GUI['masterLayout'].setColumnStretch(1, 1) # The GRID absorbs horizontal stretching
+        self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'], 0, 0, 1, 2)
+        self.GUI['masterLayout'].addWidget(self.GUI['sidePanelFrame'], 1, 0)
 
-        self.GUI['primaryFrame']    .grid(column=0,row=1, sticky='NS')
-        self.GUI['title']           .grid(column=0,row=0, columnspan=2)
-        self.GUI['subtitle']        .grid(column=0,row=1, columnspan=2, sticky='EW')
-        self.GUI['buttonFrame']     .grid(column=0,row=2, columnspan=2, sticky='EW')
-        self.GUI['info']            .pack(side='left')
-        self.GUI['new_transaction'] .pack(side='right')
-        self.GUI['new_asset']       .pack(side='right')
-        self.GUI['info_pane']       .grid(column=0,row=3, columnspan=2, sticky='NSEW')
-        self.GUI['primaryFrame'].rowconfigure(3, weight=1)
-        self.GUI['page_number']     .grid(column=0,row=5, columnspan=2, sticky='SEW')
-        self.GUI['page_last']       .grid(column=0,row=6, sticky='SE')
-        self.GUI['page_next']       .grid(column=1,row=6, sticky='SW')
+        self.GUI['gridFrame'] = QWidget(layout=self.GUI['GRID'], contentsMargins=QMargins(0,0,0,0))
+        #self.GUI['GRID'].setMargin(0)
+        self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=style('GRID'))
+        # Prevents vertical scrollbar from appearing, even by accident, or while resizing the window
+        self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+
+        self.GUI['masterLayout'].addWidget(self.GUI['gridScrollArea'], 1, 1)
+        self.GUI['masterLayout'].addWidget(self.GUI['bottomFrame'], 2, 0, 1, 2)
+
+        #Side Panel Frame - The side menu, which contains multiple buttons and things
+        self.GUI['sidePanelLayout'].setRowStretch(3, 1) # The info panel absorbs vertical stretching
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['title'], 0, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['subtitle'], 1, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['buttonFrame'], 2, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['info_pane'], 3, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['back'], 4, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_number'], 5, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_prev'], 6, 0, 1, 1)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_next'], 6, 1, 1, 1)
+
+        #Button Frame - contains info button, new transaction, sometimes new asset, or edit asset
+        self.GUI['buttonLayout'].addWidget(self.GUI['info'])
+        self.GUI['buttonLayout'].addStretch(1)
+        self.GUI['buttonLayout'].addWidget(self.GUI['edit'])
+        self.GUI['buttonLayout'].addWidget(self.GUI['new_transaction'])
+        self.GUI['buttonLayout'].addWidget(self.GUI['new_asset'])
         
-        self.GUI['GRID']            .grid(column=1,row=1, sticky='NSEW')
-        
-        self.GUI['bottomFrame']     .grid(column=0,row=2, columnspan=2, sticky='EW')
-        self.GUI['copyright']       .pack(side='left')
+        #Bottom Frame - This could be replaced by the QStatusBar widget, which may be better suited for this use
+        self.GUI['bottomLayout'].addWidget(self.GUI['copyright'])
+        self.GUI['bottomLayout'].addWidget(self.GUI['progressBar'])
+        self.GUI['bottomLayout'].addStretch(1)
+        self.GUI['bottomLayout'].addWidget(self.GUI['offlineIndicator'])
+
+        self.GUI['sidePanelFrame'].raise_()
 
         #GUI TOOLTIPS
         #==============================
         tooltips = {
-            'edit':                 'Edit this asset',
             'new_asset':            'Create a new asset',
             'new_transaction':      'Create a new transaction',
 
             'back':                 'Return to the main portfolio',
-            'page_last':            'Go to last page',
+            'page_prev':            'Go to last page',
             'page_next':            'Go to next page',
         }
-        for widget in tooltips:
-            self.ToolTips.SetToolTip(self.GUI[widget] ,tooltips[widget])
+        for widget in tooltips:     self.GUI[widget].setToolTip(tooltips[widget])
 
 
 #All the commands for reordering, showing, and hiding the info columns
-    def _header_menu(self, i, event):
+    def _header_menu(self, col, event=None):
         if self.rendered[0] == 'asset':  return  #There is no menu for the transactions ledger view
-        info = setting('header_portfolio')[i]
-        m = tk.Menu(self, tearoff = 0)
-        if i != 0:                                      m.add_command(label ='Move Left', command=p(self.move_header, info, 'left'))
-        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move Right', command=p(self.move_header, info, 'right'))
-        if i != 0:                                      m.add_command(label ='Move to Beginning', command=p(self.move_header, info, 'beginning'))
-        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move to End', command=p(self.move_header, info, 'end'))
-        m.add_separator()
-        m.add_command(label ='Hide ' + info_format_lib[info]['name'], command=p(self.hide_header, info))
-        m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
+        info = setting('header_portfolio')[col]
+        m = QMenu(parent=self)
+        if col != 0:                                      m.addAction('Move Left',          p(self.move_header, info, 'left'))
+        if col != len(setting('header_portfolio'))-1:     m.addAction('Move Right',         p(self.move_header, info, 'right'))
+        if col != 0:                                      m.addAction('Move to Beginning',  p(self.move_header, info, 'beginning'))
+        if col != len(setting('header_portfolio'))-1:     m.addAction('Move to End',        p(self.move_header, info, 'end'))
+        m.addSeparator()
+        m.addAction('Hide ' + info_format_lib[info]['name'], self.infoactions[info].trigger)
+        m.exec_(event.globalPos())
     def move_header(self, info, shift='beginning'):
         if   shift == 'beginning':  i = 0
         elif shift == 'right':      i = setting('header_portfolio').index(info) + 1
         elif shift == 'left':       i = setting('header_portfolio').index(info) - 1
         elif shift == 'end':        i = len(setting('header_portfolio'))
+        else:   # We've dragged and dropped a header onto this one
+            i = setting('header_portfolio').index(shift)
         new = setting('header_portfolio')
         new.remove(info)
         new.insert(i, info)
         set_setting('header_portfolio', new)
         self.render()
-    def hide_header(self, info):
+    def toggle_header(self, info):
         new = setting('header_portfolio')
-        new.remove(info)
+        if info in setting('header_portfolio'): new.remove(info)
+        else:                                   new.insert(0, info)
         set_setting('header_portfolio', new)
-        self.TASKBAR['info'].values[info].set(False)
-        self.render()
-    def show_header(self, info):
-        new = setting('header_portfolio')
-        new.insert(0, info)
-        set_setting('header_portfolio', new)
-        self.TASKBAR['info'].values[info].set(True)
         self.render()
 
-    def _left_click_row(self, GRID_ROW:int): # Opens up the asset subwindow, or transaction editor upon clicking a label within this row
+
+    def _left_click_row(self, GRID_ROW:int, event=None): # Opens up the asset subwindow, or transaction editor upon clicking a label within this row
         #if we double clicked on an asset/transaction, thats when we open it.
         i = self.page*setting('itemsPerPage')+GRID_ROW
         if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
         self.GUI['GRID'].set_selection()
         if self.rendered[0] == 'portfolio': self.render(('asset',self.sorted[i].tickerclass()), True)
         else:                               TransEditor(self, self.sorted[i])
-    def _right_click_row(self, GRID_ROW1:int, GRID_ROW2:int, GRID_ROW3:int): # Opens up a little menu of stuff you can do to this asset/transaction
+    def _right_click_row(self, highlighted:int, selection1:int, selection2:int, event=None): # Opens up a little menu of stuff you can do to this asset/transaction
         #we've right clicked with a selection of multiple items
-        if GRID_ROW2 != GRID_ROW3:
-            m = tk.Menu(self, tearoff = 0)
-            m.bind('<Motion>', self._mouse)
-            m.add_command(label ='Delete selection', command=p(self.delete_selection, GRID_ROW2, GRID_ROW3))
-            m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
+        m = QMenu(parent=self)
+        if selection1 != selection2:
+            m.addAction('Delete selection', p(self.delete_selection, selection1, selection2))
         #We've clicked a single item, or nothing at all, popup is relevant to what we right click
         else:
-            i = self.page*setting('itemsPerPage')+GRID_ROW1
+            i = self.page*setting('itemsPerPage')+highlighted
             if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
             item = self.sorted[i]
-            m = tk.Menu(self, tearoff = 0)
-            m.bind('<Motion>', self._mouse)
             if self.rendered[0] == 'portfolio':
                 ID = item.tickerclass()
                 ticker = item.ticker()
-                m.add_command(label ='Open ' + ticker + ' Ledger', command=p(self.render, ('asset',ID), True))
-                m.add_command(label ='Edit ' + ticker, command=p(AssetEditor, self, ID))
-                m.add_command(label ='Show detailed info', command=p(self.comm_asset_info, ID))
-                m.add_command(label ='Delete ' + ticker, command=p(self.delete_selection, GRID_ROW1))
+                m.addAction('Open ' + ticker + ' Ledger', p(self.render, ('asset',ID), True))
+                m.addAction('Edit ' + ticker, p(AssetEditor, self, ID))
+                m.addAction('Show detailed info', p(self.asset_stats_and_info, ID))
+                m.addAction('Delete ' + ticker, p(self.delete_selection, highlighted))
             else:
                 trans_title = item.date() + ' ' + item.prettyPrint('type')
-                m.add_command(label ='Edit ' + trans_title, command=p(TransEditor, self, item))
-                m.add_command(label ='Copy ' + trans_title, command=p(TransEditor, self, item, True))
-                m.add_command(label ='Delete ' + trans_title, command=p(self.delete_selection, GRID_ROW1))
+                m.addAction('Edit ' + trans_title, p(TransEditor, self, item))
+                m.addAction('Copy ' + trans_title, p(TransEditor, self, item, True))
+                m.addAction('Delete ' + trans_title, p(self.delete_selection, highlighted))
                 if item.ERROR:
-                    m.add_separator()
-                    m.add_command(label ='ERROR information...', command=p(Message, self, 'Transaction Error!', item.ERR_MSG))
-            m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
+                    m.addSeparator()
+                    m.addAction('ERROR information...', p(Message, self, 'Transaction Error!', item.ERR_MSG))
+
+        m.exec_(event.globalPos())
 
     def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
         I1 = self.page*setting('itemsPerPage')+GRID_ROW1
@@ -537,57 +564,56 @@ class AutoAccountant(tk.Tk):
         self.render(sort=True)
 
 
-    def create_MENU(self):
+    def __init_menu__(self):
         #MENU CREATION
         #==============================
         self.MENU = {}
 
-        self.MENU['newPortfolio'] = tk.Button(self.GUI['menuFrame'],  image=icons('new'), bg=palette('entry'), command=self.comm_newPortfolio)
-        self.MENU['loadPortfolio'] = tk.Button(self.GUI['menuFrame'], image=icons('load'), bg=palette('entry'), command=self.comm_loadPortfolio)
-        self.MENU['savePortfolio'] = tk.Button(self.GUI['menuFrame'], image=icons('save'), bg=palette('entry'), command=self.comm_savePortfolio)
-        self.MENU['settings'] = tk.Button(self.GUI['menuFrame'], image=icons('settings2'), bg=palette('entry'), command=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
+        self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.new)
+        self.MENU['load'] = QPushButton(icon=icon('load'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.load)
+        self.MENU['save'] = QPushButton(icon=icon('save'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.save)
+        self.MENU['settings'] = QPushButton(icon=icon('settings2'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
 
-        self.MENU['undo'] = tk.Button(self.GUI['menuFrame'], image=icons('undo'), bg=palette('entry'), command=p(self._ctrl_z, None))
-        self.MENU['redo'] = tk.Button(self.GUI['menuFrame'], image=icons('redo'), bg=palette('entry'), command=p(self._ctrl_y, None))
+        self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self._ctrl_z))
+        self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self._ctrl_y))
 
-        self.MENU['wallets'] = tk.Button(self.GUI['menuFrame'], text='Wallets',  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'), command=p(WalletManager, self))
-        self.MENU['profiles'] = tk.Button(self.GUI['menuFrame'], image=icons('profiles'),  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'),command=p(ProfileManager, self))
+        self.MENU['wallets'] = QPushButton('Wallets', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
+        self.MENU['profiles'] = QPushButton(icon=icon('profiles'), fixedSize=icon('size2'), iconSize=icon('size'))
 
         #MENU RENDERING
         #==============================
-        self.MENU['newPortfolio']       .grid(column=0,row=0, sticky='NS')
-        self.MENU['loadPortfolio']      .grid(column=1,row=0, sticky='NS')
-        self.MENU['savePortfolio']      .grid(column=2,row=0, sticky='NS')
-        self.MENU['settings']           .grid(column=3,row=0, sticky='NS', padx=(0,setting('font')[1]))
-
-        self.MENU['undo']               .grid(column=4,row=0, sticky='NS')
-        self.MENU['redo']               .grid(column=5,row=0, sticky='NS', padx=(0,setting('font')[1]))
-
-        self.MENU['wallets']            .grid(column=8,row=0, sticky='NS')
-
-        self.MENU['profiles']           .grid(column=10,row=0, sticky='NS')
+        self.GUI['menuLayout'].addWidget(self.MENU['new'])
+        self.GUI['menuLayout'].addWidget(self.MENU['load'])
+        self.GUI['menuLayout'].addWidget(self.MENU['save'])
+        self.GUI['menuLayout'].addWidget(self.MENU['settings'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['undo'])
+        self.GUI['menuLayout'].addWidget(self.MENU['redo'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['wallets'])
+        self.GUI['menuLayout'].addWidget(self.MENU['profiles'])
+        self.GUI['menuLayout'].addStretch(1)
 
         #MENU TOOLTIPS
         #==============================
-        menu_tooltips = {
-            'newPortfolio':     'Create a new portfolio',
-            'loadPortfolio':    'Load an existing portfolio',
-            'savePortfolio':    'Save this portfolio',
-            'settings':         'Settings',
+        tooltips = {
+            'new':          'Create a new portfolio',
+            'load':         'Load an existing portfolio',
+            'save':         'Save this portfolio',
+            'settings':     'Settings',
 
-            'undo':             'Undo last action',
-            'redo':             'Redo last action',
+            'undo':         'Undo last action',
+            'redo':         'Redo last action',
 
-            'wallets':          'Manage wallets',
-            'profiles':         'Manage filter profiles',
+            'wallets':      'Manage wallets',
+            'profiles':     'Manage filter profiles',
         }
-        for button in self.MENU:
-            self.ToolTips.SetToolTip(self.MENU[button] ,menu_tooltips[button])
+        for widget in tooltips:     self.MENU[widget].setToolTip(tooltips[widget])
 
 
 # PORTFOLIO RENDERING
 #=============================================================
-    def render(self, toRender:str=None, sort:bool=False): #NOTE: Very fast! ~30ms when switching panes, ~4ms when switching pages, ~11ms on average
+    def render(self, toRender:tuple=None, sort:bool=False): #NOTE: Very fast! ~30ms when switching panes, ~4ms when switching pages, ~11ms on average
         '''Call to render the portfolio, or a ledger
         \nRefreshes page if called without any input.
         \ntoRender - tuple of portfolio/asset, and asset name if relevant.'''
@@ -600,26 +626,32 @@ class AutoAccountant(tk.Tk):
         if toRender != None:
             self.page = 0 #We return to the first page if changing from portfolio to asset or vice versa
             if toRender[0] == 'portfolio':
-                self.GUI['info'].configure(command=self.comm_portfolio_info)
-                self.ToolTips.SetToolTip(self.GUI['info'], 'Detailed information about this portfolio')
-                self.GUI['edit'].pack_forget()
-                self.GUI['new_asset'].pack(side='right')
-                self.GUI['back'].grid_forget()
+                self.GUI['info'].clicked.disconnect()
+                self.GUI['info'].clicked.connect(self.portfolio_stats_and_info)
+                self.GUI['info'].setToolTip('Detailed information about this portfolio')
+                self.GUI['edit'].hide()
+                self.GUI['new_asset'].show()
+                self.GUI['back'].hide()
             else:
-                self.GUI['info'].configure(command=p(self.comm_asset_info, toRender[1]))
-                self.ToolTips.SetToolTip(self.GUI['info'], 'Detailed information about this asset')
-                self.GUI['edit'].configure(command=p(AssetEditor, self, toRender[1]))
-                self.GUI['edit'].pack(side='left')
-                self.GUI['new_asset'].forget()
-                self.GUI['back'].grid(row=4, column=0, columnspan=2)
+                TICKER = MAIN_PORTFOLIO.asset(toRender[1]).ticker()
+                self.GUI['info'].clicked.disconnect()
+                self.GUI['info'].clicked.connect(p(self.asset_stats_and_info, toRender[1]))
+                self.GUI['info'].setToolTip('Detailed information about '+ TICKER)
+                try: self.GUI['edit'].clicked.disconnect()
+                except: pass
+                self.GUI['edit'].clicked.connect(p(AssetEditor, self, toRender[1]))
+                self.GUI['edit'].setToolTip('Edit '+ TICKER)
+                self.GUI['edit'].show()
+                self.GUI['new_asset'].hide()
+                self.GUI['back'].show()
 
             #Setting up stuff in the Primary Pane
             if toRender[0] == 'portfolio':
-                self.GUI['title'].configure(text='Auto-Accountant')
-                self.GUI['subtitle'].configure(text='Overall Portfolio')
+                self.GUI['title'].setText('Auto-Accountant')
+                self.GUI['subtitle'].setText('Overall Portfolio')
             else:      
-                self.GUI['title'].configure(text=MAIN_PORTFOLIO.asset(toRender[1]).name())
-                self.GUI['subtitle'].configure(text=MAIN_PORTFOLIO.asset(toRender[1]).ticker())
+                self.GUI['title'].setText(MAIN_PORTFOLIO.asset(toRender[1]).name())
+                self.GUI['subtitle'].setText(MAIN_PORTFOLIO.asset(toRender[1]).ticker())
             
             #Sets the asset - 0ms
             self.rendered = toRender
@@ -633,11 +665,11 @@ class AutoAccountant(tk.Tk):
         #Appropriately enabled/diables the page-setting buttons - 0ms
         maxpage = math.ceil(len(self.sorted)/setting('itemsPerPage'))-1
         if maxpage == -1: maxpage = 0
-        if self.page < maxpage:     self.GUI['page_next'].configure(state='normal')
-        else:                       self.GUI['page_next'].configure(state='disabled')
-        if self.page > 0:           self.GUI['page_last'].configure(state='normal')
-        else:                       self.GUI['page_last'].configure(state='disabled')
-        self.GUI['page_number'].configure(text='Page ' + str(self.page+1) + ' of ' + str(maxpage+1))
+        if self.page < maxpage:     self.GUI['page_next'].setEnabled(True)
+        else:                       self.GUI['page_next'].setEnabled(False)
+        if self.page > 0:           self.GUI['page_prev'].setEnabled(True)
+        else:                       self.GUI['page_prev'].setEnabled(False)
+        self.GUI['page_number'].setText('Page ' + str(self.page+1) + ' of ' + str(maxpage+1))
 
         #Appropriately renames the headers
         if self.rendered[0] == 'portfolio': header = setting('header_portfolio')
@@ -645,24 +677,25 @@ class AutoAccountant(tk.Tk):
 
         #Fills in the page with info
         self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered[1])
-
+        
     def update_info_pane(self):
         textbox = self.GUI['info_pane']
-        textbox.clear()
-
-        for info in ['value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
+        toDisplay = '<meta name="qrichtext" content="1" />'
+        
+        for info in ('value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             if self.rendered[0] == 'portfolio':
                 formatted_info = list(MAIN_PORTFOLIO.pretty(info))
             else:
-                formatted_info = list(MAIN_PORTFOLIO.asset(self.rendered[1]).pretty(info, ignoreError=True))    
-            textbox.insert_text(info_format_lib[info]['headername'].replace('\n',' '), justify='center')
-            textbox.newline()
+                formatted_info = list(MAIN_PORTFOLIO.asset(self.rendered[1]).pretty(info))    
+            toDisplay += info_format_lib[info]['headername'].replace('\n',' ')+'<br>'
+            
             info_format = info_format_lib[info]['format']
-            if formatted_info[1] == None:   formatted_info[1] = palette('neutral')
+            if formatted_info[1] == '':     S = style('neutral')+style('info')
+            else:                           S = formatted_info[1]+style('info')
             if info_format == 'percent':    ending = ' %'
             else:                           ending = ' USD'
-            textbox.insert_triplet('',formatted_info[0].replace('%',''), ending, fg=formatted_info[1], justify='center', font=setting('font2',1.5))
-            textbox.newline()
+            toDisplay += HTMLify(formatted_info[0].replace('%',''), S)+ending+'<br><br>'
+        textbox.setText(toDisplay.removesuffix('<br><br>'))
 
     def set_sort(self, col:int): #Sets the sorting mode, sorts the assets by it, then rerenders everything
         if self.rendered[0] == 'portfolio':
@@ -700,98 +733,123 @@ class AutoAccountant(tk.Tk):
 
         if   self.rendered[0] == 'asset' and info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
         elif info_format_lib[info]['format'] == 'alpha':                            sorted.sort(reverse=reverse,     key=alphaKey)
-        elif self.rendered[0] == 'asset' and info in ['value','quantity','price']:  sorted.sort(reverse=not reverse, key=value_quantity_price)
+        elif self.rendered[0] == 'asset' and info in ('value','quantity','price'):  sorted.sort(reverse=not reverse, key=value_quantity_price)
         else:                                                                       sorted.sort(reverse=not reverse, key=numericKey)
 
         self.sorted = sorted  
 
-    def comm_page_next(self):
+    def set_page(self, page:int=None):
+        if page==None: page=self.page
         if self.rendered[0] == 'portfolio':  maxpage = math.ceil(len(MAIN_PORTFOLIO.assets())/setting('itemsPerPage')-1)
         else:                   maxpage = math.ceil(len(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger)/setting('itemsPerPage')-1)
-        if self.page < maxpage: 
-            self.page += 1
-            self.GUI['GRID'].set_selection()
-            self.render()
-    def comm_page_last(self):
-        if self.page > 0: 
-            self.page -= 1
-            self.GUI['GRID'].set_selection()
-            self.render()
 
-#INFO FUNCTIONS
+        if page < 0:          page = 0
+        elif page > maxpage:    page = maxpage
+
+        if page != self.page:
+            self.page = page
+            self.GUI['GRID'].set_selection() #Clears GRID selection
+            self.render()
+    def page_next(self):   self.set_page(self.page + 1)
+    def page_prev(self):   self.set_page(self.page - 1)
+
+#STATS AND INFO SUMMARY MESSAGES
 #=============================================================
 
-    def comm_portfolio_info(self): #A wholistic display of all relevant information to the overall portfolio 
-        message = Message(self, 'Overall Stats and Information', '', font=setting('font'), width=80, height=20)
-        DEFCOLOR, DEFFONT = palette('neutral'), setting('font2')
+    def portfolio_stats_and_info(self): #A wholistic display of all relevant information to the overall portfolio 
+        toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
+        DEF_INFO_STYLE = style('neutral') + style('info')
+        maxWidth = 1
+        testfont = QFont('Calibri')
+        testfont.setPixelSize(20)
 
         # NUMBER OF TRANSACTIONS, NUMBER OF ASSETS
         to_insert = MAIN_PORTFOLIO.pretty('number_of_transactions')
-        message.insert_triplet('• ', to_insert[0], '', fg=to_insert[1], font=to_insert[2], newline=False)
+        toDisplay += '• ' + HTMLify(to_insert[0], DEF_INFO_STYLE)
         to_insert = MAIN_PORTFOLIO.pretty('number_of_assets')
-        message.insert_triplet(' transactions loaded under ', to_insert[0], ' assets', fg=to_insert[1], font=to_insert[2])
+        toDisplay += ' transactions loaded under ' + HTMLify(to_insert[0], DEF_INFO_STYLE) + ' assets<br>'
 
         # USD PER WALLET
-        message.insert('• Total USD by wallet:')
-        message.insert_triplet('\t*TOTAL*:\t\t\t', format_general(MAIN_PORTFOLIO.get('value'), 'alpha', 20), ' USD', fg=DEFCOLOR, font=DEFFONT)
+        toDisplay += '• Total USD by wallet:<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(MAIN_PORTFOLIO.get('value'), 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
         wallets = list(MAIN_PORTFOLIO.get('wallets'))
         def sortByUSD(w):   return MAIN_PORTFOLIO.get('wallets')[w]  #Wallets are sorted by their total USD value
         wallets.sort(reverse=True, key=sortByUSD)
         for w in wallets:    #Wallets, a list of wallets by name, and their respective net valuations
             quantity = MAIN_PORTFOLIO.get('wallets')[w]
             if not zeroish_prec(quantity):
-                message.insert_triplet('\t'+w+':\t\t\t', format_general(quantity, 'alpha', 20), ' USD', fg=DEFCOLOR, font=DEFFONT)
+                width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
+                if width > maxWidth: maxWidth = width
+                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
 
         # MASS INFORMATION
-        for data in ['day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%']:
+        for data in ('day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
             info_format = info_format_lib[data]['format']
-            fg_color = MAIN_PORTFOLIO.color(data)[0] #Returns the foreground color we want for this info bit, if it has one
-            if fg_color == None: fg_color = palette('neutral')
-            text1 = '• '+info_format_lib[data]['name']+':\t\t\t\t'
+            if MAIN_PORTFOLIO.style(data) == '':    S = DEF_INFO_STYLE
+            else:                   S = MAIN_PORTFOLIO.style(data)+style('info')
+            label = '• '+info_format_lib[data]['name']+':'
+            width = QFontMetrics(testfont).horizontalAdvance(label) + 2
+            if width > maxWidth: maxWidth = width
+            label += '\t\t'
             if info_format == 'percent':
-                message.insert_triplet(text1, format_general(MAIN_PORTFOLIO.get(data)*100, 'alpha', 20), ' %', fg=fg_color, font=DEFFONT)
+                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get(data)*100, 'alpha', 20), S) + ' %<br>'
             else:
-                message.insert_triplet(text1, format_general(MAIN_PORTFOLIO.get(data), 'alpha', 20), ' USD', fg=fg_color, font=DEFFONT)
+                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get(data), 'alpha', 20), S) + ' USD<br>'
+        
+        Message2(self, 'Overall Stats and Information', toDisplay, tabStopWidth=maxWidth)
     
-    def comm_asset_info(self, a:str): #A wholistic display of all relevant information to an asset 
+    def asset_stats_and_info(self, a:str): #A wholistic display of all relevant information to an asset 
+        toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
         asset = MAIN_PORTFOLIO.asset(a)
-        message = Message(self, asset.name() + ' Stats and Information', '', font=setting('font'), width=80, height=20)
-        DEFCOLOR, DEFFONT = palette('neutral'), setting('font2')
+        DEF_INFO_STYLE = style('neutral') + style('info')
+        maxWidth = 1
+        testfont = QFont('Calibri')
+        testfont.setPixelSize(20)
 
         # NUMBER OF TRANSACTIONS
-        message.insert_triplet('• ', str(len(MAIN_PORTFOLIO.asset(a)._ledger)), ' transactions loaded under ' + asset.ticker(), fg=DEFCOLOR, font=DEFFONT)
+        toDisplay += '• ' + HTMLify(str(len(MAIN_PORTFOLIO.asset(a)._ledger)), DEF_INFO_STYLE) + ' transactions loaded under ' + HTMLify(asset.ticker(), DEF_INFO_STYLE) + '<br>'
         # ASSET CLASS
-        message.insert_triplet('• Asset Class:\t\t\t\t', asset.prettyPrint('class'), '', fg=DEFCOLOR, font=DEFFONT)
+        toDisplay += '• Asset Class:\t\t' + HTMLify(asset.prettyPrint('class'), DEF_INFO_STYLE) + '<br>'
 
         # UNITS PER WALLET
-        message.insert('• Total '+asset.ticker()+' by wallet:')
-        message.insert_triplet('\t*TOTAL*:\t\t\t', format_general(asset.get('holdings'), 'alpha', 20), ' '+asset.ticker(), fg=DEFCOLOR, font=DEFFONT)
+        toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '<br>'
         wallets = list(MAIN_PORTFOLIO.asset(a).get('wallets'))  
         def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)
         for w in wallets:
             quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w]
             if not zeroish_prec(quantity):
-                message.insert_triplet('\t' + w + ':\t\t\t', format_general(quantity, 'alpha', 20), ' '+asset.ticker(), fg=DEFCOLOR, font=DEFFONT)
+                width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
+                if width > maxWidth: maxWidth = width
+                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '<br>'
 
         # MASS INFORMATION
-        for data in ['price','value', 'marketcap', 'volume24h', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
+        for data in ('price','value', 'marketcap', 'volume24h', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             info_format = info_format_lib[data]['format']
-            fg_color = asset.color(data, ignoreError=True)[0] #Returns the foreground color we want for this info bit, if it has one
-            if fg_color == None: fg_color = DEFCOLOR
-            text1 = '• '+ info_format_lib[data]['name']+':\t\t\t\t'
+            if asset.style(data) == '':     S = DEF_INFO_STYLE
+            else:                           S = asset.style(data)+style('info')
+            label = '• '+ info_format_lib[data]['name']+':'
+            width = QFontMetrics(testfont).horizontalAdvance(label) + 2
+            if width > maxWidth: maxWidth = width
+            label += '\t\t'
             if data == 'price':
-                message.insert_triplet(text1, format_general(asset.get(data), 'alpha', 20), ' USD/'+asset.ticker(), fg=fg_color, font=DEFFONT)
+                toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD/'+asset.ticker() + '<br>'
             elif info_format == 'percent':
-                message.insert_triplet(text1, format_general(asset.get(data)*100, 'alpha', 20), ' %', fg=fg_color, font=DEFFONT)
+                toDisplay += label + HTMLify(format_general(asset.precise(data)*100, 'alpha', 20), S) + ' %<br>'
             else:
-                message.insert_triplet(text1, format_general(asset.get(data), 'alpha', 20), ' USD', fg=fg_color, font=DEFFONT)
+                toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD<br>'
+
+        Message2(self, asset.name() + ' Stats and Information', toDisplay, tabStopWidth=maxWidth)
 
 
 #METRICS
 #=============================================================
     def metrics(self, tax_report:str=''): # Recalculates all metrics
         '''Calculates and renders all static metrics for all assets, and the overall portfolio'''
+        self.GUI['progressBar'].show()
+        self.GUI['progressBar'].setMinimum(0)
+        self.GUI['progressBar'].setMaximum(len(MAIN_PORTFOLIO.transactions()))
         if tax_report:
             TEMP['taxes'] = { 
                 '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
@@ -802,6 +860,7 @@ class AutoAccountant(tk.Tk):
             self.calculate_average_buy_price(asset)
         self.metrics_PORTFOLIO() #~0ms, since its just a few O(1) operations
         self.market_metrics() #Only like 2 ms
+        self.GUI['progressBar'].hide()
 
     def metrics_PORTFOLIO(self): #Recalculates all non-market metrics, for the overall portfolio
         '''Calculates all metrics for the overall portfolio'''
@@ -833,62 +892,54 @@ class AutoAccountant(tk.Tk):
         transactions = list(MAIN_PORTFOLIO.transactions()) #0ms
         transactions.sort()
 
+        # ERRORS - We assume all transactions have no errors until proven erroneous
+        for t in transactions:      t.ERROR = False
+
         ###################################
         # TRANSFER LINKING - #NOTE: Lag is ~16ms for 159 transfer pairs under ~12000 transactions
         ###################################
         #Before we can iterate through all of our transactions, we need to pair up transfer_IN and transfer_OUTs, otherwise we lose track of cost basis which is BAD
-        transfer_IN = []    #A list of all transfer_INs, chronologically ordered
-        transfer_OUT = []   #A list of all transfer_OUTs, chronologically ordered
-        for t in transactions:
-            if t.get('missing')[0]: continue    #Have to skip transfers missing data
+        transfer_IN = [t for t in transactions if t.type() == 'transfer_in' and not t.get('missing')[0]]    #A list of all transfer_INs, chronologically ordered
+        transfer_OUT = [t for t in transactions if t.type() == 'transfer_out' and not t.get('missing')[0]]  #A list of all transfer_OUTs, chronologically ordered
 
-            #For both case we assume there is an ERROR until we can resolve it.
-            if t.type() == 'transfer_in':     
-                t.ERROR,t.ERR_MSG = True,'Failed to automatically find a '+t.get('gain_asset')[:-2]+' \'Transfer Out\' transaction that pairs with this \'Transfer In\'.'
-                transfer_IN.append(t)
-            elif t.type() == 'transfer_out':    
-                t.ERROR,t.ERR_MSG = True,'Failed to automatically find a '+t.get('loss_asset')[:-2]+' \'Transfer In\' transaction that pairs with this \'Transfer Out\'.'
-                transfer_OUT.append(t)
-            else:
-                t.ERROR = False
         #Then, iterating through all the transactions, we pair them up. 
-        for t_out in transfer_OUT:
-            for t_in in transfer_IN: #We have to look at all the t_in's
+        for t_out in list(transfer_OUT):
+            for t_in in list(transfer_IN): #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
                 if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
                         #SUCCESS - We've paired this t_out with a t_in!
-                        transfer_IN.remove(t_in) # Remove it from the transfer_IN list.
                         t_out._data['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
-                        #Resolve the ERROR state for the newly wedded couple
-                        t_out.ERROR = False
-                        t_in.ERROR = False
+
+                        # Two transfers have been paired. Remove them from their respective lists
+                        transfer_IN.remove(t_in)
+                        transfer_OUT.remove(t_out)
+        
+        # We have tried to find a partner for all transfers: any remaining transfers are erroneous
+        for t in transfer_IN + transfer_OUT:
+            t.ERROR = True
+            if t.type() == 'transfer_in':
+                t.ERR_MSG = 'Failed to automatically find a \'Transfer Out\' transaction under '+t.get('gain_asset')[:-2]+' that pairs with this \'Transfer In\'.'
+            else:
+                t.ERR_MSG = 'Failed to automatically find a \'Transfer In\' transaction under '+t.get('loss_asset')[:-2]+' that pairs with this \'Transfer Out\'.'
+                        
 
         ###################################
         # AUTO-ACCOUNTING
         ###################################
         #Transfers linked. It's showtime. Time to perform the Auto-Accounting!
         # INFO VARIABLES - data we collect as we account for every transaction #NOTE: Lag is 0ms for ~12000 transactions
-        metrics = {}
-        for asset in MAIN_PORTFOLIO.assetkeys():
-            metrics[asset] = {
-                'cash_flow':                0,
-                'realized_profit_and_loss': 0,
-                'tax_capital_gains':        0,
-                'tax_income':               0,
-            }
+        metrics = {
+            asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in MAIN_PORTFOLIO.assetkeys()
+        }
         
         # HOLDINGS - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
         accounting_method = setting('accounting_method')
-        holdings = {}
-        for asset in MAIN_PORTFOLIO.assetkeys():
-            MAIN_PORTFOLIO.asset(asset).ERROR = False # Assume assets are free of error at first. We check all transactions later.
-            holdings[asset] = {}
-            for wallet in MAIN_PORTFOLIO.walletkeys():
-                #Removing these transactions is literally just a priority queue, for which heaps are basically the best implementation
-                holdings[asset][wallet] = gain_heap(accounting_method) 
+        # Holdings is a dict of all assets, under which is a dict of all wallets, and each wallet is a priority heap which stores our transactions
+        # We use a min/max heap to decide which transactions are "sold" when assets are sold, to determine what the capital gains actually is
+        holdings = {asset:{wallet:gain_heap(accounting_method) for wallet in MAIN_PORTFOLIO.walletkeys()} for asset in MAIN_PORTFOLIO.assetkeys()}
 
         # STORE and DISBURSE QUANTITY - functions which add, or remove a 'gain', to the HOLDINGS data structure.
-        def disburse_quantity(t:Transaction, quantity:mpf, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
+        def disburse_quantity(t:Transaction, quantity:Decimal, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
             result = holdings[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
@@ -903,7 +954,7 @@ class AutoAccountant(tk.Tk):
                 if w2: holdings[a][w2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
             return cost_basis
             
-        def tax_8949(t:Transaction, gain:gain_obj, total_disburse:mpf):
+        def tax_8949(t:Transaction, gain:gain_obj, total_disburse:Decimal):
             ################################################################################################
             # This might still be broken. ALSO: Have to separate the transactions into short- and long-term
             ################################################################################################
@@ -925,7 +976,10 @@ class AutoAccountant(tk.Tk):
                 }
             TEMP['taxes']['8949'] = TEMP['taxes']['8949'].append(form8949, ignore_index=True)
 
+        progBarIndex = 0
         for t in transactions:  # Lag is ~135ms for ~12000 transactions
+            progBarIndex+=1
+            self.GUI['progressBar'].setValue(progBarIndex)
             if t.get('missing')[0]:  t.ERROR,t.ERR_MSG = True,t.prettyPrint('missing')   #NOTE: Lag ~9ms for ~12000 transactions
             if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
 
@@ -976,7 +1030,7 @@ class AutoAccountant(tk.Tk):
             elif TYPE == 'expense':                                      metrics[LA]['tax_capital_gains'] += (LV + FV) - LOSS_COST_BASIS 
 
             # INCOME TAX
-            if TYPE in ['card_reward','income']:    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
+            if TYPE in ('card_reward','income'):    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
                 metrics[GA]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
                     TEMP['taxes']['1099-MISC'] = TEMP['taxes']['1099-MISC'].append( {'Date acquired':t.date(), 'Value of assets':str(GV)}, ignore_index=True)
@@ -984,6 +1038,9 @@ class AutoAccountant(tk.Tk):
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
 
         #ERRORS - applies error state to any asset with an erroneous transaction on its ledger.
+        # We initially assume that no asset has any errors
+        for a in MAIN_PORTFOLIO.assets():   a.ERROR = False
+        # Then we check all transactions for an ERROR state, and apply that to its parent asset(s)
         for t in transactions:
             if t.ERROR:
                 if t.get('loss_asset'): MAIN_PORTFOLIO.asset(t.get('loss_asset')).ERROR = True
@@ -999,7 +1056,7 @@ class AutoAccountant(tk.Tk):
             total_holdings = 0      #The total # units you hold of this asset
             wallet_holdings = {}    #A dictionary indicating your total units held, by wallet
             for w in holdings[a]:
-                wallet_holdings[w] = 0
+                wallet_holdings[w] = 0 # Initializes total wallet holdings for wallet to be 0$
                 for gain in holdings[a][w]._heap:
                     total_cost_basis        += gain._price*gain._quantity   #cost basis of this gain
                     total_holdings          += gain._quantity               #Single number for the total number of tokens
@@ -1062,9 +1119,7 @@ class AutoAccountant(tk.Tk):
         try:    MAIN_PORTFOLIO._metrics['month%'] = MAIN_PORTFOLIO.get('month_change') / (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('month_change'))
         except: MAIN_PORTFOLIO._metrics['month%'] = 0
     def calculate_portfolio_value_by_wallet(self):    #For the overall portfolio, calculates the total value held within each wallet
-        wallets = {}
-        for wallet in MAIN_PORTFOLIO.walletkeys():     #Creates a list of wallets, defaulting to 0$ within each
-            wallets[wallet] = 0
+        wallets = {wallet:0 for wallet in MAIN_PORTFOLIO.walletkeys()}  #Creates a dictionary of wallets, defaulting to 0$ within each
         for asset in MAIN_PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
             for wallet in asset.get('wallets'):
                 # Asset wallet list is total units by wallet, multiply by asset price to get value
@@ -1083,47 +1138,54 @@ class AutoAccountant(tk.Tk):
             MAIN_PORTFOLIO._metrics['unrealized_profit_and_loss'] = MAIN_PORTFOLIO._metrics['unrealized_profit_and_loss%'] = 0
 
 
-#BINDINGS
+# UNIVERSAL BINDINGS
 #=============================================================
-    def _mouse(self, event):        #Tracks your mouse position
-        self.mouse_pos = (event.x_root, event.y_root)
-    def _mousewheel(self, event):   #Scroll up and down the assets pane
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            if event.delta > 0:     self.comm_page_last()
-            elif event.delta < 0:   self.comm_page_next()
-    def _esc(self,event):    #Exit this window
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            if self.GUI['GRID'].selection != [None, None]:  self.GUI['GRID'].set_selection()  #If anything is selected, deselect it
-            elif self.rendered[0] == 'portfolio':  self.comm_quit()        #If we're on the main page, exit the program
-            else:                   self.render(('portfolio',None), True)  #If we're looking at an asset, go back to the main page
-    def _del(self,event):    #Delete any selected items
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            cur_selection = self.GUI['GRID'].selection
-            if cur_selection != [None, None]:  self.delete_selection(cur_selection[0],cur_selection[1])
+    def _mousewheel(self, event:QWheelEvent): # Controls all scrollwheel-related events.
+        if app.keyboardModifiers() == Qt.ControlModifier: # Scrolling with CTRL pressed scales the page
+            if(event.angleDelta().y() > 0):     self.DEBUG_decrease_page_length()
+            elif(event.angleDelta().y() < 0):   self.DEBUG_increase_page_length()
+        elif app.keyboardModifiers() == Qt.ShiftModifier: # Scrolling with SHIFT pressed scrolls horizontally
+            if(event.angleDelta().y() > 0):     self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() - 100)
+            elif(event.angleDelta().y() < 0):   self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() + 100)
+        else:                                             # Scrolling alone changes the page
+            if(event.angleDelta().y() > 0):     self.page_prev()
+            elif(event.angleDelta().y() < 0):   self.page_next()
+    def _esc(self):     # De-select stuff
+        if self.GUI['GRID'].selection != [None, None]:  self.GUI['GRID'].set_selection()  #If anything is selected, deselect it
+        elif self.rendered[0] == 'portfolio':  self.quit()        #If we're on the main page, exit the program
+        else:                   self.render(('portfolio',None), True)  #If we're looking at an asset, go back to the main page
+    def _del(self):     # Delete any selected items
+        cur_selection = self.GUI['GRID'].selection
+        if cur_selection != [None, None]:  self.delete_selection(cur_selection[0],cur_selection[1])
+    def _f11(self):     # Fullscreen
+        if self.isFullScreen(): self.showMaximized()
+        else:                   self.showFullScreen()
+        QTimer.singleShot(10, self.GUI['GRID'].doResizification)
+    def _ctrl_a(self):  # Select all rows
+        self.GUI['GRID'].set_selection(0, self.GUI['GRID'].pagelength-1)
+        self.render()
 
 # UNDO REDO
 #=============================================================
-    def _ctrl_z(self,event):    #Undo your last action
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            lastAction = (self.undoRedo[2]-1)%len(TEMP['undo'])
-            #If there actually IS a previous action, load that
-            if (self.undoRedo[1] > self.undoRedo[0] and lastAction >= self.undoRedo[0] and lastAction <= self.undoRedo[1]) or (self.undoRedo[1] < self.undoRedo[0] and (lastAction >= self.undoRedo[0] or lastAction <= self.undoRedo[1])):
-                if lastAction == self.undoRedo[0]:  self.MENU['undo'].configure(state='disabled')
-                else:                               self.MENU['undo'].configure(state='normal')
-                self.MENU['redo'].configure(state='normal')
+    def _ctrl_z(self):    #Undo your last action
+        lastAction = (self.undoRedo[2]-1)%len(TEMP['undo'])
+        #If there actually IS a previous action, load that
+        if (self.undoRedo[1] > self.undoRedo[0] and lastAction >= self.undoRedo[0] and lastAction <= self.undoRedo[1]) or (self.undoRedo[1] < self.undoRedo[0] and (lastAction >= self.undoRedo[0] or lastAction <= self.undoRedo[1])):
+                if lastAction == self.undoRedo[0]:  self.MENU['undo'].setEnabled(False)
+                else:                               self.MENU['undo'].setEnabled(True)
+                self.MENU['redo'].setEnabled(True)
                 self.undoRedo[2] = (self.undoRedo[2]-1)%len(TEMP['undo'])
                 MAIN_PORTFOLIO.loadJSON(TEMP['undo'][lastAction])
                 self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
                 self.metrics()
                 self.render(sort=True)
-    def _ctrl_y(self,event):    #Redo your last action
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            nextAction = (self.undoRedo[2]+1)%len(TEMP['undo'])
-            #If there actually IS a next action, load that
-            if (self.undoRedo[1] > self.undoRedo[0] and nextAction >= self.undoRedo[0] and nextAction <= self.undoRedo[1]) or (self.undoRedo[1] < self.undoRedo[0] and (nextAction >= self.undoRedo[0] or nextAction <= self.undoRedo[1])):
-                if nextAction == self.undoRedo[1]:  self.MENU['redo'].configure(state='disabled')
-                else:                               self.MENU['redo'].configure(state='normal')
-                self.MENU['undo'].configure(state='normal')
+    def _ctrl_y(self):    #Redo your last action
+        nextAction = (self.undoRedo[2]+1)%len(TEMP['undo'])
+        #If there actually IS a next action, load that
+        if (self.undoRedo[1] > self.undoRedo[0] and nextAction >= self.undoRedo[0] and nextAction <= self.undoRedo[1]) or (self.undoRedo[1] < self.undoRedo[0] and (nextAction >= self.undoRedo[0] or nextAction <= self.undoRedo[1])):
+                if nextAction == self.undoRedo[1]:  self.MENU['redo'].setEnabled(False)
+                else:                               self.MENU['redo'].setEnabled(True)
+                self.MENU['undo'].setEnabled(True)
                 self.undoRedo[2] = (self.undoRedo[2]+1)%len(TEMP['undo'])
                 MAIN_PORTFOLIO.loadJSON(TEMP['undo'][nextAction])    #9ms to merely reload the data into memory
                 self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
@@ -1138,8 +1200,8 @@ class AutoAccountant(tk.Tk):
         # Importing transaction histories causes an undosave
         # Modifying/Creating a(n): Address, Asset, Transaction, Wallet
         #overwrites the cur + 1th slot with data
-        self.MENU['redo'].configure(state='disabled')
-        self.MENU['undo'].configure(state='normal')
+        self.MENU['redo'].setEnabled(False)
+        self.MENU['undo'].setEnabled(True)
 
         TEMP['undo'][(self.undoRedo[2]+1)%len(TEMP['undo'])] = MAIN_PORTFOLIO.toJSON()
 
@@ -1152,7 +1214,7 @@ class AutoAccountant(tk.Tk):
 
 # MISCELLANEOUS
 #=============================================================
-    def comm_copyright(self):
+    def copyright(self):
         Message(self,
         'MIT License', 
 
@@ -1174,9 +1236,8 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.''', width=78, height=20)
+SOFTWARE.''')
 
-    def get_mouse_pos(self):    return self.mouse_pos
 
 
 
@@ -1184,7 +1245,23 @@ SOFTWARE.''', width=78, height=20)
 
 if __name__ == '__main__':
     print('||    AUTO-ACCOUNTANT    ||')
-    AutoAccountant().mainloop()
+    loadSettings()
+    global app
+    app = QApplication(sys.argv + ['-platform', 'windows:darkmode=1']) #Applies windows darkmode to base application
+    loadIcons() #~50ms on startup
+
+    #Applies more stylish darkmode to the rest of the application
+    import qdarkstyle
+    qdarkstyle.load_stylesheet_pyside2() #~50ms on startup
+    app.setStyleSheet(AAstylesheet.get_custom_qdarkstyle())
+    app.setFont(QFont('Calibri', 10))
+
+    
+    w = AutoAccountant()
+    w.closeEvent = w.quit #makes closing the window identical to hitting cancel
+    app.exec_()
+    print('||    PROGRAM  CLOSED    ||')
+    saveSettings()
 
 
 

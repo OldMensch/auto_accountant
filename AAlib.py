@@ -3,21 +3,29 @@ import json
 import time
 from datetime import datetime, timedelta
 from copy import deepcopy
-import tkinter as tk
-import sys
-import os
+import sys, os
+
+import AAstylesheet
+from AAstylesheet import UNI_PALETTE
+
+from PySide2.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QAction, 
+    QShortcut, QApplication, QMainWindow, QDialog, QDesktopWidget, QMessageBox, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit, QActionGroup,
+    QComboBox, QListView, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea, QScrollBar, QStyle)
+from PySide2.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QCursor, QDoubleValidator, QDrag, 
+    QDropEvent, QDragEnterEvent, QImage, QPainter)
+from PySide2.QtCore import Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QTextDecoder
 
 import decimal
 decimal.getcontext().prec = 100
-from decimal import Decimal as mpf
+from decimal import Decimal
 
-absolute_precision = mpf(1e-80)
-relative_precision = mpf(1e-8)
-def appxEq(x,y):    return abs(mpf(x)-mpf(y)) < absolute_precision
-def zeroish(x):     return abs(mpf(x)) < absolute_precision 
+absolute_precision = Decimal(1e-80)
+relative_precision = Decimal(1e-8)
+def appxEq(x,y):    return abs(Decimal(x)-Decimal(y)) < absolute_precision
+def zeroish(x):     return abs(Decimal(x)) < absolute_precision 
 
-def appxEqPrec(x:mpf,y:mpf): return abs(x-y) < absolute_precision
-def zeroish_prec(x:mpf):     return abs(x) < absolute_precision 
+def appxEqPrec(x:Decimal,y:Decimal): return abs(x-y) < absolute_precision
+def zeroish_prec(x:Decimal):     return abs(x) < absolute_precision 
 
 
 
@@ -71,31 +79,41 @@ def ttt(string:str='reset'):
     elif string == 'average_report':
         print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
 
-def center(win): #Code copied from user "Honest Abe" from StackOverflow
-    """
-    centers a tkinter window
-    :param win: the main window or Toplevel window to center
-    """
-    win.update_idletasks()
-    width = win.winfo_width()
-    frm_width = win.winfo_rootx() - win.winfo_x()
-    win_width = width + 2 * frm_width
-    height = win.winfo_height()
-    titlebar_height = win.winfo_rooty() - win.winfo_y()
-    win_height = height + titlebar_height + frm_width
-    x = win.winfo_screenwidth() // 2 - win_width // 2
-    y = win.winfo_screenheight() // 2 - win_height // 2
-    win.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-    win.deiconify()
+class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow
+    def __init__(self, method):
+        '''Can be called from any thread to run any function on the main thread'''
+        super().__init__()
+
+        main_thread = QApplication.instance().thread()
+        self.moveToThread(main_thread)
+        self.setParent(QApplication.instance())
+        self.method = method
+        self.called.connect(self.execute)
+        self.called.emit()
+
+    called = Signal()
+
+    @Slot()
+    def execute(self):
+        self.method()
+        # trigger garbage collector
+        self.setParent(None)
+
+
+def HTMLify(text, styleSheet:str=''): # Uses a styleSheet to format HTML text
+    if text == '': return ''
+    if styleSheet == '': return text
+    return '<font style="'+styleSheet+'">'+text+'</font>'
+
 
 def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
     '''True if the dates are within second_gap of eachother. False otherwise.'''
     return abs(unix_date2-unix_date1) < second_gap
 
-def acceptableDifference(v1:mpf, v2:mpf, percent_gap:float) -> bool:
+def acceptableDifference(v1:Decimal, v2:Decimal, percent_gap:float) -> bool:
     '''True if the values are within percent_gap of eachother. False otherwise.\n
         percent_gap is the maximum multiplier between value1 and value2, where 2 is a 1.02 multiplier, 0.5 is a 1.005 multiplier, and so on. '''
-    p = mpf(1+percent_gap/100)
+    p = Decimal(1+percent_gap/100)
     return v1 < v2 * p and v1 > v2 / p #If value1 is within percent_gap of value2, then it is acceptable
 
 def format_general(data:str, style:str=None, charlimit:int=0) -> str:
@@ -154,86 +172,104 @@ def format_number(number:float, standard:str=None) -> str:
 ### LIBRARIES
 ###==========================================
 
-palettelib = {      #standardized colors for the whole program
-        'profit':       '#00ff00',
-        'neutral':      '#cccccc',
-        'loss':         '#ff0000',
-        'default_info_color':  '#ffffff',
-        'missingdata':  '#ff00ff',
+styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 
-        'grid_header':      '#0066aa',
-        'grid_header_text': '#ffff00',
-        'grid_highlight':   '#004466',
-        'grid_bg':          '#003355',
-        'grid_text':        '#ffffff',
+    # Good fonts: 
+    #   Courier New
+    #   Inconsolata Medium
+    #   Calibri
+    'universal':            "font-family: 'Calibri';",
 
-        'light':        '#0066aa',  #555555
-        'medium':       '#004466',  #555555
-        'dark':         '#003355',  #333333
-        'menu':         '#555555',
-        'menudark':     '#333333',
-        'accent':       '#550000',
-        'accentdark':   '#400000',
+    'GRID':                 "border: 0; border-radius: 0;",
+    'GRID_column':          "background: transparent; border-color: transparent; border-width: -2px 2px -2px 2px; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_label':           "background: "+UNI_PALETTE.B3+"; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_error_hover':     "background: #ff0000;",
+    'GRID_error_selection': "background: #cc0000;",
+    'GRID_error_none':      "background: #880000;",
+    'GRID_hover':           "background: "+UNI_PALETTE.A2+";",
+    'GRID_selection':       "background: "+UNI_PALETTE.A1+";",
+    'GRID_none':            "color: #ff0000; background: transparent;",
+                            
 
-        'entry':        '#000000',
-        'entrycursor':  '#ffffff',
-        'entrytext':    '#ffff00',
+    'title':                "background-color: #000000; color: #ffff00; font-family: 'Calibri'; font-size: 30px;",
+    'subtitle':             "background-color: #000000; color: #ffff00; font-family: 'Calibri'; font-size: 15px;",
+    'dialog':               "font-family: 'Calibri'; font-size: 20px;",
+    'displayFont':          "border: 0; font-family: 'Calibri'; font-size: 20px;",
+    'info_pane':            "font-family: 'Calibri'; font-size: 20px;",
+    'info':                 "font-family: 'Courier New';",
 
-        'scrollnotch':'#f0f0f0',
-        'tooltipbg' : '#fff0dd',
-        'tooltipfg' : '#660000',
+    'save':                 "background: #0077bb;",
+    'delete':               "background: #ff0000;",
+    'new':                  "background: #00aa00;",
 
-        'purchase':         '#00aa00',  'purchasetext':         '#005d00',
-        'purchase_crypto_fee':  '#00aa00',  'purchase_crypto_feetext':  '#005d00',
-        'sale':             '#d80000',  'saletext':             '#740000',
-        'gift_in':          '#44cc44',  'gift_intext':          '#007700',
-        'gift_out':         '#44cc44',  'gift_outtext':         '#007700',
-        'expense':          '#ee4444',  'expensetext':          '#aa0000',
-        'card_reward':      '#aa00aa',  'card_rewardtext':      '#440044',
-        'income':           '#aa00aa',  'incometext':           '#440044',
-        'transfer_in':      '#4488ff',  'transfer_intext':      '#0044bb',
-        'transfer_out':     '#4488ff',  'transfer_outtext':     '#0044bb',
-        'trade':            '#ffc000',  'tradetext':            '#d39700',
-        
-        'error':        '#ff0000',  'errortext':        '#000000',
-    }
+    'progressBar':          "QProgressBar, QProgressBar::Chunk {background-color: #00aa00; color: #000000}",
 
-def palette(color:str) -> str:
-    return palettelib[color]
+    'neutral':              "color: "+UNI_PALETTE.B6+";",
+    'profit':               "color: #00ff00;",
+    'loss':                 "color: #ff0000;",
 
-
-def loadIcons():  #unfortunately, this has to be a function, as it has to be declared AFTER the first tkinter instance is initialized
-    global iconlib
-    fs = int(225/setting('font')[1])
-    fs15=int(fs*1.5)
+    'entry':                "color: #ffff00; background: #000000; font-family: 'Courier New';",
+    'disabledEntry':        "color: #aaaaaa; font-family: 'Courier New';",
+    'test': """
+            QPushButton             {background: #660000;} 
+            QPushButton:hover       {background: #bb0000;}
+            QPushButton:pressed     {background: #ff0000;}
+            """,
     
-    #Makes the icons work when the images are stored inside the EXE file
+    'purchase':             'background: #00aa00;',  'purchasetext':              'background: #005d00;',
+    'purchase_crypto_fee':  'background: #00aa00;',  'purchase_crypto_feetext':   'background: #005d00;',
+    'sale':                 'background: #d80000;',  'saletext':                  'background: #740000;',
+    'gift_in':              'background: #44cc44;',  'gift_intext':               'background: #007700;',
+    'gift_out':             'background: #44cc44;',  'gift_outtext':              'background: #007700;',
+    'expense':              'background: #ee4444;',  'expensetext':               'background: #aa0000;',
+    'card_reward':          'background: #aa00aa;',  'card_rewardtext':           'background: #440044;',
+    'income':               'background: #aa00aa;',  'incometext':                'background: #440044;',
+    'transfer_in':          'background: #4488ff;',  'transfer_intext':           'background: #0044bb;',
+    'transfer_out':         'background: #4488ff;',  'transfer_outtext':          'background: #0044bb;',
+    'trade':                'background: #ffc000;',  'tradetext':                 'background: #d39700;',
+}
+
+def style(styleSheet:str):
+    try:    return styleSheetLib[styleSheet]
+    except: return ''
+
+
+def loadIcons():
+    global iconlib
+    
+    #Makes the icons work when the images are stored inside the compiled EXE file
     if hasattr(sys, "_MEIPASS"):    extra_dir = sys._MEIPASS+'/'
     else:                           extra_dir = ''
     iconlib = {
-        'logo' :  tk.PhotoImage(format='PNG', file=extra_dir+'icons/logo.png'),
+        'size' : QSize(2.5*setting('font_size'), 2.5*setting('font_size')),         # Size of icons
+        'size2' : QSize(3*setting('font_size'), 3*setting('font_size')),
 
-        'new' :  tk.PhotoImage(format='PNG', file=extra_dir+'icons/new.png').subsample(fs,fs),
-        'load' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/load.png').subsample(fs,fs),
-        'save' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/save.png').subsample(fs,fs),
-        'settings2' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/settings2.png').subsample(fs,fs),
-        'info2' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/info2.png').subsample(fs,fs),
-        'profiles' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/profiles.png').subsample(fs,fs),
-        'undo' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/undo.png').subsample(fs,fs),
-        'redo' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/redo.png').subsample(fs,fs),
+        'icon' : QIcon(extra_dir+'icons/logo.png'),
+        'logo' : QPixmap(extra_dir+'icons/logo.png'),
+        'bullet' : QPixmap(extra_dir+'icons/bullet.png'),
 
-        'arrow_up' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/arrow_up.png').subsample(fs,fs),
-        'arrow_down' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/arrow_down.png').subsample(fs,fs),
+        'new' : QPixmap(extra_dir+'icons/new.png'),
+        'load' : QPixmap(extra_dir+'icons/load.png'),
+        'save' : QPixmap(extra_dir+'icons/save.png'),
+        'settings2' : QPixmap(extra_dir+'icons/settings2.png'),
+        'info2' : QPixmap(extra_dir+'icons/info2.png'),
+        'profiles' : QPixmap(extra_dir+'icons/profiles.png'),
+        'undo' : QPixmap(extra_dir+'icons/undo.png'),
+        'redo' : QPixmap(extra_dir+'icons/redo.png'),
+
+        'arrow_up' : QPixmap(extra_dir+'icons/arrow_up.png'),
+        'arrow_down' : QPixmap(extra_dir+'icons/arrow_down.png'),
         
-        'settings' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/settings.png').subsample(fs15,fs15),
-        'info' : tk.PhotoImage(format='PNG', file=extra_dir+'icons/info.png').subsample(fs15,fs15),
+        'settings' : QPixmap(extra_dir+'icons/settings.png'),
+        'info' : QPixmap(extra_dir+'icons/info.png'),
     }
 
-def icons(icon:str) -> tk.PhotoImage:
+def icon(icon:str) -> QPixmap:
     return iconlib[icon]
 
 
-assetinfolib = [ #list of mutable info headers for the Portfolio rendering view
+
+assetinfolib = ( #list of mutable info headers for the Portfolio rendering view
     'ticker','name','class',
     'holdings','price','marketcap',
     'value','volume24h','day_change',
@@ -241,9 +277,9 @@ assetinfolib = [ #list of mutable info headers for the Portfolio rendering view
     'portfolio%','cash_flow','net_cash_flow',
     'realized_profit_and_loss','tax_capital_gains','tax_income','unrealized_profit_and_loss',
     'unrealized_profit_and_loss%','average_buy_price'
-]
+)
 
-transinfolib = ['date', 'type', 'wallet', 'quantity', 'value', 'price'] #list of (currently immutable) info headers for the Portfolio rendering view
+transinfolib = ('date', 'type', 'wallet', 'quantity', 'value', 'price') #list of (currently immutable) info headers for the Asset rendering view
 
 info_format_lib = {
     #Unique to portfolios
@@ -296,10 +332,10 @@ forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it c
 }
 
 def prettyClasses() -> list:
-    '''AAlib function which returns a list of all asset classes by their pretty name'''
-    toReturn = []
-    for c in assetclasslib: toReturn.append(assetclasslib[c]['name'])
-    return toReturn
+    '''Returns a list of all asset classes, keyed by their longer prettier name'''
+    # This is using LIST COMPREHENSION. Very useful! Shorter code! Pythonic!
+    # It allows me to create a list with a for loop in one little line
+    return [assetclasslib[c]['name'] for c in assetclasslib] 
 
 def uglyClass(name:str) -> str:
     '''AAlib function which returns the short class tag given its longer name'''
@@ -310,23 +346,22 @@ def uglyClass(name:str) -> str:
 assetclasslib = {  #List of asset classes, by name tag
     'c' : {
         'name':'Crypto',
-        'validTrans' : ['purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade'] 
+        'validTrans' : ('purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade')
     },
     's' : {
         'name':'Stock',
-        'validTrans' : ['purchase','sale','gift_in','gift_out','transfer_in','transfer_out'] 
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out')
     },
     'f' : {
         'name':'Fiat',
-        'validTrans' : ['purchase','sale','gift_in','gift_out','transfer_in','transfer_out'] 
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out') 
     }
 }
 
 def uglyTrans(pretty:str) -> str:
     '''AAlib function which returns the program's name for a transaction type from its pretty type name'''
     for ugly in pretty_trans:
-        if pretty_trans[ugly] == pretty:
-            return ugly
+        if pretty_trans[ugly] == pretty: return ugly
 
 pretty_trans = {
     'purchase':             'Purchase',
@@ -357,17 +392,17 @@ trans_priority = {  #Dictionary that sorts simultaneous transactions by what mak
 }
 
 valid_transaction_data_lib = {
-    'purchase':             ['type', 'date', 'wallet', 'description',               'loss_quantity',                            'fee_quantity',              'gain_asset', 'gain_quantity'],
-    'purchase_crypto_fee':  ['type', 'date', 'wallet', 'description',               'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ],
-    'sale':                 ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',                            'fee_quantity',                            'gain_quantity'],
-    'gift_out':             ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price'],
-    'gift_in':              ['type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'],
-    'card_reward':          ['type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'],
-    'income':               ['type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'],
-    'expense':              ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price'],
-    'transfer_out':         ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price',                                            ],
-    'transfer_in':          ['type', 'date', 'wallet', 'description',                                              'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ],
-    'trade':                ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ],
+    'purchase':             ('type', 'date', 'wallet', 'description',               'loss_quantity',                            'fee_quantity',              'gain_asset', 'gain_quantity'),
+    'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',               'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
+    'sale':                 ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',                            'fee_quantity',                            'gain_quantity'),
+    'gift_out':             ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price'),
+    'gift_in':              ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
+    'card_reward':          ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
+    'income':               ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
+    'expense':              ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price'),
+    'transfer_out':         ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price',                                            ),
+    'transfer_in':          ('type', 'date', 'wallet', 'description',                                              'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
+    'trade':                ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
 }
 
 
@@ -419,17 +454,15 @@ def timezone_to_unix(iso:str, tz_override:str=None) -> int:
 defsettingslib = { # A library containing all of the default settings
     'portHeight': 1080,
     'portWidth': 1920,
-    'font': ['Calibri',16],
-    'font2': ['Courier New',16],
-    'font3': ['Consolas',16],
+    'font_size': 16,
     'itemsPerPage':30,
     'startWithLastSaveDir': True,
     'lastSaveDir': '',
     'offlineMode': True,
     'header_portfolio': list(assetinfolib),
     'header_asset': list(transinfolib),
-    'sort_asset': ['ticker', False],
-    'sort_trans': ['date', False],
+    'sort_asset': ('ticker', False),
+    'sort_trans': ('date', False),
     'CMCAPIkey': '',
     'accounting_method': 'hifo',
     'base_currency': 'USDzf',
@@ -441,7 +474,7 @@ def setting(request:str, mult:float=1):
     '''Returns the value of the requested Auto-Accountant setting\n
         Settings include: palette[color], font \n
         For fonts, set mult=float to scale the font relative to the default size. Returns a font size no smaller than 10'''
-    if request[0:4] == 'font':
+    if request[0:4] == 'font' and request != 'font_size':
         if int(settingslib[request][1] * mult) < 10: #10 is the minimum font size
             return (settingslib[request][0], 10)
         return (settingslib[request][0], int(settingslib[request][1] * mult))

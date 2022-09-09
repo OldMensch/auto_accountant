@@ -1,7 +1,7 @@
 
 
 
-from AAdialogues import Message
+from AAdialogs import Message, Message2
 from AAlib import *
 from AAobjects import MAIN_PORTFOLIO
 
@@ -10,6 +10,7 @@ import json
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 import time
+from functools import partial as p
 
 from threading import Thread
 
@@ -26,17 +27,14 @@ def startMarketDataLoops(mainPortREF, online_event):
 ###Yahoo Financials for STOCK DATA and finding missing data
 ###============================================
 
-def StockDataLoop(mainPortREF, online_event):
-    last_load_time = 0
+def StockDataLoop(mainPortREF, online_event): # Only works when all stocks actually exist
     
     while True:
         online_event.wait() #waits eternally until we're online
         #Ok, we're online. Process immediately, then wait for 5 minutes and do it all again.
 
-        stockList = []   #creates a list of 'tickers' or 'symbols' or whatever you want to call them
-        for asset in MAIN_PORTFOLIO.assets():
-            if asset.assetClass() == 's':
-                stockList.append(asset.ticker())
+        # creates a list of 'tickers' or 'symbols' or whatever you want to call them
+        stockList = [asset.ticker() for asset in MAIN_PORTFOLIO.assets() if asset.assetClass() == 's']
 
         if len(stockList) == 0:    #No reason to update nothing! Restarts the wait timer.
             time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
@@ -51,19 +49,11 @@ def StockDataLoop(mainPortREF, online_event):
         raw_data = yf2.YahooFinancials(stockList)  #0ms
         curr = raw_data.get_stock_price_data() #17000ms ....  takes a LONG time
 
-        #Removal of invalid stocks (if user puts in a stock ticker that doesn't exist, or otherwise cannot be found on yahoo)
-        INVALID = []
-        for stock in list(curr):
-            if curr[stock] == None:
-                curr.pop(stock)
-                INVALID.append(stock)
-        stockList = list(curr)  #Updates the list of all valid stocks after removing the invalid ones
-        if len(INVALID) > 0:
-            invalidString = ''
-            for badTicker in INVALID:
-                invalidString += badTicker + ', '
-            invalidString = invalidString[:-2]
-            Message(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
+        # Removal of invalid stocks (if user puts in a stock ticker that cannot be found on yahooFinance)
+        INVALID = [stock for stock in list(curr) if curr[stock]==None]      # Create list of stocks that could not be found
+        stockList = [stock for stock in list(curr) if curr[stock]!=None]    # Replace stock list with list of stocks that DO exist
+        if len(INVALID) > 0:                                                # Spawn an error message to notify the user which stocks could not be found
+            InvokeMethod(p(Message, mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + ', '.join(INVALID) + '.'))
 
         raw_data = raw_data.get_historical_price_data(date_month, date_today, 'daily')    #300ms
 
@@ -89,8 +79,8 @@ def StockDataLoop(mainPortREF, online_event):
             
             marketdatalib[stock + 'zs'] = export    #update the library which gets called to by the main portfolio
 
-        mainPortREF.market_metrics()                     #Updates the overall portfolio summary info
-        mainPortREF.render(sort=True)
+        InvokeMethod(mainPortREF.market_metrics)
+        InvokeMethod(p(mainPortREF.render, sort=True))
 
         #Updates the timestamp for last update of the marketdatalib
         marketdatalib['_timestamp'] = str(datetime.now())
@@ -115,7 +105,6 @@ def getMissingPrice(date, tickerclass):
     if TO_FIND not in raw_data.get_summary_data():
         print('||ERROR|| Yahoo Finance API Error: ' + TO_FIND + ' is not a supported market pair on Yahoo Finance.')
         return None
-        #Message(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
 
     raw_data = raw_data.get_historical_price_data(date, date, 'daily')    #300ms 
 
@@ -132,10 +121,8 @@ def CryptoDataLoop(mainPortREF, online_event):
         online_event.wait() #waits eternally until we're online
         #Ok, we're online. Process immediately, then wait for 5 minutes. Then we do this check again, and so on.
 
-        cryptoString = ''   #creates a comma-separates list of 'tickers' or 'symbols' or whatever you want to call them
-        for asset in MAIN_PORTFOLIO.assets():
-            if asset.assetClass() == 'c':
-                cryptoString += asset.ticker() + ','
+        #creates a comma-separated list of crypto tickers to be fed into CoinMarketCap
+        cryptoString = ','.join(asset.ticker() for asset in MAIN_PORTFOLIO.assets() if asset.assetClass() == 'c')
 
         if cryptoString == '':    #No reason to update nothing!
             time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
@@ -160,10 +147,15 @@ def CryptoDataLoop(mainPortREF, online_event):
             response = session.get(url, params=parameters)
             data = json.loads(response.text)
         except (ConnectionError, Timeout, TooManyRedirects) as e:
-            Message(mainPortREF, 'CoinMarketCap API Error', e)
+            if type(e) == ConnectionError: msg = 'Connection error: Could not connect to CoinMarketCap API'
+            elif type(e) == Timeout: msg = 'Timeout error: Timed out while trying to connect to CoinMarketCap API'
+            elif type(e) == TooManyRedirects: msg = 'TooManyRedirects error: Could not connect to CoinMarketCap API'
+            InvokeMethod(p(Message, mainPortREF, 'CoinMarketCap API Error', msg))
+            time.sleep(60)      #Waits for 1 minute
+            continue
         if data != None and data['status']['error_message'] != None:
             errmsg = data['status']['error_message']
-            Message(mainPortREF, 'CoinMarketCap API Error', errmsg)
+            InvokeMethod(p(Message, mainPortREF, 'CoinMarketCap API Error', errmsg))
 
             ###Removal of all the INVALID token tickers. All remaining valid tokens will still be updated
             INVALID = errmsg.split('\'')[3].split(',')  #creates a list of all the invalid tokens
@@ -205,9 +197,9 @@ def CryptoDataLoop(mainPortREF, online_event):
                         'price' :       '0',
                         'volume24h' :   '0',
                     }
-                
-            mainPortREF.market_metrics()                      #Updates the overall portfolio summary info
-            mainPortREF.render(sort=True)
+
+            InvokeMethod(mainPortREF.market_metrics)
+            InvokeMethod(p(mainPortREF.render, sort=True))
 
         #Updates the timestamp for last update of the marketdatalib
         marketdatalib['_timestamp'] = str(datetime.now())
