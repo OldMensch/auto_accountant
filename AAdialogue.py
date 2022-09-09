@@ -272,30 +272,27 @@ class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a
     def clear(self):        self.currentItem.set(self.defaultItem)
 
 class TextBox(tk.Text): #Simple textbox that allows for mixed color, highlighting, and fonts
-    def __init__(self, upper, text='', state='normal', fg=palette('entrycursor'), bg=palette('dark'), font=setting('font', 0.75), height=8, width=32, wrap='word'):
-        super().__init__(upper, fg=fg, bg=bg, font=font, height=height, width=width, wrap=wrap, bd=0)
+    def __init__(self, upper, text='', state='normal', fg=palette('entrycursor'), bg=palette('dark'), font=setting('font', 0.75), height=8, width=32, wrap='word', spacing1=0,spacing2=0,spacing3=0):
+        super().__init__(upper, fg=fg, bg=bg, font=font, height=height, width=width, wrap=wrap, bd=-1, spacing1=spacing1, spacing2=spacing2, spacing3=spacing3)
         if state == 'readonly': #In a 'readonly' state, text can't be copied. It's basically just a more complex label. Disabled at least allows for highlighting text.
-            self.default_state = 'disabled'
-            self.bindtags((str(self), str(upper), "all"))
+            new_bind_tags = list(self.bindtags())
+            new_bind_tags.remove('Text')            # Removing the bind tag 'Text' removes all the functionality of the tk.Text widget
+            self.bindtags(new_bind_tags)
             self.configure(cursor='')
-        else:   self.default_state = state
+        self.default_state = state
         self.tagID = 0
         self.insert(0.0, text)
-        self.configure(state=self.default_state)
+        if state!= 'readonly': self.configure(state=self.default_state)
     
     def insert_text(self, text, fg=None, bg=None, font=None, justify='left'):
         '''Insert a bit of text into the textbox, specifying colors if you want'''
-        self.configure(state='normal') #Can only insert text when it isn't disabled
-        #If no formatting, just insert the text at the end
-        if fg==bg==font==None and justify=='left': self.insert('insert', text)
-        #Otherwise, color, then insert it
-        else:
-            self.tag_config(self.tagID, foreground=fg, background=bg, font=font, justify=justify)
-            last_pos = self.index('insert') #Position of the "cursor", where we will insert next
-            self.insert('insert', text)
-            self.tag_add(self.tagID, last_pos, self.index('insert'))
-            self.tagID += 1
-        self.configure(state=self.default_state)
+        if self.default_state=='disabled': self.configure(state='normal') #Can only insert text when it isn't disabled
+
+        self.tag_config(self.tagID, foreground=fg, background=bg, font=font, justify=justify)
+        self.insert('insert', text, (self.tagID))
+        self.tagID += 1
+            
+        if self.default_state=='disabled': self.configure(state=self.default_state)
 
     def insert_triplet(self, text1, text2, text3, fg=None, bg=None, font=None, justify='left'):
         self.insert_text(text1)
@@ -305,19 +302,29 @@ class TextBox(tk.Text): #Simple textbox that allows for mixed color, highlightin
     
     def newline(self):
         '''Moves point of insertion to the next line in the text box'''
-        self.configure(state='normal') #Can only insert text when it isn't disabled
+        if self.default_state=='disabled': self.configure(state='normal') #Can only insert text when it isn't disabled
         self.insert('insert', '\n')
-        self.configure(state=self.default_state)
+        if self.default_state=='disabled': self.configure(state=self.default_state)
     
     def clear(self):    
         '''Deletes all text and clears all color/font formatting'''
-        self.configure(state='normal') #Can only insert text when it isn't disabled
-        for i in range(self.tagID):
-            self.tag_remove(i,'1.0','end')
+        if self.default_state=='disabled': self.configure(state='normal') #Can only insert text when it isn't disabled
+        self.clear_formatting()
         self.delete('0.0','end')
-        self.tagID = 0
-        self.configure(state=self.default_state)
+        if self.default_state=='disabled': self.configure(state=self.default_state)
     
+    def clear_formatting(self):
+        '''Clears all color/font formatting'''
+        for tag in self.tag_names():
+            self.tag_delete(tag)
+        self.tagID = 0
+    def force_formatting(self, fg=None, bg=None, font=None, justify='left'):
+        '''Sets format for the entire textbox'''
+        self.clear_formatting()
+        self.tag_config(self.tagID, foreground=fg, background=bg, font=font, justify=justify)
+        self.tag_add(self.tagID, '1.0', self.index('end'))
+        self.tagID += 1
+
 
 class SelectionList(tk.Frame):  #Selection list object
     def __init__(self, upper, items, checkList, allowMultipleSelection=False, title='', width=32, height=10, truncate=False, sort='alpha', button_command=None):

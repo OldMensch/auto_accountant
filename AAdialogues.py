@@ -205,14 +205,14 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
     def auto_purchase_sale_price(self): #Updates purchase/sale price when loss_quantity changes for a purchase/sale
         try:
             TYPE = uglyTrans(self.ENTRIES['type'].entry())
-            LQ = precise(self.ENTRIES['loss_quantity'].entry())
-            GQ = precise(self.ENTRIES['gain_quantity'].entry())
+            LQ = mpf(self.ENTRIES['loss_quantity'].entry())
+            GQ = mpf(self.ENTRIES['gain_quantity'].entry())
             if TYPE == 'purchase':
                 self.ENTRIES['gain_price'].set(str(LQ/GQ))
             elif TYPE == 'sale':
                 self.ENTRIES['loss_price'].set(str(GQ/LQ))
             elif TYPE == 'trade':
-                LP = precise(self.ENTRIES['loss_price'].entry())
+                LP = mpf(self.ENTRIES['loss_price'].entry())
                 self.ENTRIES['gain_price'].set(str(LQ*LP/GQ))
         except: return
 
@@ -289,7 +289,7 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         #selected a type?
         if self.ENTRIES['type'].entry() == self.ENTRIES['type'].defaultItem:
             Message(self, 'ERROR!', 'No transaction type was selected.')    #Message and return here otherwise code breaks w/o a type selected
-            return  
+            return
         #valid datetime format?
         try:        datetime( int(DATE[:4]), int(DATE[5:7]), int(DATE[8:10]), int(DATE[11:13]), int(DATE[14:16]), int(DATE[17:19]) )
         except:     error = 'Invalid date!'

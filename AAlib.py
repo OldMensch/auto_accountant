@@ -5,13 +5,17 @@ from datetime import datetime, timedelta
 from copy import deepcopy
 import tkinter as tk
 
-from mpmath import mpf as precise
+from mpmath import mpf
 from mpmath import mp
 mp.dps = 50
+#mp.pretty = True
 absolute_precision = 1e-10
 relative_precision = 1e-8
-def appxEq(x,y): return abs(precise(x)-precise(y)) < absolute_precision
-def zeroish(x):  return abs(precise(x)) < absolute_precision 
+def appxEq(x,y):    return abs(mpf(x)-mpf(y)) < absolute_precision
+def zeroish(x):     return abs(mpf(x)) < absolute_precision 
+
+def appxEqmpf(x:mpf,y:mpf): return abs(x-y) < absolute_precision
+def zeroish_mpf(x:mpf):     return abs(x) < absolute_precision 
 
 
 
@@ -32,13 +36,21 @@ MISSINGDATA = '???'
 ### UTILITY FUNCTIONS
 ###==========================================
 global timestamp
+global time_avg
+global time_avg_windows
 timestamp = 0
+time_sum = 0
+time_avg_windows = 0
 
-def ttt(string='reset'):
+def ttt(string:str='reset'):
     '''\'reset\' prints the current time then sets to 0, \'start\' subtracts a startpoint, \'end\' adds an endpoint'''
     global timestamp
+    global time_sum
+    global time_avg_windows
     if string == 'reset':
         print(str(timestamp) + ' ms')
+        time_sum = 0
+        time_avg_windows = 0
         timestamp = 0
     elif string == 'start':
         timestamp -= time.time()*1000
@@ -47,10 +59,19 @@ def ttt(string='reset'):
     elif string == 'terminate':
         timestamp += time.time()*1000
         ttt('reset')
+    elif string == 'avg_save':
+        time_sum += timestamp
+        time_avg_windows += 1
+        timestamp = 0
+    elif string == 'avg_end':
+        ttt('end')
+        ttt('avg_save')
+    elif string == 'average_report':
+        print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
 
 
 
-def acceptableTimeDiff(date1, date2, second_gap):
+def acceptableTimeDiff(date1:str, date2:str, second_gap:int) -> bool:
     '''True if the dates are within second_gap of eachother. False otherwise.'''
     d1 = datetime( int(date1[:4]), int(date1[5:7]), int(date1[8:10]), int(date1[11:13]), int(date1[14:16]), int(date1[17:19]) )
     d2 = datetime( int(date2[:4]), int(date2[5:7]), int(date2[8:10]), int(date2[11:13]), int(date2[14:16]), int(date2[17:19]) )
@@ -58,17 +79,17 @@ def acceptableTimeDiff(date1, date2, second_gap):
     if d1 > d2 - s and d1 < d2 + s: return True
     return False
 
-def acceptableDifference(value1, value2, percent_gap):
+def acceptableDifference(value1:mpf, value2:mpf, percent_gap:float) -> bool:
     '''True if the values are within percent_gap of eachother. False otherwise.\n
         percent_gap is the maximum multiplier between value1 and value2, where 2 is a 1.02 multiplier, 0.5 is a 1.005 multiplier, and so on. '''
-    v1 = precise(value1)
-    v2 = precise(value2)
-    p = precise(1+percent_gap/100)
+    v1 = mpf(value1)
+    v2 = mpf(value2)
+    p = mpf(1+percent_gap/100)
     if v1 < v2 * p and v1 > v2 / p: #If value1 is within percent_gap of value2, then it is acceptable
         return True
     return False
 
-def format_general(data, style=None, charlimit=0):
+def format_general(data:str, style:str=None, charlimit:int=0) -> str:
     toReturn = MISSINGDATA
     if style == 'alpha':        toReturn = str(data)
     elif style == 'integer':      
@@ -89,7 +110,7 @@ def format_general(data, style=None, charlimit=0):
         return toReturn[0:charlimit].removesuffix('.') #Removes the decimal, if its the very last character
     return toReturn
 
-def format_number(number, standard=None, bigNumber=False):
+def format_number(number:float, standard:str=None) -> str:
     '''Returns a string for the formatted version of a number. Mainly to shorten needlessly long numbers.
     \nnumber - the number to be formatted
     \nstandard - a bit of code 
@@ -131,6 +152,7 @@ palettelib = {      #standardized colors for the whole program
         'missingdata':  '#ff00ff',
 
         'grid_header':      '#0066aa',
+        'grid_header_text': '#ffff00',
         'grid_highlight':   '#004466',
         'grid_bg':          '#003355',
         'grid_text':        '#ffffff',
@@ -166,6 +188,10 @@ palettelib = {      #standardized colors for the whole program
         'error':        '#ff0000',  'errortext':        '#000000',
     }
 
+def palette(color:str) -> str:
+    return palettelib[color]
+
+
 def initializeIcons():  #unfortunately, this has to be a function, as it has to be declared AFTER the first tkinter instance is initialized
     global iconlib
     fs = int(225/setting('font')[1])
@@ -187,19 +213,28 @@ def initializeIcons():  #unfortunately, this has to be a function, as it has to 
         'info' : tk.PhotoImage(format='PNG', file='icons/info.png').subsample(fs15,fs15),
     }
 
-portfolioinfolib = {
+def icons(icon:str) -> tk.PhotoImage:
+    return iconlib[icon]
+
+
+assetinfolib = [ #list of mutable info headers for the Portfolio rendering view
+    'ticker','name','class',
+    'holdings','price','marketcap',
+    'value','volume24h','day_change',
+    'day%','week%','month%',
+    'portfolio%','cash_flow','net_cash_flow',
+    'realized_profit_and_loss','tax_capital_gains','tax_income','unrealized_profit_and_loss',
+    'unrealized_profit_and_loss%','average_buy_price'
+]
+
+transinfolib = ["date", "type", "wallet", "quantity", "value", "price"] #list of (currently immutable) info headers for the Portfolio rendering view
+
+info_format_lib = {
+    #Unique to portfolios
     'number_of_transactions': {     'format':'integer', 'color' : None,         'name':'# Transactions',    'headername':'# Transactions'},
     'number_of_assets': {           'format':'integer', 'color' : None,         'name':'# Assets',          'headername':'# Assets'},
-    'value': {                      'format':'penny',   'color' : None,         'name':'Value',             'headername':'Value'},
-    'day_change': {                 'format':'penny',   'color' : 'profitloss', 'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
-    'day%': {                       'format':'percent', 'color' : 'profitloss', 'name':'24-Hour %',         'headername':'24-Hr %'},
-    'week%': {                      'format':'percent', 'color' : 'profitloss', 'name':'7-Day %',           'headername':'7-Day %'},
-    'month%': {                     'format':'percent', 'color' : 'profitloss', 'name':'30-Day %',          'headername':'30-Day %'},
-    'unrealized_profit_and_loss':{  'format':'penny',   'color' : 'profitloss', 'name':'Unrealized P&L',    'headername':'Unreal P&L'},
-    'unrealized_profit_and_loss%':{ 'format':'percent', 'color' : 'profitloss', 'name':'Unrealized P&L %',  'headername':'Unreal P&L %'},
-}
 
-assetinfolib = { #Dictionary of useful attributes describing asset info
+    #Unique to portfolios and assets
     'ticker': {                     'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
     'name':{                        'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
     'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
@@ -221,9 +256,8 @@ assetinfolib = { #Dictionary of useful attributes describing asset info
     'unrealized_profit_and_loss':{  'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
     'average_buy_price':{           'format': '',           'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
-}
 
-transinfolib = {
+    #Unique to transactions
     'date':{            'format':'alpha',      'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
     'type':{            'format':'alpha',      'color':'type',       'name':'Type',          'headername':'Type'           },
     'wallet':{          'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
@@ -237,9 +271,7 @@ transinfolib = {
     'gain_quantity':{   'format':'',           'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
     'gain_price':{      'format':'',           'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
 
-    'value':{           'format':'',           'color':None,         'name':'Value',         'headername':'Value'          },
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
-    'price':{           'format':'',           'color':None,         'name':'Price',         'headername':'Price'          },
 }
 
 forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. This is for assets which have changed tickers over time.
@@ -247,17 +279,17 @@ forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it c
     'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00')
 }
 
-def prettyClasses():
-    '''AAlib function which returns a list of asset classes by their pretty name'''
+def prettyClasses() -> list:
+    '''AAlib function which returns a list of all asset classes by their pretty name'''
     toReturn = []
     for c in assetclasslib: toReturn.append(assetclasslib[c]['name'])
     return toReturn
 
-def uglyClass(name):
+def uglyClass(name:str) -> str:
     '''AAlib function which returns the short class tag given its longer name'''
     for c in assetclasslib:
         if assetclasslib[c]['name'] == name:    return c
-    return '' #Return blank string if we fail to find the class letter
+    return None #Return None if we fail to find the class letter
 
 assetclasslib = {  #List of asset classes, by name tag
     'c' : {
@@ -274,7 +306,8 @@ assetclasslib = {  #List of asset classes, by name tag
     }
 }
 
-def uglyTrans(pretty):
+def uglyTrans(pretty:str) -> str:
+    '''AAlib function which returns the program's name for a transaction type from its pretty type name'''
     for ugly in pretty_trans:
         if pretty_trans[ugly] == pretty:
             return ugly
@@ -321,17 +354,19 @@ valid_transaction_data_lib = {
     'trade':                ['type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ],
 }
 
+
 defsettingslib = { # A library containing all of the default settings
     'portHeight': 1080,
     'portWidth': 1920,
     'font': ['Calibri',16],
     'font2': ['Courier New',16],
+    'font3': ['Consolas',16],
     'itemsPerPage':30,
     'startWithLastSaveDir': True,
     'lastSaveDir': '',
     'offlineMode': True,
     'header_portfolio': list(assetinfolib),
-    'header_asset': ["date", "type", "wallet", "quantity", "value", "price"],
+    'header_asset': list(transinfolib),
     'sort_asset': ['ticker', False],
     'sort_trans': ['date', False],
     'CMCAPIkey': '',
@@ -340,20 +375,17 @@ defsettingslib = { # A library containing all of the default settings
 }
 settingslib = deepcopy(defsettingslib)
 
-def setting(request, mult=1, set=None):
+def setting(request:str, mult:float=1):
     '''Returns the value of the requested Auto-Accountant setting\n
         Settings include: palette[color], font \n
         For fonts, set mult=float to scale the font relative to the default size. Returns a font size no smaller than 10'''
-    if set:
-        settingslib[request] = set
-        return
     if request[0:4] == 'font':
         if int(settingslib[request][1] * mult) < 10: #10 is the minimum font size
             return (settingslib[request][0], 10)
         return (settingslib[request][0], int(settingslib[request][1] * mult))
     return settingslib[request]
 
-def set_setting(request, newValue):
+def set_setting(request:str, newValue):
     settingslib[request] = newValue
 
 def saveSettings():
@@ -371,10 +403,4 @@ def loadSettings():
     except:
         print('||ERROR|| Could not load settings.json, reverting to default settings')
 
-def palette(color):
-    try:    return palettelib[color]
-    except: return "#ff00ff" #error color
-
-def icons(icon):
-    return iconlib[icon]
 

@@ -30,9 +30,8 @@ class AutoAccountant(tk.Tk):
         self.rendered = ('portfolio', None) #'portfolio' renders all the assets. 'asset' combined with the asset tickerclass renders that asset
         self.page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
         self.sorted = []
-        self.GRID_SELECTION = [-1, -1]
-        self.ToolTips = ToolTipWindow()
-        self.universal_GRID_height = None
+        self.ToolTips = ToolTipWindow(self.get_mouse_pos)
+        self.mouse_pos = (0,0)
 
         self.create_GUI()
         self.create_taskbar()
@@ -50,7 +49,7 @@ class AutoAccountant(tk.Tk):
             try:
                 marketdatalib.update(json.load(open('#OfflineMarketData.json', 'r')))
                 self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-                self.GUI['offlineIndicator'].pack(side='right') #Turns on a bright red indicator, which lets you know you're in offline mode
+                self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
                 self.market_metrics()
                 self.render(sort=True)
             except:
@@ -64,6 +63,7 @@ class AutoAccountant(tk.Tk):
 
         #GLOBAL BINDINGS
         #==============================
+        self.bind('<Motion>', self._mouse)
         self.bind('<MouseWheel>', self._mousewheel)
         self.bind('<Control-z>', self._ctrl_z)
         self.bind('<Control-y>', self._ctrl_y)
@@ -114,7 +114,7 @@ class AutoAccountant(tk.Tk):
                 json.dump(marketdatalib, open('#OfflineMarketData.json', 'w'), indent=4, sort_keys=True)
                 self.online_event.clear()
                 self.GUI['offlineIndicator'].config(text='OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-                self.GUI['offlineIndicator'].pack(side='right') #Turns on a bright red indicator, which lets you know you're in offline mode
+                self.GUI['offlineIndicator'].pack(side='right',fill='y') #Turns on a bright red indicator, which lets you know you're in offline mode
             else:                           #Changed to Online Mode
                 self.online_event.set()
                 self.GUI['offlineIndicator'].forget() #Removes the offline indicator
@@ -135,13 +135,13 @@ class AutoAccountant(tk.Tk):
         self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['info'], label='Info')
 
         def toggle_header(info):
-            if info in setting('header_portfolio'):    self.hide_info(info)
-            else:                                       self.show_info(info)
+            if info in setting('header_portfolio'):    self.hide_header(info)
+            else:                                       self.show_header(info)
 
         self.TASKBAR['info'].values = {}
         for info in assetinfolib:
             self.TASKBAR['info'].values[info] = tk.BooleanVar(value=info in setting('header_portfolio')) #Default value true if in the header list
-            self.TASKBAR['info'].add_checkbutton(label=assetinfolib[info]['name'], command=p(toggle_header, info), variable=self.TASKBAR['info'].values[info])
+            self.TASKBAR['info'].add_checkbutton(label=info_format_lib[info]['name'], command=p(toggle_header, info), variable=self.TASKBAR['info'].values[info])
 
         #'Accounting' Tab
         self.TASKBAR['accounting'] = tk.Menu(self, tearoff=0)
@@ -165,11 +165,13 @@ class AutoAccountant(tk.Tk):
         #'DEBUG' Tab
         self.TASKBAR['DEBUG'] = tk.Menu(self, tearoff=0)
         self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['DEBUG'], label='DEBUG')
-        self.TASKBAR['DEBUG'].add_command(label='Export TEMP to DEBUG.json',     command=self.DEBUG_print_TEMP)
-        self.TASKBAR['DEBUG'].add_command(label='DEBUG dialogue box',     command=self.DEBUG_dialogue)
         self.TASKBAR['DEBUG'].add_command(label='DEBUG find all missing price data',     command=self.DEBUG_find_all_missing_prices)
         self.TASKBAR['DEBUG'].add_command(label='DEBUG delete all transactions, by wallet',     command=self.DEBUG_delete_all_of_asset)
-        #debugmenu.add_command(label='Restart Auto-Accountant',     command=self.DEBUG_restart_test)
+        self.TASKBAR['DEBUG'].add_command(label='DEBUG increase page length',     command=self.DEBUG_increase_page_length)
+        self.TASKBAR['DEBUG'].add_command(label='DEBUG decrease page length',     command=self.DEBUG_decrease_page_length)
+        self.TASKBAR['DEBUG'].add_command(label='DEBUG grayify',     command=self.DEBUG_grayify)
+        self.TASKBAR['DEBUG'].add_command(label='DEBUG time report',     command=p(ttt, 'average_report'))
+        self.TASKBAR['DEBUG'].add_command(label='DEBUG time reset',     command=p(ttt, 'reset'))
 
         
     def tax_Form_8949(self):
@@ -183,30 +185,6 @@ class AutoAccountant(tk.Tk):
         self.metrics(tax_report='1099-MISC')
         open(dir, 'w', newline='').write(TEMP['taxes']['1099-MISC'].to_csv())
 
-
-    def DEBUG_print_TEMP(self):
-        toWrite = str(TEMP).replace('<','\'').replace('>','\'').replace('\'','\'')
-        open('DEBUG.json', 'w').write(toWrite)
-        toDump = json.load(open('DEBUG.json', 'r'))
-        json.dump(toDump, open('DEBUG.json', 'w'), sort_keys=True, indent=4)
-    def DEBUG_dialogue(self):
-        testdialogue = Dialogue(self, 'Dialogue Title')
-        testdialogue.add_menu_button('close', command=testdialogue.close)
-        testdialogue.add_label(0, 0, 'dayte:')
-        testdialogue.add_label(0, 1, 'positive float: ')
-        testdialogue.add_label(0, 2, 'float: ')
-        testdialogue.add_label(0, 3, 'one-liner:')
-        testdialogue.add_label(0, 4, 'description:')
-        date = testdialogue.add_entry(1, 0, '0000/00/00 00:00:00', format='date')
-        posfloat = testdialogue.add_entry(1, 1, '', format='pos_float', charLimit=16)
-        float = testdialogue.add_entry(1, 2, '', format='float', charLimit=16)
-        text = testdialogue.add_entry(1, 3, '', charLimit=10)
-        desc = testdialogue.add_entry(1, 4, 'a\nb\nc', format='description')
-        def printdata():    print(desc.entry())
-        testdialogue.add_menu_button('print data', command=printdata)
-        testdialogue.center_dialogue()
-    def DEBUG_restart_test(self):
-        self.destroy()
     def DEBUG_find_all_missing_prices(self):
         for t in MAIN_PORTFOLIO.transactions():
             DATE = t.date()
@@ -223,6 +201,14 @@ class AutoAccountant(tk.Tk):
                 MAIN_PORTFOLIO.delete_transaction(transaction.get_hash())
         self.metrics()
         self.render(sort=True)
+    def DEBUG_increase_page_length(self):
+        self.GUI['GRID'].update_page_length(setting('itemsPerPage')+1)
+        self.render()
+    def DEBUG_decrease_page_length(self):
+        self.GUI['GRID'].update_page_length(setting('itemsPerPage')-1)
+        self.render()
+    def DEBUG_grayify(self):
+        self.GUI['GRID'].force_formatting(palette('neutral'),palette('menudark'), None, 'center')
 
     def comm_import_binance(self, wallet=None):
         if wallet == None:    ImportationDialogue(self, self.comm_import_binance, 'Binance Wallet') 
@@ -378,7 +364,7 @@ class AutoAccountant(tk.Tk):
         self.GUI['page_next'] = tk.Button(self.GUI['primaryFrame'], image=icons('arrow_down'), bg=palette('entry'), command=self.comm_page_next)
         self.GUI['page_last'] = tk.Button(self.GUI['primaryFrame'], image=icons('arrow_up'), bg=palette('entry'), command=self.comm_page_last)
         #contains the list of assets/transactions
-        self.GUI['GRIDframe'] = tk.Frame(self, bg=palette('dark'))
+        self.GUI['GRID'] = GRID(self, self.set_sort, self._header_menu, self._left_click_row, self._right_click_row)
         #The little bar on the bottom
         self.GUI['bottomFrame'] = tk.Frame(self, bg=palette('accent'))
         self.GUI['copyright'] = tk.Button(self.GUI['bottomFrame'], bd=0, bg=palette('accent'), text='Copyright © 2022 Shane Evanson', fg=palette('entrycursor'), font=setting('font',0.4), command=self.comm_copyright)
@@ -401,152 +387,111 @@ class AutoAccountant(tk.Tk):
         self.GUI['page_last']       .grid(column=0,row=6, sticky='SE')
         self.GUI['page_next']       .grid(column=1,row=6, sticky='SW')
         
-        self.GUI['GRIDframe']  .grid(column=1,row=1, sticky='NSEW')
+        self.GUI['GRID']            .grid(column=1,row=1, sticky='NSEW')
         
         self.GUI['bottomFrame']     .grid(column=0,row=2, columnspan=2, sticky='EW')
         self.GUI['copyright']       .pack(side='left')
 
-    def create_GRID(self):
-        '''Initializes the grid of labels which displays all of the information about assets and transactions'''
-        #Creates the GRID dictionary, and dictionary for the headers
-        TEMP['GRID'] = { 0:{} }
+        #GUI TOOLTIPS
+        #==============================
+        tooltips = {
+            'edit':                 'Edit this asset',
+            'new_asset':            'Create a new asset',
+            'new_transaction':      'Create a new transaction',
 
-        #for itemsPerPage rows of data...
-        for r in range(1, setting('itemsPerPage')+1):
-            self.GUI['GRIDframe'].rowconfigure(r, weight=1, uniform='uniform')    #Makes the whole thing stretch vertically to fit the righthand window
-            if r not in TEMP['GRID']:   TEMP['GRID'][r] = {}
-        #Generates labels for every column we need
-        for c in range(len(setting('header_portfolio'))+1): #We always start out on the portfolio page, and thus, we start out with as many columns as there are headers
-            self.GRID_add_col()
-            
-    def GRID_remove_col(self):  #Removing columns is slow, sadly. Not sure how to improve this really
-        '''Removes a column of labels from the GRID'''
-        lastcol = len(TEMP['GRID'][0])-1
-        if lastcol == 0:        return
-        for r in TEMP['GRID']:  TEMP['GRID'][r].pop(lastcol).destroy()
-    def GRID_add_col(self):
-        '''Adds a column of labels to the GRID'''
-        lastcol = len(TEMP['GRID'][0])
-
-        #The header
-        if lastcol == 0:
-            corner = TEMP['GRID'][0][0] = tk.Label(self.GUI['GRIDframe'], text='#', font=setting('font', 0.75), fg=palette('entrytext'), bg=palette('light'), relief='groove', bd=1)
-            corner.grid(column=0,row=0, sticky='NSEW')
-        else:
-            header =  TEMP['GRID'][0][lastcol] = tk.Button(self.GUI['GRIDframe'], command=p(self.set_sort, lastcol-1), font=setting('font', 0.75), fg=palette('entrytext'), bg=palette('light'), relief='groove', bd=1)
-            header.bind('<Button-3>', p(self._header_menu, lastcol-1))
-            header.grid(row=0, column=lastcol, sticky='NSEW')
-
-        #The rest of the column
-        for GRID_ROW in range(1, len(TEMP['GRID'])):
-            label = TEMP['GRID'][GRID_ROW][lastcol] = tk.Label(self.GUI['GRIDframe'], font=setting('font'), fg=palette('entrycursor'), bg=palette('dark'), relief='groove', bd=0,anchor='w')
-            if lastcol == 0: label.configure(bg=palette('medium'))
-            label.grid(row=GRID_ROW, column=lastcol, sticky='EW')
-            label.bind('<Button-1>', p(self._left_click_row, GRID_ROW))
-            label.bind('<Button-3>', p(self._right_click_row, GRID_ROW))
-            label.bind('<Shift-Button-1>', p(self._shift_left_click_row, GRID_ROW))
-            label.bind('<Enter>', p(self.color_row, GRID_ROW, None, palette('medium')))
-            label.bind('<Leave>', p(self.color_row, GRID_ROW, None, None))
-    def GRID_set_col(self, n):
-        '''Adds or removes columns until there are \n\ columns. n must be greater than or equal to 0, and this ignores the \'#\' column.'''
-        if n < 0: raise Exception('||ERROR|| Cannot set number of columns to less than 1')
-        while len(TEMP['GRID'][0])-1 != n:
-            curlength = len(TEMP['GRID'][0])-1
-            if curlength > n: self.GRID_remove_col()
-            if curlength < n: self.GRID_add_col()
+            'back':                 'Return to the main portfolio',
+            'page_last':            'Go to last page',
+            'page_next':            'Go to next page',
+        }
+        for widget in tooltips:
+            self.ToolTips.SetToolTip(self.GUI[widget] ,tooltips[widget])
 
 
+#All the commands for reordering, showing, and hiding the info columns
     def _header_menu(self, i, event):
         if self.rendered[0] == 'asset':  return  #There is no menu for the transactions ledger view
         info = setting('header_portfolio')[i]
-        m = tk.Menu(tearoff = 0)
-        if i != 0:                                      m.add_command(label ='Move Left', command=p(self.move_info, info, 'left'))
-        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move Right', command=p(self.move_info, info, 'right'))
-        if i != 0:                                      m.add_command(label ='Move to Beginning', command=p(self.move_info, info, 'beginning'))
-        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move to End', command=p(self.move_info, info, 'end'))
+        m = tk.Menu(self, tearoff = 0)
+        if i != 0:                                      m.add_command(label ='Move Left', command=p(self.move_header, info, 'left'))
+        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move Right', command=p(self.move_header, info, 'right'))
+        if i != 0:                                      m.add_command(label ='Move to Beginning', command=p(self.move_header, info, 'beginning'))
+        if i != len(setting('header_portfolio'))-1:     m.add_command(label ='Move to End', command=p(self.move_header, info, 'end'))
         m.add_separator()
-        m.add_command(label ='Hide ' + assetinfolib[info]['name'], command=p(self.hide_info, info))
-        try:        m.tk_popup(event.x_root, event.y_root)
-        finally:    m.grab_release()
-    def _drag_header(self, i, event):
-        None
+        m.add_command(label ='Hide ' + info_format_lib[info]['name'], command=p(self.hide_header, info))
+        m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
+    def move_header(self, info, shift='beginning'):
+        if   shift == 'beginning':  i = 0
+        elif shift == 'right':      i = setting('header_portfolio').index(info) + 1
+        elif shift == 'left':       i = setting('header_portfolio').index(info) - 1
+        elif shift == 'end':        i = len(setting('header_portfolio'))
+        new = setting('header_portfolio')
+        new.remove(info)
+        new.insert(i, info)
+        set_setting('header_portfolio', new)
+        self.render()
+    def hide_header(self, info):
+        new = setting('header_portfolio')
+        new.remove(info)
+        set_setting('header_portfolio', new)
+        self.TASKBAR['info'].values[info].set(False)
+        self.render()
+    def show_header(self, info):
+        new = setting('header_portfolio')
+        new.insert(0, info)
+        set_setting('header_portfolio', new)
+        self.TASKBAR['info'].values[info].set(True)
+        self.render()
 
-    def _left_click_row(self, GRID_ROW, event): # Opens up the asset subwindow, or transaction editor upon clicking a label within this row
+    def _left_click_row(self, GRID_ROW:int): # Opens up the asset subwindow, or transaction editor upon clicking a label within this row
         #if we double clicked on an asset/transaction, thats when we open it.
-        if self.GRID_SELECTION == [GRID_ROW, GRID_ROW]:
-            i = self.page*setting('itemsPerPage')+GRID_ROW-1
-            try:
-                if self.rendered[0] == 'portfolio': self.render(('asset',self.sorted[i]), True)
-                else:                               TransEditor(self, self.sorted[i])
-            except: return
-            self.GRID_clear_selection()
-        else:
-            self.GRID_clear_selection()
-            self.GRID_SELECTION = [GRID_ROW, GRID_ROW]
-        self.color_row(GRID_ROW)
-    def _right_click_row(self, GRID_ROW, event): # Opens up a little menu of stuff you can do to this asset/transaction
+        i = self.page*setting('itemsPerPage')+GRID_ROW
+        if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
+        self.GUI['GRID'].set_selection()
+        if self.rendered[0] == 'portfolio': self.render(('asset',self.sorted[i].tickerclass()), True)
+        else:                               TransEditor(self, self.sorted[i].get_hash())
+    def _right_click_row(self, GRID_ROW1:int, GRID_ROW2:int, GRID_ROW3:int): # Opens up a little menu of stuff you can do to this asset/transaction
         #we've right clicked with a selection of multiple items
-        if self.GRID_SELECTION != [-1, -1] and self.GRID_SELECTION[0] != self.GRID_SELECTION[1]:
-            m = tk.Menu(tearoff = 0)
-            m.add_command(label ='Delete selection', command=p(self.GRID_delete_selection, self.GRID_SELECTION))
-            try:        m.tk_popup(event.x_root, event.y_root)
-            finally:    m.grab_release()
-        #We've right clicked a single item
+        if GRID_ROW2 != GRID_ROW3:
+            m = tk.Menu(self, tearoff = 0)
+            m.bind('<Motion>', self._mouse)
+            m.add_command(label ='Delete selection', command=p(self.delete_selection, GRID_ROW2, GRID_ROW3))
+            m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
+        #We've clicked a single item, or nothing at all, popup is relevant to what we right click
         else:
-            i = self.page*setting('itemsPerPage')+GRID_ROW-1
-            try:
-                if self.rendered[0] == 'portfolio':  asset = self.sorted[i]
-                else:                   trans = self.sorted[i]
-            except: return
-            m = tk.Menu(tearoff = 0)
+            i = self.page*setting('itemsPerPage')+GRID_ROW1
+            if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
+            item = self.sorted[i]
+            m = tk.Menu(self, tearoff = 0)
+            m.bind('<Motion>', self._mouse)
             if self.rendered[0] == 'portfolio':
-                ticker = MAIN_PORTFOLIO.asset(asset).ticker()
-                m.add_command(label ='Open ' + ticker + ' Ledger', command=p(self.render, ('asset',asset), True))
-                m.add_command(label ='Edit ' + ticker, command=p(AssetEditor, self, asset))
-                m.add_command(label ='Show detailed info', command=p(self.comm_asset_info, asset))
-                m.add_command(label ='Delete ' + ticker, command=p(self.GRID_delete_selection, [GRID_ROW, GRID_ROW]))
+                ID = item.tickerclass()
+                ticker = item.ticker()
+                m.add_command(label ='Open ' + ticker + ' Ledger', command=p(self.render, ('asset',ID), True))
+                m.add_command(label ='Edit ' + ticker, command=p(AssetEditor, self, ID))
+                m.add_command(label ='Show detailed info', command=p(self.comm_asset_info, ID))
+                m.add_command(label ='Delete ' + ticker, command=p(self.delete_selection, GRID_ROW1))
             else:
-                t = MAIN_PORTFOLIO.transaction(trans)
-                m.add_command(label ='Edit ' + t.date(), command=p(TransEditor, self, trans))
-                m.add_command(label ='Copy ' + t.date(), command=p(TransEditor, self, trans, True))
-                m.add_command(label ='Delete ' + t.date(), command=p(self.GRID_delete_selection, [GRID_ROW, GRID_ROW]))
-                if t.ERROR:
+                trans_title = item.date() + ' ' + item.prettyPrint('type')
+                m.add_command(label ='Edit ' + trans_title, command=p(TransEditor, self, item.get_hash()))
+                m.add_command(label ='Copy ' + trans_title, command=p(TransEditor, self, item.get_hash(), True))
+                m.add_command(label ='Delete ' + trans_title, command=p(self.delete_selection, GRID_ROW1))
+                if item.ERROR:
                     m.add_separator()
-                    m.add_command(label ='ERROR information...', command=p(Message, self, 'Transaction Error!', t.ERR_MSG))
-            try:        m.tk_popup(event.x_root, event.y_root)
-            finally:    m.grab_release()
+                    m.add_command(label ='ERROR information...', command=p(Message, self, 'Transaction Error!', item.ERR_MSG))
+            m.tk_popup(self.mouse_pos[0],self.mouse_pos[1])
 
-    def _shift_left_click_row(self, GRID_ROW, event):
-        #We already have a multi-selection. Reset it.
-        if self.GRID_SELECTION[0] != self.GRID_SELECTION[1]:                                            #We already have a selection, but clicked again. Reset the selection.
-            oldsel = self.GRID_SELECTION
-            self.GRID_SELECTION = [GRID_ROW, GRID_ROW]
-            for row in range(oldsel[0], oldsel[1]+1):   self.color_row(row)
-        #We have no selection. Start it.
-        elif self.GRID_SELECTION[0] == -1:   self.GRID_SELECTION = [GRID_ROW, GRID_ROW]                   #This is the first selection we're making
-        #We already have a single selection. Expand it.
-        elif GRID_ROW > self.GRID_SELECTION[0]:    self.GRID_SELECTION[1] = GRID_ROW
-        else:                               self.GRID_SELECTION[0] = GRID_ROW
-
-        #We've changed the selection. Recolor everything.
-        for row in range(self.GRID_SELECTION[0], self.GRID_SELECTION[1]+1):   self.color_row(row)
- 
-
-    def GRID_clear_selection(self):
-        if self.GRID_SELECTION == [-1, -1]: return
-        oldsel = self.GRID_SELECTION
-        self.GRID_SELECTION = [-1, -1]
-        for row in range(oldsel[0], oldsel[1]+1):   self.color_row(row)
-
-    def GRID_delete_selection(self, toDelete, *kwargs):
-        if self.rendered[0] == 'asset':
-            for item_index in range( self.page*setting('itemsPerPage')+toDelete[0]-1, self.page*setting('itemsPerPage')+toDelete[1]):
-                try:    MAIN_PORTFOLIO.delete_transaction(self.sorted[item_index])
-                except: continue
-        else:
-            Message(self, 'Unimplemented', 'You can\'t delete assets from here, for now.')
-            return
-        self.GRID_SELECTION = [-1, -1]
+    def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
+        I1 = self.page*setting('itemsPerPage')+GRID_ROW1
+        if GRID_ROW2 == None:   I2 = I1
+        else:                   I2 = self.page*setting('itemsPerPage')+GRID_ROW2
+        if I1 > len(self.sorted)-1: return
+        if I2 > len(self.sorted)-1: I2 = len(self.sorted)-1
+        for item in range(I1,I2+1):
+            if self.rendered[0] == 'asset':     MAIN_PORTFOLIO.delete_transaction(self.sorted[item].get_hash())
+            else:
+                Message(self, 'Unimplemented', 'You can\'t delete assets from here, for now.')
+                return
+        self.GUI['GRID'].set_selection()
         self.undo_save()
         self.metrics()
         self.render(sort=True)
@@ -603,27 +548,12 @@ class AutoAccountant(tk.Tk):
             self.ToolTips.SetToolTip(self.MENU[button] ,menu_tooltips[button])
 
 
-    def comm_page_next(self):
-        if self.rendered[0] == 'portfolio':  maxpage = math.ceil(len(MAIN_PORTFOLIO.assets())/setting('itemsPerPage')-1)
-        else:                   maxpage = math.ceil(len(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger)/setting('itemsPerPage')-1)
-        if self.page < maxpage: 
-            self.page += 1
-            self.GRID_clear_selection()
-            self.render()
-    def comm_page_last(self):
-        if self.page > 0: 
-            self.page -= 1
-            self.GRID_clear_selection()
-            self.render()
-
 # PORTFOLIO RENDERING
 #=============================================================
-    def render(self, toRender=None, sort=False): #TODO: Kinda slow (~250ms for an asset with a ledger with ~500 transactions), inefficiency of GRID and tkinter
+    def render(self, toRender:str=None, sort:bool=False): #NOTE: Very fast! ~30ms when switching panes, ~4ms when switching pages, ~11ms on average
         '''Call to render the portfolio, or a ledger
-        \ntoRender - tuple of portfolio/asset, and asset name if relevant'''
-        #Creates the GRID if it hasn't been yet
-        if 'GRID' not in TEMP:      self.create_GRID()
-
+        \nRefreshes page if called without any input.
+        \ntoRender - tuple of portfolio/asset, and asset name if relevant.'''
         #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
         if toRender == None:
             if self.rendered[0] == 'asset' and not MAIN_PORTFOLIO.hasAsset(self.rendered[1]):   toRender = ('portfolio',None)
@@ -632,16 +562,15 @@ class AutoAccountant(tk.Tk):
         #These are things that don't need to change unless we're changing the level from PORTFOLIO to ASSET or vice versa
         if toRender != None:
             self.page = 0 #We return to the first page if changing from portfolio to asset or vice versa
-            self.GRID_clear_selection()  #Clear the selection too. 
             if toRender[0] == 'portfolio':
-                self.GRID_set_col(len(setting('header_portfolio'))) #TODO: Lag here (~30ms), addition of GRID columns is slow
                 self.GUI['info'].configure(command=self.comm_portfolio_info)
+                self.ToolTips.SetToolTip(self.GUI['info'], 'Detailed information about this portfolio')
                 self.GUI['edit'].pack_forget()
                 self.GUI['new_asset'].pack(side='right')
                 self.GUI['back'].grid_forget()
             else:
-                self.GRID_set_col(len(setting('header_asset'))) #TODO: Lag here (~150ms), destruction of GRID columns is slow
                 self.GUI['info'].configure(command=p(self.comm_asset_info, toRender[1]))
+                self.ToolTips.SetToolTip(self.GUI['info'], 'Detailed information about this asset')
                 self.GUI['edit'].configure(command=p(AssetEditor, self, toRender[1]))
                 self.GUI['edit'].pack(side='left')
                 self.GUI['new_asset'].forget()
@@ -662,7 +591,7 @@ class AutoAccountant(tk.Tk):
         self.update_info_pane()
 
         #Sorts the assets/transactions
-        if sort:    self.sort() #TODO: This is fast (~5ms for ~500 transactions) but could probably be faster
+        if sort:    self.sort() #NOTE: This is fast (~7ms for ~900 transactions). It could be faster with Radix Sort... but why? It's insanely fast already!
 
         #Appropriately enabled/diables the page-setting buttons - 0ms
         maxpage = math.ceil(len(self.sorted)/setting('itemsPerPage'))-1
@@ -674,200 +603,96 @@ class AutoAccountant(tk.Tk):
         self.GUI['page_number'].configure(text='Page ' + str(self.page+1) + ' of ' + str(maxpage+1))
 
         #Appropriately renames the headers
-        if self.rendered[0] == 'portfolio':  header = setting('header_portfolio')
-        else:                   header = setting('header_asset')
-        for i in range(len(header)):
-            TEMP['GRID'][0][i+1].configure(text=self.infoLib(self.rendered[1], header[i], 'headername'))
+        if self.rendered[0] == 'portfolio': header = setting('header_portfolio')
+        else:                               header = setting('header_asset')
 
         #Fills in the page with info
-        self.populate() # TODO: This is a little slow (~30-80ms for 30 items in the GRID), not sure how to make it fater though
+        self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered[1])
 
     def update_info_pane(self):
         textbox = self.GUI['info_pane']
         textbox.clear()
 
-        if self.rendered[0] == 'portfolio':
-            for info in ['value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
-                textbox.insert_text(portfolioinfolib[info]['headername'], justify='center')
-                textbox.newline()
-                info_format = portfolioinfolib[info]['format']
-                fg_color = MAIN_PORTFOLIO.color(info)[0]
-                if fg_color == None: fg_color = palette('neutral')
-                if info_format == 'percent':    ending = ' %'
-                else: ending = ' USD'
-                textbox.insert_triplet('',MAIN_PORTFOLIO.prettyPrint(info).replace('%',''), ending, fg=fg_color, justify='center', font=setting('font2',1.5))
-                textbox.newline()
-        else:
-            for info in ['value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
-                textbox.insert_text(assetinfolib[info]['headername'].replace('\n',' '), justify='center')
-                textbox.newline()
-                info_format = assetinfolib[info]['format']
-                fg_color = MAIN_PORTFOLIO.asset(self.rendered[1]).color(info)[0]
-                if fg_color == None: fg_color = palette('neutral')
-                if info_format == 'percent':    ending = ' %'
-                else: ending = ' USD'
-                textbox.insert_triplet('',MAIN_PORTFOLIO.asset(self.rendered[1]).prettyPrint(info).replace('%',''), ending, fg=fg_color, justify='center', font=setting('font2',1.5))
-                textbox.newline()
-
-    def populate(self):
-        '''Populates the GRID with info'''
-        #All the info for every asset 
-
-        for row in range(self.page*setting('itemsPerPage'), (self.page+1)*setting('itemsPerPage')):
-            GRID_ROW = (row % setting('itemsPerPage')) + 1
-            #Row Number ### 2-10 ms
-            TEMP['GRID'][GRID_ROW][0].configure(text=row+1)
-            
-            #Filling the GRID for each row...
-            try:    entry = self.sorted[row] #Entry will be the TICKERCLASS or HASH
-            except: entry = None
-            if self.rendered[0] == 'portfolio':  headers = setting('header_portfolio')
-            else:                   headers = setting('header_asset')
-            for info in headers:
-                #The GRID text for each column in this row...
-                label = TEMP['GRID'][GRID_ROW][headers.index(info)+1]
-                if entry == None:           label.configure(text='')
-                elif self.rendered[0] == 'portfolio':   label.configure(text=MAIN_PORTFOLIO.asset(entry).prettyPrint(info))
-                else:                                   label.configure(text=MAIN_PORTFOLIO.transaction(entry).prettyPrint(info, self.rendered[1]))
-
-            #Colors the GRID for this row
-            self.color_row(GRID_ROW)
-
-    def color_row(self, GRID_ROW, fg=None, bg=None, *kwargs):    #Function that colors the nth row, visual_row, 
-        #entry will either be nothing (nothing to display at this row in the GRID), or an asset TICKERCLASS, or a transaction HASH
-        try:    entry = self.sorted[GRID_ROW-1+self.page*setting('itemsPerPage')]
-        except: entry = None
-
-        if self.rendered[0] == 'portfolio': headers = setting('header_portfolio')
-        else:                               headers = setting('header_asset')
-
-        #All the info bits
-        for info in headers:
-            label = TEMP['GRID'][GRID_ROW][headers.index(info)+1]
-
-            #Gathering data that coloring is contingent upon
-            if entry:
-                # ERROR Background color override - something is wrong with this asset or transaction! probably missing data.
-                if (self.rendered[0] == 'portfolio' and MAIN_PORTFOLIO.asset(entry).ERROR) or (self.rendered[0] == 'asset' and MAIN_PORTFOLIO.transaction(entry).ERROR):        
-                    label.configure(fg=palette('errortext'), bg=palette('error'))
-                    continue
-                elif self.rendered[0] == 'portfolio':  
-                    color = MAIN_PORTFOLIO.asset(entry).color(info)
-                    labeltext = MAIN_PORTFOLIO.asset(entry).prettyPrint(info)
-                else:     
-                    color = MAIN_PORTFOLIO.transaction(entry).color(info, self.rendered[1])
-                    labeltext = MAIN_PORTFOLIO.transaction(entry).prettyPrint(info, self.rendered[1])
+        for info in ['value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
+            if self.rendered[0] == 'portfolio':
+                formatted_info = list(MAIN_PORTFOLIO.pretty(info))
             else:
-                color = labeltext = (None, None)
+                formatted_info = list(MAIN_PORTFOLIO.asset(self.rendered[1]).pretty(info, ignoreError=True))    
+            textbox.insert_text(info_format_lib[info]['headername'].replace('\n',' '), justify='center')
+            textbox.newline()
+            info_format = info_format_lib[info]['format']
+            if formatted_info[1] == None:   formatted_info[1] = palette('neutral')
+            if info_format == 'percent':    ending = ' %'
+            else:                           ending = ' USD'
+            textbox.insert_triplet('',formatted_info[0].replace('%',''), ending, fg=formatted_info[1], justify='center', font=setting('font2',1.5))
+            textbox.newline()
 
-            #Foreground Coloring
-            if labeltext == MISSINGDATA:        label.configure(fg=palette('missingdata'))
-            elif fg:                            label.configure(fg=fg)
-            elif color[0] != None:              label.configure(fg=color[0])
-            else:                               label.configure(fg=palette('default_info_color'))
-
-            #Background Coloring
-            if color[1] != None:                label.configure(bg=color[1])
-            elif bg:                            label.configure(bg=bg)
-            elif GRID_ROW in range(self.GRID_SELECTION[0], self.GRID_SELECTION[1]+1): label.configure(bg=palette('medium'))
-            else:                               label.configure(bg=palette('dark'))
-
-
-#All the commands for reordering, showing, and hiding the info columns
-    def move_info(self, info, shift='beginning'):
-        if   shift == 'beginning':  i = 0
-        elif shift == 'right':      i = setting('header_portfolio').index(info) + 1
-        elif shift == 'left':       i = setting('header_portfolio').index(info) - 1
-        elif shift == 'end':        i = len(setting('header_portfolio'))
-        new = setting('header_portfolio')
-        new.remove(info)
-        new.insert(i, info)
-        set_setting('header_portfolio', new)
-        self.render()
-    def hide_info(self, info):
-        new = setting('header_portfolio')
-        new.remove(info)
-        set_setting('header_portfolio', new)
-        self.TASKBAR['info'].values[info].set(False)
-        self.GRID_remove_col()
-        self.render()
-    def show_info(self, info):
-        new = setting('header_portfolio')
-        new.insert(0, info)
-        set_setting('header_portfolio', new)
-        self.TASKBAR['info'].values[info].set(True)
-        self.GRID_add_col()
-        self.render()
-#All the commands for sorting the assets
-    def set_sort(self, row): #Sets the sorting mode, sorts the assets by it, then rerenders everything
+    def set_sort(self, col:int): #Sets the sorting mode, sorts the assets by it, then rerenders everything
         if self.rendered[0] == 'portfolio':
-            info = setting('header_portfolio')[row]
+            info = setting('header_portfolio')[col]
             if setting('sort_asset')[0] == info:    set_setting('sort_asset',[info, not setting('sort_asset')[1]])
             else:                                   set_setting('sort_asset',[info, False])
         else:
-            info = setting('header_asset')[row]
+            info = setting('header_asset')[col]
             if setting('sort_trans')[0] == info:    set_setting('sort_trans',[info, not setting('sort_trans')[1]])
             else:                                   set_setting('sort_trans',[info, False])
         self.render(sort=True)
-    def sort(self): #Sorts the assets or transactions by the metric defined in settings
+    def sort(self): #Sorts the assets or transactions by the metric defined in settings #NOTE: 7ms at worst for ~900 transactions on one ledger
         '''Sorts the assets or transactions by the metric defined in settings'''
         if self.rendered[0] == 'portfolio':  #Assets
             info = setting('sort_asset')[0]    #The info we're sorting by
             reverse = setting('sort_asset')[1] #Whether or not it is in reverse order
 
-            sorted = list(MAIN_PORTFOLIO.assetkeys())
-            sorted.sort() #Sorts the assets alphabetically by their tickerclass first. This is the default.
-            def alphaKey(e):    return MAIN_PORTFOLIO.asset(e).get(info).lower()
-            def numericKey(e):
-                n = MAIN_PORTFOLIO.asset(e).get(info)
-                try: return float(n)
-                except: return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
+            sorted = list(MAIN_PORTFOLIO.assets())
+            def tickerclasskey(e):  return e.tickerclass()
+            sorted.sort(key=tickerclasskey) #Sorts the assets alphabetically by their tickerclass first. This is the default.
         else:   #Transactions
             info = setting('sort_trans')[0]    #The info we're sorting by
             reverse = setting('sort_trans')[1] #Whether or not it is in reverse order
 
-            sorted = list(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger) #a dict of relevant transactions, this is a list of their keys.
-
-            def logicKey(e): return MAIN_PORTFOLIO.transaction(e)   #By default, we sort by the special sorting algorithm (date, then type, then wallet, etc. etc.)
-            sorted.sort(reverse=not reverse, key=logicKey)
+            sorted = list(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger.values()) #a dict of relevant transactions, this is a list of their keys.
+            sorted.sort(reverse=not reverse)    #By default, we sort by the special sorting algorithm (date, then type, then wallet, etc. etc.)
             
-            def alphaKey(e):    
-                data = MAIN_PORTFOLIO.transaction(e).get(info).lower()
-                if data:    return data
-                else:               return ''
-            def numericKey(e):
-                n = MAIN_PORTFOLIO.transaction(e).get(info)
-                try: return float(n)
-                except: return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
-            def value_quantity_price(e):
-                t = MAIN_PORTFOLIO.transaction(e)
-                if   info == 'value':     return t.value(self.rendered[1])
-                elif info == 'quantity':  return t.quantity(self.rendered[1])
-                elif info == 'price':     return t.price(self.rendered[1])
-        
-        if   self.rendered[0] == 'asset' and info == 'date':                         pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
-        elif self.infoLib(self.rendered[1], info, 'format') == 'alpha':   sorted.sort(reverse=reverse, key=alphaKey)
-        elif self.rendered[0] == 'asset' and info in ['value','quantity','price']:   sorted.sort(reverse=not reverse, key=value_quantity_price)
-        else:                                                       sorted.sort(reverse=not reverse, key=numericKey)
+        def alphaKey(e):    return e.get(info).lower()
+        def numericKey(e):
+            n = e.get(info)
+            try: return float(n)
+            except: return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
+        def value_quantity_price(e):
+            return e.get(info, self.rendered[1])
+
+        if   self.rendered[0] == 'asset' and info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
+        elif info_format_lib[info]['format'] == 'alpha':                            sorted.sort(reverse=reverse,     key=alphaKey)
+        elif self.rendered[0] == 'asset' and info in ['value','quantity','price']:  sorted.sort(reverse=not reverse, key=value_quantity_price)
+        else:                                                                       sorted.sort(reverse=not reverse, key=numericKey)
 
         self.sorted = sorted  
 
-
+    def comm_page_next(self):
+        if self.rendered[0] == 'portfolio':  maxpage = math.ceil(len(MAIN_PORTFOLIO.assets())/setting('itemsPerPage')-1)
+        else:                   maxpage = math.ceil(len(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger)/setting('itemsPerPage')-1)
+        if self.page < maxpage: 
+            self.page += 1
+            self.GUI['GRID'].set_selection()
+            self.render()
+    def comm_page_last(self):
+        if self.page > 0: 
+            self.page -= 1
+            self.GUI['GRID'].set_selection()
+            self.render()
 
 #INFO FUNCTIONS
 #=============================================================
-
-    def infoLib(self, asset, info, characteristic):   #A single command for getting formatting and header names for info bits
-        if asset == None:   return assetinfolib[info][characteristic]
-        else:               return transinfolib[info][characteristic]
 
     def comm_portfolio_info(self): #A wholistic display of all relevant information to the overall portfolio 
         message = Message(self, 'Overall Stats and Information', '', font=setting('font'), width=80, height=20)
         DEFCOLOR, DEFFONT = palette('neutral'), setting('font2')
 
         # NUMBER OF TRANSACTIONS, NUMBER OF ASSETS
-        message.insert_triplet('• ', MAIN_PORTFOLIO.prettyPrint('number_of_transactions'), '', fg=DEFCOLOR, font=DEFFONT, newline=False)
-        message.insert_triplet(' transactions loaded under ', MAIN_PORTFOLIO.prettyPrint('number_of_assets'), ' assets', fg=DEFCOLOR, font=DEFFONT)
+        to_insert = MAIN_PORTFOLIO.pretty('number_of_transactions')
+        message.insert_triplet('• ', to_insert[0], '', fg=to_insert[1], font=to_insert[2], newline=False)
+        to_insert = MAIN_PORTFOLIO.pretty('number_of_assets')
+        message.insert_triplet(' transactions loaded under ', to_insert[0], ' assets', fg=to_insert[1], font=to_insert[2])
 
         # USD PER WALLET
         message.insert('• Total USD by wallet:')
@@ -877,21 +702,21 @@ class AutoAccountant(tk.Tk):
         wallets.sort(reverse=True, key=sortByUSD)
         for w in wallets:    #Wallets, a list of wallets by name, and their respective net valuations
             quantity = MAIN_PORTFOLIO.get('wallets')[w]
-            if not zeroish(quantity):
+            if not zeroish_mpf(quantity):
                 message.insert_triplet('\t'+w+':\t\t\t', format_general(quantity, 'alpha', 20), ' USD', fg=DEFCOLOR, font=DEFFONT)
 
         # MASS INFORMATION
         for data in ['day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%']:
-            info_format = portfolioinfolib[data]['format']
+            info_format = info_format_lib[data]['format']
             fg_color = MAIN_PORTFOLIO.color(data)[0] #Returns the foreground color we want for this info bit, if it has one
             if fg_color == None: fg_color = palette('neutral')
-            text1 = '• '+portfolioinfolib[data]['name']+':\t\t\t\t'
+            text1 = '• '+info_format_lib[data]['name']+':\t\t\t\t'
             if info_format == 'percent':
                 message.insert_triplet(text1, format_general(MAIN_PORTFOLIO.get(data)*100, 'alpha', 20), ' %', fg=fg_color, font=DEFFONT)
             else:
                 message.insert_triplet(text1, format_general(MAIN_PORTFOLIO.get(data), 'alpha', 20), ' USD', fg=fg_color, font=DEFFONT)
     
-    def comm_asset_info(self, a): #A wholistic display of all relevant information to an asset 
+    def comm_asset_info(self, a:str): #A wholistic display of all relevant information to an asset 
         asset = MAIN_PORTFOLIO.asset(a)
         message = Message(self, asset.name() + ' Stats and Information', '', font=setting('font'), width=80, height=20)
         DEFCOLOR, DEFFONT = palette('neutral'), setting('font2')
@@ -909,15 +734,15 @@ class AutoAccountant(tk.Tk):
         wallets.sort(reverse=True, key=sortByUnits)
         for w in wallets:
             quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w]
-            if not zeroish(quantity):
+            if not zeroish_mpf(quantity):
                 message.insert_triplet('\t' + w + ':\t\t\t', format_general(quantity, 'alpha', 20), ' '+asset.ticker(), fg=DEFCOLOR, font=DEFFONT)
 
         # MASS INFORMATION
         for data in ['price','value', 'marketcap', 'volume24h', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
-            info_format = assetinfolib[data]['format']
+            info_format = info_format_lib[data]['format']
             fg_color = asset.color(data)[0] #Returns the foreground color we want for this info bit, if it has one
             if fg_color == None: fg_color = DEFCOLOR
-            text1 = '• '+ assetinfolib[data]['name']+':\t\t\t\t'
+            text1 = '• '+ info_format_lib[data]['name']+':\t\t\t\t'
             if data == 'price':
                 message.insert_triplet(text1, format_general(asset.get(data), 'alpha', 20), ' USD/'+asset.ticker(), fg=fg_color, font=DEFFONT)
             elif info_format == 'percent':
@@ -926,74 +751,55 @@ class AutoAccountant(tk.Tk):
                 message.insert_triplet(text1, format_general(asset.get(data), 'alpha', 20), ' USD', fg=fg_color, font=DEFFONT)
 
 
-
-
 #METRICS
 #=============================================================
-    def metrics(self, tax_report=''): # Recalculates all static and dynamic metrics for all assets and the overall protfolio
+    def metrics(self, tax_report:str=''): # Recalculates all metrics
         '''Calculates and renders all static metrics for all assets, and the overall portfolio'''
-        TEMP['taxes'] = { 
-            '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
-            '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
-            }
-            
-        self.perform_automatic_accounting(tax_report) # TODO: LAGGY! (~650ms for ~12000 transactions)
+        if tax_report:
+            TEMP['taxes'] = { 
+                '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
+                '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
+                }
+        ttt('start')
+        self.perform_automatic_accounting(tax_report) # TODO: LAGGY! (~222ms for ~12000 transactions)
+        ttt('avg_end')
         for asset in MAIN_PORTFOLIO.assets():
             self.calculate_average_buy_price(asset)
         self.metrics_PORTFOLIO() #~0ms, since its just a few O(1) operations
         self.market_metrics() #Only like 2 ms
 
-    def metrics_PORTFOLIO(self): #Recalculates all static metrics for the overall portfolio
+    def metrics_PORTFOLIO(self): #Recalculates all non-market metrics, for the overall portfolio
         '''Calculates all metrics for the overall portfolio'''
         MAIN_PORTFOLIO._metrics['number_of_transactions'] = len(MAIN_PORTFOLIO.transactions())
         MAIN_PORTFOLIO._metrics['number_of_assets'] = len(MAIN_PORTFOLIO.assets())
 
-    def market_metrics(self):   # Recalculates all dynamic metrics based on data recovered from the internet
+    def market_metrics(self):   # Recalculates all market-dependent metrics
         for asset in MAIN_PORTFOLIO.assets():    
             self.calculate_value(asset)
             self.calculate_unrealized_profit_and_loss(asset)
             self.calculate_changes(asset)
             self.calculate_net_cash_flow(asset)
         self.market_metrics_PORTFOLIO()
-    def market_metrics_PORTFOLIO(self): #Recalculates all dynamic market metrics for the overall portfolio
-        #Calculates the overall portfolio value
-        value = 0
-        for a in MAIN_PORTFOLIO.assetkeys():    #Compiles complete list of all wallets used in the portfolio
-            try: value += MAIN_PORTFOLIO.asset(a).get('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
-            except: None
-        MAIN_PORTFOLIO._metrics['value'] = value
+    def market_metrics_PORTFOLIO(self): #Recalculates all market-dependent metrics, for the overall portfolio
 
-        #Has to be a separate loop so that the total portfolio value is actually the total
-        MAIN_PORTFOLIO._metrics.update({'day_change':0,'week_change':0,'month_change':0})
-        for a in MAIN_PORTFOLIO.assetkeys():
-            self.calculate_percentage_of_portfolio(a)
-            try:
-                MAIN_PORTFOLIO._metrics['day_change'] += MAIN_PORTFOLIO.asset(a).get('day_change')
-                MAIN_PORTFOLIO._metrics['week_change'] += MAIN_PORTFOLIO.asset(a).get('week_change')
-                MAIN_PORTFOLIO._metrics['month_change'] += MAIN_PORTFOLIO.asset(a).get('month_change')
-            except: pass
-
-        #Calculates the 24-hour % performance of the portfolio
-        try:
-            MAIN_PORTFOLIO._metrics['day%'] =   MAIN_PORTFOLIO.get('day_change') /   (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('day_change'))
-            MAIN_PORTFOLIO._metrics['week%'] =  MAIN_PORTFOLIO.get('week_change') /  (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('week_change'))
-            MAIN_PORTFOLIO._metrics['month%'] = MAIN_PORTFOLIO.get('month_change') / (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('month_change'))
-        except: pass
-
+        self.calculate_portfolio_value()
+        for asset in MAIN_PORTFOLIO.assets():
+            self.calculate_percentage_of_portfolio(asset)
+        self.calculate_portfolio_value()
+        self.calculate_portfolio_changes()
+        self.calculate_portfolio_percents()
         self.calculate_portfolio_value_by_wallet()
         self.calculate_portfolio_unrealized_profit_and_loss()
 
             
-    def perform_automatic_accounting(self, tax_report=''):   #Dependent on the Accounting Method, calculates the Holdings per Wallet, Total Holdings, Average Buy Price, Real P&L (Capital Gains)
+    def perform_automatic_accounting(self, tax_report:str=''):   #Dependent on the Accounting Method, calculates the Holdings per Wallet, Total Holdings, Average Buy Price, Real P&L (Capital Gains)
         
-        #Creates a list of all transactions, sorted chronologically #NOTE: Lag is ~17ms for ~12000 transactions
+        #Creates a list of all transactions, sorted chronologically #NOTE: Lag is ~18ms for ~12000 transactions
         transactions = list(MAIN_PORTFOLIO.transactions()) #0ms
-        #def sortByDate(e):  return e.date()
         transactions.sort()
 
-
         ###################################
-        # TRANSFER LINKING - #NOTE: Lag is ~20ms for 159 transfer pairs under ~12000 transactions
+        # TRANSFER LINKING - #NOTE: Lag is ~16ms for 159 transfer pairs under ~12000 transactions
         ###################################
         #Before we can iterate through all of our transactions, we need to pair up transfer_IN and transfer_OUTs, otherwise we lose track of cost basis which is BAD
         transfer_IN = []    #A list of all transfer_INs, chronologically ordered
@@ -1012,14 +818,10 @@ class AutoAccountant(tk.Tk):
         for t_out in transfer_OUT:
             for t_in in transfer_IN: #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
-                if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.date(),t_out.date(),300) and acceptableDifference(t_in.get('gain_quantity'), t_out.get('loss_quantity'), 0.1):
+                if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.date(),t_out.date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
                         #SUCCESS - We've paired this t_out with a t_in!
                         transfer_IN.remove(t_in) # Remove it from the transfer_IN list.
-                        t_out._dest_wallet = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
-                        #Between transfer_in and transfer_out, use the more precise quantity, overwriting the less precise with it.
-                        if len(t_in.get('gain_quantity')) > len(t_out.get('loss_quantity')): #if t_in's string is longer...
-                            t_out._data['gain_quantity'] = t_in.get('loss_quantity')     #t_in has more precise value, overwrite t_out with that quantity
-                        else:   t_in._data['gain_quantity'] = t_out.get('loss_quantity') #t_out has less precise value, overwrite t_in with that quantity
+                        t_out._data['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
                         #Resolve the ERROR state for the newly wedded couple
                         t_out.ERROR = False
                         t_in.ERROR = False
@@ -1028,7 +830,6 @@ class AutoAccountant(tk.Tk):
         # AUTO-ACCOUNTING
         ###################################
         #Transfers linked. It's showtime. Time to perform the Auto-Accounting!
-        
         # INFO VARIABLES - data we collect as we account for every transaction #NOTE: Lag is 0ms for ~12000 transactions
         metrics = {}
         for asset in MAIN_PORTFOLIO.assetkeys():
@@ -1040,48 +841,45 @@ class AutoAccountant(tk.Tk):
             }
         
         # HOLDINGS - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
+        accounting_method = setting('accounting_method')
         holdings = {}
         for asset in MAIN_PORTFOLIO.assetkeys():
             MAIN_PORTFOLIO.asset(asset).ERROR = False # Assume assets are free of error at first. We check all transactions later.
             holdings[asset] = {}
             for wallet in MAIN_PORTFOLIO.walletkeys():
                 #Removing these transactions is literally just a priority queue, for which heaps are basically the best implementation
-                holdings[asset][wallet] = gain_heap() 
+                holdings[asset][wallet] = gain_heap(accounting_method) 
 
         # STORE and DISBURSE QUANTITY - functions which add, or remove a 'gain', to the HOLDINGS data structure.
-        
-        def store_quantity(hash, price, quantity, date, a, w):   #NOTE: Lag is ~136 ms for ~12000 transactions
+        def store_quantity(hash:int, price:mpf, quantity:mpf, date:str, a:str, w:str):   #NOTE: Lag is ~45 ms for ~13779 stores, almost identical to performance of gain_heap itself
             '''Adds specified gaining transaction to specified wallet.'''
-            holdings[a][w].store(hash, precise(price), precise(quantity), date)
-
-        def disburse_quantity(t, quantity, a, w, w2=None):  #NOTE: Lag is ~75ms for ~12000 transactions
-            '''Removes specified quantity of asset from specified wallet.\n
-                Returns the cost basis of the removed quantity.\n
+            holdings[a][w].store(hash, price, quantity, date)
+        def disburse_quantity(t:Transaction, quantity:mpf, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
+            '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
-            #NOTE - Lag is ~55ms for ~12000 transactions
-            result = holdings[a][w].disburse(precise(quantity))
-            if not zeroish(result[0]):
+            result = holdings[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
+            if not zeroish_mpf(result[0]):  #NOTE: Lag is ~0ms
                 t.ERROR,t.ERR_MSG = True,'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
-                
-            #NOTE - Lag is ~20ms for ~12000 transactions
+
+            #NOTE - Lag is ~27ms including store_quantity, 11ms excluding
             cost_basis = 0
             for gain in result[1]: #Result[1] is a list of gain objects that were just disbursed
                 cost_basis += gain._price*gain._quantity
                 if tax_report == '8949': tax_8949(t, gain, quantity)
                 if w2: store_quantity(gain._hash, gain._price, gain._quantity, gain._date, a, w2)   #Moves transfers into the other wallet
             return cost_basis
-
-        def tax_8949(t, gain, total_disburse):
+            
+        def tax_8949(t:Transaction, gain:gain_obj, total_disburse:mpf):
             ################################################################################################
             # This might still be broken. ALSO: Have to separate the transactions into short- and long-term
             ################################################################################################
-            if zeroish(gain._quantity):     return
+            if zeroish_mpf(gain._quantity):     return
             if t.type() == 'transfer_out':  return 
             store_date = MAIN_PORTFOLIO.transaction(gain._hash).date()  # Date of aquisition
             disburse_date = t.date()                                    # Date of disposition
             cost_basis = gain._price*gain._quantity
             #The 'post-fee-value' is the sales profit, after fees, weighted to the actual quantity sold 
-            post_fee_value = (precise(t.get('gain_value'))-precise(t.get('fee_value')))*(gain._quantity/precise(total_disburse))
+            post_fee_value = (t.precise('gain_value')-t.precise('fee_value'))*(gain._quantity/total_disburse)
             if post_fee_value < 0:  post_fee_value = 0     #If we gained nothing and there was a fee, it will be negative. We can't have negative proceeds.
             form8949 = {
                 'Description of property':      str(gain._quantity) + ' ' + MAIN_PORTFOLIO.transaction(gain._hash).get('gain_asset').split('z')[0],  # 0.0328453 ETH
@@ -1089,38 +887,39 @@ class AutoAccountant(tk.Tk):
                 'Date sold or disposed of':     disburse_date[5:7]+'/'+disburse_date[8:10]+'/'+disburse_date[:4],   # 6/23/2022     month, day, year
                 'Proceeds':                     str(post_fee_value),    # to value gained from this sale/trade/expense/gift_out. could be negative if its a gift_out with a fee.
                 'Cost or other basis':          str(cost_basis),        # the cost basis of these tokens
-                'Gain or (loss)':               str(precise(post_fee_value) - precise(cost_basis))  # the Capital Gains from this. The P&L. 
+                'Gain or (loss)':               str(post_fee_value - cost_basis)  # the Capital Gains from this. The P&L. 
                 }
             TEMP['taxes']['8949'] = TEMP['taxes']['8949'].append(form8949, ignore_index=True)
 
-        for t in transactions:
-            if t.get('missing')[0]:  t.ERROR,t.ERR_MSG = True,t.prettyPrint('missing')   #NOTE: Lag ~10ms for ~12000 transactions
+        for t in transactions:  # Lag is ~135ms for ~12000 transactions
+            if t.get('missing')[0]:  t.ERROR,t.ERR_MSG = True,t.prettyPrint('missing')   #NOTE: Lag ~9ms for ~12000 transactions
             if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
 
-            #NOTE: Lag ~30ms for ~12000 transactions
-            DATE,TYPE,WALLET = t.date(),t.type(),t.wallet()
-            LA,FA,GA = t.get('loss_asset'),t.get('fee_asset'),t.get('gain_asset')
-            LQ,FQ,GQ = t.get('loss_quantity'), t.get('fee_quantity'), t.get('gain_quantity')
-            LV,FV,GV = t.get('loss_value'),t.get('fee_value'),t.get('gain_value')
+            #NOTE: Lag ~35ms for ~12000 transactions
+            HASH,DATE,TYPE,WALLET = t.get_hash(),t.date(),t.type(),t.wallet()
+            WALLET2 = t.get('dest_wallet')
+            LA,FA,GA = t.get('loss_asset'),         t.get('fee_asset'),         t.get('gain_asset')
+            LQ,FQ,GQ = t.precise('loss_quantity'),  t.precise('fee_quantity'),  t.precise('gain_quantity')
+            LV,FV,GV = t.precise('loss_value'),     t.precise('fee_value'),     t.precise('gain_value')
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
+            COST_BASIS_PRICE = t.precise('basis_price')
             
-            # COST BASIS CALCULATION - The real 'auto-accounting' happens here      #NOTE: Laag ~450ms for ~12000 transactions. 
+
+            # COST BASIS CALCULATION    #NOTE: Lag ~250ms for ~12000 transactions. 
+
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
-            # GAINS - We gain assets one way or another
-            if TYPE in ['purchase','purchase_crypto_fee']:      store_quantity(t.get_hash(), (LV+FV)/precise(GQ),          GQ, DATE, GA, WALLET) # Purchase price includes fee
-            elif TYPE in ['gift_in','card_reward','income']:    store_quantity(t.get_hash(), precise(t.get('gain_price')), GQ, DATE, GA, WALLET) # Fee is defined already
-            elif TYPE == 'trade':                               store_quantity(t.get_hash(), LV/precise(GQ),               GQ, DATE, GA, WALLET) # Trade price doesn't include fee
-            # FEE LOSS - We lose assets because of a fee
-            if FA:                                              FEE_COST_BASIS =  disburse_quantity(t, FQ, FA, WALLET)
+            # GAINS - We gain assets one way or another     #NOTE: Lag ~180ms, on average
+            if COST_BASIS_PRICE:    store_quantity(HASH, COST_BASIS_PRICE, GQ, DATE, GA, WALLET) # Purchase price includes fee
+            # FEE LOSS - We lose assets because of a fee     #NOTE: Lag ~70ms, on average
+            if FA:                  FEE_COST_BASIS =  disburse_quantity(t, FQ, FA, WALLET)
             # LOSS - We lose assets one way or another.
-            if TYPE in ['sale','trade','expense','gift_out']:   LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET)
-            elif TYPE == 'transfer_out':                        LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET, t._dest_wallet)
+            if LA:                  LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET, WALLET2)
 
 
-            # METRIC CALCULATION
-
+            # METRIC CALCULATION    #NOTE: Lag is ~44ms for ~12000 transactions
+            
             # CASH FLOW - Only sales/purchases/trades affect cash_flow. trades, because it makes more sense to have them than not, even though they are independent of USD.
-            if TYPE in ['purchase','purchase_crypto_fee']:  metrics[GA]['cash_flow'] -= GV + FV
+            if TYPE in ('purchase','purchase_crypto_fee'):  metrics[GA]['cash_flow'] -= GV + FV
             elif TYPE  == 'sale':                           metrics[LA]['cash_flow'] += LV - FV
             elif TYPE == 'trade':   # Trades are a sort of 'indirect purchase/sale' of an asset. For them, the fee is lumped with the sale, not the purchase
                 metrics[LA]['cash_flow'] += LV - FV
@@ -1128,18 +927,18 @@ class AutoAccountant(tk.Tk):
             
             # REALIZED PROFIT AND LOSS - Sales and trades sometimes profit, whereas gift_outs, expenses, as well as any fees always incur a loss
             # Fees are always a realized loss, if there is one
-            if FA:                      metrics[FA]['realized_profit_and_loss'] -= FEE_COST_BASIS   # Base fee cost is realized
+            if FA:                              metrics[FA]['realized_profit_and_loss'] -= FEE_COST_BASIS   # Base fee cost is realized
             elif TYPE == 'purchase':            metrics[GA]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset bought
             elif TYPE == 'sale':                metrics[LA]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset sold
             #Expenses and gift_outs are a complete realized loss. Sales and trades we already lost the fee, but hopefully gain more from sale yield
-            if TYPE in ['expense','gift_out']:  metrics[LA]['realized_profit_and_loss'] -= LOSS_COST_BASIS  # Base loss cost is realized
-            elif TYPE in ['sale','trade']:      metrics[LA]['realized_profit_and_loss'] += LV - LOSS_COST_BASIS # Base loss cost is realized, but sale yields the loss value
+            if TYPE in ('expense','gift_out'):  metrics[LA]['realized_profit_and_loss'] -= LOSS_COST_BASIS  # Base loss cost is realized
+            elif TYPE in ('sale','trade'):      metrics[LA]['realized_profit_and_loss'] += LV - LOSS_COST_BASIS # Base loss cost is realized, but sale yields the loss value
 
             # CAPITAL GAINS TAX
             #Independent transfer fees are taxed as a 'sale'
-            if TYPE in ['gift_out','transfer_out','transfer_in'] and FA: metrics[FA]['tax_capital_gains'] += FV - FEE_COST_BASIS
+            if TYPE in ('gift_out','transfer_out','transfer_in') and FA: metrics[FA]['tax_capital_gains'] += FV - FEE_COST_BASIS
             #Expenses taxed as a 'sale', trade treated as an immediate sale and purchase
-            elif TYPE in ['sale','trade']:                               metrics[LA]['tax_capital_gains'] += (LV - FV) - LOSS_COST_BASIS 
+            elif TYPE in ('sale','trade'):                               metrics[LA]['tax_capital_gains'] += (LV - FV) - LOSS_COST_BASIS 
             elif TYPE == 'expense':                                      metrics[LA]['tax_capital_gains'] += (LV + FV) - LOSS_COST_BASIS 
 
             # INCOME TAX
@@ -1147,14 +946,12 @@ class AutoAccountant(tk.Tk):
                 metrics[GA]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
                     TEMP['taxes']['1099-MISC'] = TEMP['taxes']['1099-MISC'].append( {'Date acquired':DATE, 'Value of assets':str(GV)}, ignore_index=True)
-                    
+
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
-            
-        #And that's it! We calculate the average buy price AFTER figuring out what tokens we have left.
 
         #ERRORS - applies error state to any asset with an erroneous transaction on its ledger.
         for t in transactions:
-            if t.ERROR:     
+            if t.ERROR:
                 if t.get('loss_asset'): MAIN_PORTFOLIO.asset(t.get('loss_asset')).ERROR = True
                 if t.get('fee_asset'):  MAIN_PORTFOLIO.asset(t.get('fee_asset')).ERROR =  True
                 if t.get('gain_asset'): MAIN_PORTFOLIO.asset(t.get('gain_asset')).ERROR = True
@@ -1169,7 +966,7 @@ class AutoAccountant(tk.Tk):
             wallet_holdings = {}    #A dictionary indicating your total units held, by wallet
             for w in holdings[a]:
                 wallet_holdings[w] = 0
-                for gain in holdings[a][w]._dict.values():
+                for gain in holdings[a][w]._heap:
                     total_cost_basis        += gain._price*gain._quantity   #cost basis of this gain
                     total_holdings          += gain._quantity               #Single number for the total number of tokens
                     wallet_holdings[w]      += gain._quantity               #Number of tokens within each wallet
@@ -1178,38 +975,58 @@ class AutoAccountant(tk.Tk):
             asset._metrics['holdings'] =    total_holdings
             asset._metrics['wallets'] =     wallet_holdings
             
-    def calculate_average_buy_price(self, asset):
-        try:    asset._metrics['average_buy_price'] = asset.get('cost_basis') / asset.get('holdings')
+    def calculate_average_buy_price(self, asset:Asset):
+        try:    asset._metrics['average_buy_price'] = asset.precise('cost_basis') / asset.precise('holdings')
         except: asset._metrics['average_buy_price'] = 0
-    def calculate_value(self, asset):   #Calculates the overall value of this asset
+    def calculate_value(self, asset:Asset):   #Calculates the overall value of this asset
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['value'] = asset.get('holdings') * asset.get('price')
+        try:    asset._metrics['value'] = asset.precise('holdings') * asset.precise('price')
         except: asset._metrics['value'] = MISSINGDATA
-    def calculate_unrealized_profit_and_loss(self, asset):
+    def calculate_unrealized_profit_and_loss(self, asset:Asset):
         #You need current market data for these bad boys
-        average_buy_price = asset.get('average_buy_price')
+        average_buy_price = asset.precise('average_buy_price')
         try:        
-            asset._metrics['unrealized_profit_and_loss'] =      asset.get('value') - ( average_buy_price * asset.get('holdings') )
-            asset._metrics['unrealized_profit_and_loss%'] =   ( asset.get('price') /  average_buy_price )-1
+            asset._metrics['unrealized_profit_and_loss'] =      asset.precise('value') - ( average_buy_price * asset.precise('holdings') )
+            asset._metrics['unrealized_profit_and_loss%'] =   ( asset.precise('price') /  average_buy_price )-1
         except:     asset._metrics['unrealized_profit_and_loss%'] = asset._metrics['unrealized_profit_and_loss'] = 0
-    def calculate_changes(self, asset): #Calculates the unrealized USD lost or gained in the last 24 hours, week, and month for this asset
+    def calculate_changes(self, asset:Asset): #Calculates the unrealized USD lost or gained in the last 24 hours, week, and month for this asset
         #Must be a try statement because it relies on market data
-        value = asset.get('value')
-        try:
-            asset._metrics['day_change'] =   value-(value / (1 + asset.get('day%')))
-            asset._metrics['week_change'] =  value-(value / (1 + asset.get('week%')))
-            asset._metrics['month_change'] = value-(value / (1 + asset.get('month%')))
-        except: pass
-    def calculate_net_cash_flow(self, asset): #Calculates what the cash flow would become if you sold everything right now
+        value = asset.precise('value')
+        try:    asset._metrics['day_change'] =   value-(value / (1 + asset.precise('day%')))
+        except: asset._metrics['day_change'] =   0
+        try:    asset._metrics['week_change'] =  value-(value / (1 + asset.precise('week%')))
+        except: asset._metrics['week_change'] =  0
+        try:    asset._metrics['month_change'] = value-(value / (1 + asset.precise('month%')))
+        except: asset._metrics['month_change'] = 0
+    def calculate_net_cash_flow(self, asset:Asset): #Calculates what the cash flow would become if you sold everything right now
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['net_cash_flow'] = asset.get('cash_flow') + asset.get('value') 
+        try:    asset._metrics['net_cash_flow'] = asset.precise('cash_flow') + asset.precise('value') 
         except: asset._metrics['net_cash_flow'] = 0
-    def calculate_percentage_of_portfolio(self, a): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
-        asset = MAIN_PORTFOLIO.asset(a)
-        portfolio_value = MAIN_PORTFOLIO.get('value')
-        try:    asset._metrics['portfolio%'] = MAIN_PORTFOLIO.asset(a).get('value')  / MAIN_PORTFOLIO.get('value')
+    def calculate_percentage_of_portfolio(self, asset:str): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
+        try:    asset._metrics['portfolio%'] = asset.get('value')  / MAIN_PORTFOLIO.get('value')
         except: asset._metrics['portfolio%'] = 0
 
+    def calculate_portfolio_value(self):
+        value = 0
+        for a in MAIN_PORTFOLIO.assets():    #Compiles complete list of all wallets used in the portfolio
+            try: value += a.get('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
+            except: None
+        MAIN_PORTFOLIO._metrics['value'] = value
+    def calculate_portfolio_changes(self):
+        MAIN_PORTFOLIO._metrics.update({'day_change':0,'week_change':0,'month_change':0})
+        for a in MAIN_PORTFOLIO.assets():
+            try:
+                MAIN_PORTFOLIO._metrics['day_change'] += a.get('day_change')
+                MAIN_PORTFOLIO._metrics['week_change'] += a.get('week_change')
+                MAIN_PORTFOLIO._metrics['month_change'] += a.get('month_change')
+            except: pass
+    def calculate_portfolio_percents(self):
+        try:    MAIN_PORTFOLIO._metrics['day%'] =   MAIN_PORTFOLIO.get('day_change') /   (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('day_change'))
+        except: MAIN_PORTFOLIO._metrics['day%'] = 0
+        try:    MAIN_PORTFOLIO._metrics['week%'] =  MAIN_PORTFOLIO.get('week_change') /  (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('week_change'))
+        except: MAIN_PORTFOLIO._metrics['week%'] = 0
+        try:    MAIN_PORTFOLIO._metrics['month%'] = MAIN_PORTFOLIO.get('month_change') / (MAIN_PORTFOLIO.get('value') - MAIN_PORTFOLIO.get('month_change'))
+        except: MAIN_PORTFOLIO._metrics['month%'] = 0
     def calculate_portfolio_value_by_wallet(self):    #For the overall portfolio, calculates the total value held within each wallet
         wallets = {}
         for wallet in MAIN_PORTFOLIO.walletkeys():     #Creates a list of wallets, defaulting to 0$ within each
@@ -1217,13 +1034,13 @@ class AutoAccountant(tk.Tk):
         for asset in MAIN_PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
             for wallet in asset.get('wallets'):
                 # Asset wallet list is total units by wallet, multiply by asset price to get value
-                try:    wallets[wallet] += asset.get('wallets')[wallet] * asset.get('price')
+                try:    wallets[wallet] += asset.get('wallets')[wallet] * asset.precise('price')
                 except: pass
         MAIN_PORTFOLIO._metrics['wallets'] = wallets
     def calculate_portfolio_unrealized_profit_and_loss(self):
         total_unrealized_profit = 0
         for asset in MAIN_PORTFOLIO.assets():
-            try:    total_unrealized_profit += asset.get('unrealized_profit_and_loss')
+            try:    total_unrealized_profit += asset.precise('unrealized_profit_and_loss')
             except: continue    #Just ignore assets missing price data
         try:        
             MAIN_PORTFOLIO._metrics['unrealized_profit_and_loss'] = total_unrealized_profit
@@ -1234,10 +1051,24 @@ class AutoAccountant(tk.Tk):
 
 #BINDINGS
 #=============================================================
+    def _mouse(self, event):        #Tracks your mouse position
+        self.mouse_pos = (event.x_root, event.y_root)
     def _mousewheel(self, event):   #Scroll up and down the assets pane
         if self.grab_current() == self: #If any other window is open, then you can't do this
             if event.delta > 0:     self.comm_page_last()
             elif event.delta < 0:   self.comm_page_next()
+    def _esc(self,event):    #Exit this window
+        if self.grab_current() == self: #If any other window is open, then you can't do this
+            if self.GUI['GRID'].selection != [None, None]:  self.GUI['GRID'].set_selection()  #If anything is selected, deselect it
+            elif self.rendered[0] == 'portfolio':  self.comm_quit()        #If we're on the main page, exit the program
+            else:                   self.render(('portfolio',None), True)  #If we're looking at an asset, go back to the main page
+    def _del(self,event):    #Delete any selected items
+        if self.grab_current() == self: #If any other window is open, then you can't do this
+            cur_selection = self.GUI['GRID'].selection
+            if cur_selection != [None, None]:  self.delete_selection(cur_selection[0],cur_selection[1])
+
+# UNDO REDO
+#=============================================================
     def _ctrl_z(self,event):    #Undo your last action
         if self.grab_current() == self: #If any other window is open, then you can't do this
             lastAction = (self.undoRedo[2]-1)%len(TEMP['undo'])
@@ -1264,17 +1095,7 @@ class AutoAccountant(tk.Tk):
                 self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
                 self.metrics()  #2309 ms holy fuck
                 self.render(sort=True)
-    def _esc(self,event):    #Exit this window
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            if self.GRID_SELECTION != [-1, -1]:  self.GRID_clear_selection()
-            elif self.rendered[0] == 'portfolio':  self.comm_quit()        #If we're on the main page, exit the program
-            else:                   self.render(('portfolio',None), True)  #If we're looking at an asset, go back to the main page
-    def _del(self,event):    #Delete any selected items
-        if self.grab_current() == self: #If any other window is open, then you can't do this
-            if self.GRID_SELECTION != [-1, -1]:  self.GRID_delete_selection(self.GRID_SELECTION)
-#USEFUL COMMANDS
-#=============================================================
-    def undo_save(self):
+    def undo_save(self):        #Create a savepoint which can be returned to
         '''Saves current portfolio in the memory should the user wish to undo their last modification'''
         #############
         #NOTE: Undo savepoints are triggered when:
@@ -1295,7 +1116,8 @@ class AutoAccountant(tk.Tk):
 
 
 
-
+# MISCELLANEOUS
+#=============================================================
     def comm_copyright(self):
         Message(self,
         'MIT License', 
@@ -1320,7 +1142,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.''', width=78, height=20)
 
-        
+    def get_mouse_pos(self):    return self.mouse_pos
 
 
 

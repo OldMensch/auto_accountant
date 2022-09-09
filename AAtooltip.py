@@ -5,11 +5,12 @@ from functools import partial as p
 
 
 class ToolTipWindow(object):
-    def __init__(self):
+    def __init__(self, mouse_pos_command):
         #Important variables
         self.text = ''
         self.widget = None
         self.tipwindow = None
+        self.mouse_pos_command = mouse_pos_command
 
         #Tooltip Window
         self.tipwindow = tk.Toplevel(self.widget)
@@ -27,23 +28,20 @@ class ToolTipWindow(object):
 
     def tooltip(self, enter_event, leave_event):
         leave_flag = True
-        enter_flag = False
         while True:
-            if enter_flag: #You are hovering over a button. If you dont leave first, this "times out", and displays the tooltip
-                leave_flag = leave_event.wait(0.5) #Waits for 1 second before popup
-                #If user leaves before we should do the popup
-                if not leave_flag: #User stays long enough, change text, move window to right location, display the tooltip
-                    self.label.config(text=self.text)
-                    x, y, cx, cy = self.widget.bbox('insert')
-                    x = x +      self.widget.winfo_rootx() + self.widget.winfo_width()
-                    y = y + cy + self.widget.winfo_rooty() + self.widget.winfo_height()/2
-                    self.tipwindow.wm_attributes('-alpha', 1)
-                    self.tipwindow.wm_geometry('+%d+%d' % (x, y))
-                    self.tipwindow.lift()
-                    leave_flag = leave_event.wait() #Waits however long until user leaves the button
-                    self.tipwindow.wm_attributes('-alpha', 0)   
+            enter_event.wait() #Waits however long until user hovers over a button again
             
-            enter_flag = enter_event.wait() #Waits however long until user hovers over a button again
+            leave_flag = leave_event.wait(1) #Waits for 1 second before popup
+            #If user leaves before we should do the popup
+            if not leave_flag: #User stays long enough, change text, move window to right location, display the tooltip
+                mouse_pos = self.mouse_pos_command() #Retrieves mous position info from the main portfolio
+                self.tipwindow.wm_geometry('+%d+%d' % (mouse_pos[0]+5, mouse_pos[1]+5))
+                self.label.config(text=self.text)
+                self.tipwindow.wm_attributes('-alpha', 1)
+                self.tipwindow.lift()
+                leave_flag = leave_event.wait() #Waits however long until user leaves the button
+                self.tipwindow.wm_attributes('-alpha', 0)   
+            
 
     def enter(self, widget, text, event):
         self.widget = widget
