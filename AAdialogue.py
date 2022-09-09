@@ -46,7 +46,7 @@ class Dialogue(tk.Toplevel):
         self.GUI['mainFrame'] =     tk.Frame(self, bg=palette('accentdark'))        #Contains everything else
 
         if title != '':     #The title of the box
-            self.GUI['title'] =         tk.Label(self.GUI['mainFrame'], text=title, fg="#ffffff", bg=palette('accentdark'), font=settings('font', 1.25))
+            self.GUI['title'] =         tk.Label(self.GUI['mainFrame'], text=title, fg="#ffffff", bg=palette('accentdark'), font=setting('font', 1.25))
         self.GUI['primaryFrame'] =  tk.Frame(self.GUI['mainFrame'], bg=palette('accent'))   #contains all the important content of the dialogue box
         self.GUI['menuFrame'] =     tk.Frame(self.GUI['mainFrame'])     #contains all the 'cancel', 'ok', 'delete', 'save', and whatever other buttons you want
 
@@ -63,7 +63,7 @@ class Dialogue(tk.Toplevel):
     #==============================
 
     def add_label(self, column, row, text, fg=palette('entrycursor'), bg=palette('light'), columnspan=1, rowspan=1):
-        label = tk.Label(self.GUI['primaryFrame'], text=text, bg=bg, fg=fg, font=settings('font', 0.75))
+        label = tk.Label(self.GUI['primaryFrame'], text=text, bg=bg, fg=fg, font=setting('font', 0.75))
         label.grid(column=column,row=row,columnspan=columnspan,rowspan=rowspan,sticky="NSEW")
         return label
 
@@ -79,16 +79,15 @@ class Dialogue(tk.Toplevel):
         dropdown.grid(column=column,row=row,sticky="EW")
         return dropdown
 
-    def add_text_display(self, column, row, text, fg=palette('entrycursor'), bg=palette('dark'), width=32, height=8):
+    def add_text_display(self, column, row, text='', fg=palette('entrycursor'), bg=palette('dark'), font=setting('font', 0.75), width=32, height=8):
         '''Adds an uninteractive textbox to the primaryFrame'''
-        self.GUI['message'] = tk.Text(self.GUI['primaryFrame'],  fg=fg, bg=bg, font=settings('font', 0.75), height=height, width=width,wrap='word')
-        self.GUI['message'].insert(0.0, text)
-        self.GUI['message'].configure(state='disabled')
-        self.GUI['message'].grid(column=column,row=row)    
+        textbox = TextBox(self.GUI['primaryFrame'], text=text, state='disabled', fg=fg, bg=bg, font=font, height=height, width=width,wrap='word')
+        textbox.grid(column=column,row=row,sticky='EW',padx=(0,0))
+        return textbox
 
     def add_menu_button(self, text, bg="#000000", fg="#ffffff", command=None):
         '''Adds a button to the menu'''
-        tk.Button(self.GUI['menuFrame'], text=text, bg=bg, fg=fg, font=settings('font'), command=command).pack(side='left')
+        tk.Button(self.GUI['menuFrame'], text=text, bg=bg, fg=fg, font=setting('font'), command=command).pack(side='left')
 
     def add_selection_list(self, column, row, items, checkList, allowMultipleSelection=False, title='', width=32, height=10, truncate=False, sort='alpha', button_command=None, rowspan=1,columnspan=1):
         '''Adds a scrollable list, from which you can select a singular, or multiple items'''
@@ -121,7 +120,7 @@ class Dialogue(tk.Toplevel):
 class AutoEntryBox(tk.Entry):
     def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, format=None):
         '''An automatically-updating display of text'''
-        super().__init__(upper, text=text, disabledforeground=fg, disabledbackground=bg, insertbackground=insertbackground, font=('Courier New', settings('font')[1]), width=width, state='disabled')
+        super().__init__(upper, text=text, disabledforeground=fg, disabledbackground=bg, insertbackground=insertbackground, font=setting('font2'), width=width, state='disabled')
         self.format = format
         self.text = tk.StringVar(self, value=text)
         self.configure(textvariable=self.text)
@@ -138,7 +137,7 @@ class AutoEntryBox(tk.Entry):
 class EntryBox(tk.Entry):
     def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), cursor=palette('entrycursor'), width=32, format=None, charLimit=None, d_fg=palette('entrycursor'), d_bg=palette('dark')):
         '''For entering 1-line text, dates, floats, positive-only floats. Length can be limited.'''
-        super().__init__(upper, text=text, fg=fg, bg=bg, readonlybackground=d_bg, insertbackground=cursor, font=('Courier New', settings('font')[1]), width=width)
+        super().__init__(upper, text=text, fg=fg, bg=bg, readonlybackground=d_bg, insertbackground=cursor, font=setting('font2'), width=width)
         self.format = format
         self.text = tk.StringVar(self, value=text) #The actual, changing data variable of the entrybox
         self.configure(textvariable=self.text)
@@ -229,7 +228,7 @@ class EntryBox(tk.Entry):
 
 class DescEntry(tk.Text):
     def __init__(self, upper, text, fg=palette('entrytext'), bg=palette('entry'), insertbackground=palette('entrycursor'), width=32, height=8, d_fg=palette('entrycursor'), d_bg=palette('dark')):
-        super().__init__(upper, wrap='word', fg=fg, bg=bg, insertbackground=insertbackground, font=('Courier New', settings('font')[1]), height=height ,width=width)
+        super().__init__(upper, wrap='word', fg=fg, bg=bg, insertbackground=insertbackground, font=setting('font2'), height=height ,width=width)
         self.insert(0.0, text)
         self.fg, self.bg, self.d_fg, self.d_bg = fg, bg, d_fg, d_bg
     def entry(self):
@@ -258,7 +257,7 @@ class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a
         items.insert(0, defaultItem)
 
         super().__init__(upper, self.currentItem, *items, command=self.select_command)
-        self.configure(fg=fg, bg=bg, font=('Courier New', settings('font')[1]), highlightthickness=0, disabledforeground=d_fg)
+        self.configure(fg=fg, bg=bg, font=setting('font2'), highlightthickness=0, disabledforeground=d_fg)
     
     def select_command(self, *kwargs):
         if self.selectCommand != None:  self.selectCommand(kwargs[0]) #kwargs[0] is the item just selected. This throws that into your custom command
@@ -272,7 +271,52 @@ class DropdownList(tk.OptionMenu): #Single-selection-only, dropdown version of a
     def set(self, string):  self.currentItem.set(string)
     def clear(self):        self.currentItem.set(self.defaultItem)
 
+class TextBox(tk.Text): #Simple textbox that allows for mixed color, highlighting, and fonts
+    def __init__(self, upper, text='', state='normal', fg=palette('entrycursor'), bg=palette('dark'), font=setting('font', 0.75), height=8, width=32, wrap='word'):
+        super().__init__(upper, fg=fg, bg=bg, font=font, height=height, width=width, wrap=wrap, bd=0)
+        if state == 'readonly': #In a 'readonly' state, text can't be copied. It's basically just a more complex label. Disabled at least allows for highlighting text.
+            self.default_state = 'disabled'
+            self.bindtags((str(self), str(upper), "all"))
+            self.configure(cursor='')
+        else:   self.default_state = state
+        self.tagID = 0
+        self.insert(0.0, text)
+        self.configure(state=self.default_state)
     
+    def insert_text(self, text, fg=None, bg=None, font=None, justify='left'):
+        '''Insert a bit of text into the textbox, specifying colors if you want'''
+        self.configure(state='normal') #Can only insert text when it isn't disabled
+        #If no formatting, just insert the text at the end
+        if fg==bg==font==None and justify=='left': self.insert('insert', text)
+        #Otherwise, color, then insert it
+        else:
+            self.tag_config(self.tagID, foreground=fg, background=bg, font=font, justify=justify)
+            last_pos = self.index('insert') #Position of the "cursor", where we will insert next
+            self.insert('insert', text)
+            self.tag_add(self.tagID, last_pos, self.index('insert'))
+            self.tagID += 1
+        self.configure(state=self.default_state)
+
+    def insert_triplet(self, text1, text2, text3, fg=None, bg=None, font=None, justify='left'):
+        self.insert_text(text1)
+        self.insert_text(text2, fg=fg, bg=bg, font=font, justify=justify)
+        self.insert_text(text3)
+        self.newline()
+    
+    def newline(self):
+        '''Moves point of insertion to the next line in the text box'''
+        self.configure(state='normal') #Can only insert text when it isn't disabled
+        self.insert('insert', '\n')
+        self.configure(state=self.default_state)
+    
+    def clear(self):    
+        '''Deletes all text and clears all color/font formatting'''
+        self.configure(state='normal') #Can only insert text when it isn't disabled
+        for i in range(self.tagID):
+            self.tag_remove(i,'1.0','end')
+        self.delete('0.0','end')
+        self.tagID = 0
+        self.configure(state=self.default_state)
     
 
 class SelectionList(tk.Frame):  #Selection list object
@@ -291,7 +335,7 @@ class SelectionList(tk.Frame):  #Selection list object
 
         #Places a title on top of the selectionList
         if title != '':
-            tk.Label(self, text=title, fg=palette('entrycursor'), bg=palette('accentdark'), font=settings('font', 0.75)).grid(column=0,row=0, sticky="NSEW",pady=(10,10))
+            tk.Label(self, text=title, fg=palette('entrycursor'), bg=palette('accentdark'), font=setting('font', 0.75)).grid(column=0,row=0, sticky="NSEW",pady=(10,10))
         
         #Initializes the itemFrame, itemCanvas, and scrollbar for the menu
         self.itemCanvas = tk.Canvas(self, bg=palette('accent'), highlightthickness=0)
@@ -320,7 +364,7 @@ class SelectionList(tk.Frame):  #Selection list object
     
     def _mousewheel(self, event):
         scrollDir = event.delta/120
-        delta = settings('font')[1]*2    #bigger font size means faster scrolling!
+        delta = setting('font')[1]*2    #bigger font size means faster scrolling!
         if self.itemFrame.winfo_y() > -delta and scrollDir > 0:
             self.itemCanvas.yview_moveto(0)
         else:
@@ -328,7 +372,7 @@ class SelectionList(tk.Frame):  #Selection list object
 
     def add_menu_button(self, text, bg="#000000", fg="#ffffff", command=None):
         '''Adds a button to the selection list menu'''
-        self.menu_buttons.append(tk.Button(self.menuFrame, text=text, bg=bg, fg=fg, font=settings('font', 0.75), command=command))
+        self.menu_buttons.append(tk.Button(self.menuFrame, text=text, bg=bg, fg=fg, font=setting('font', 0.75), command=command))
         self.menu_buttons[len(self.menu_buttons)-1].pack(side='left')
 
     def set_selection(self, selectionList):   
@@ -388,7 +432,7 @@ class SelectionList(tk.Frame):  #Selection list object
     def __remove_button(self):    
         self.buttons.pop().destroy()
     def __add_button(self):
-        button = tk.Button(self.itemFrame, bg='#000000', fg='#ffffff', font=('Courier New', settings('font',0.75)[1]), width=self.width, command=p(self.button_command, len(self.buttons), self.command) )
+        button = tk.Button(self.itemFrame, bg='#000000', fg='#ffffff', font=setting('font2', 0.75), width=self.width, command=p(self.button_command, len(self.buttons), self.command) )
         self.buttons.append(button)
         button.grid(column=0,row=len(self.buttons)-1)
         button.bind('<MouseWheel>', self._mousewheel)

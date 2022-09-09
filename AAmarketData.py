@@ -5,14 +5,13 @@ from AAdialogues import Message
 from AAlib import *
 from AAobjects import MAIN_PORTFOLIO
 
-from datetime import *
 import time
 import json
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 import time
 
-from threading import Thread, Event
+from threading import Thread
 
 import yahoofinancials as yf2
 
@@ -90,9 +89,8 @@ def StockDataLoop(mainPortREF, online_event):
             
             marketdatalib[stock + 'zs'] = export    #update the library which gets called to by the main portfolio
 
-            mainPortREF.market_metrics_ASSET(stock + 'zs', False) #Updates summary info for all the relevant ledgers
-        mainPortREF.market_metrics_PORTFOLIO()                     #Updates the overall portfolio summary info
-        mainPortREF.render(mainPortREF.asset, True)
+        mainPortREF.market_metrics()                     #Updates the overall portfolio summary info
+        mainPortREF.render(sort=True)
 
         #Updates the timestamp for last update of the marketdatalib
         marketdatalib['_timestamp'] = str(datetime.now())
@@ -101,24 +99,27 @@ def StockDataLoop(mainPortREF, online_event):
         #Ok, we've got the market data. Wait 5 minutes
         time.sleep(300)
         
-def getMissingPrice(date, crypto_ticker):
+def getMissingPrice(date, tickerclass):
     '''Uses the date's OPEN price to fill in missing price data, when data is imported with missing information.\n
-        While it works, it's kinda slow. And less accurate than doing it manually.'''
-    
-    date = str(datetime.date(datetime( int(date[:4]), int(date[5:7]), int(date[8:10]) )))
-    print(date)
+        While it works, it's kinda slow. And innacurate, though so is Etherscan's price data.'''   
+    TICKER = tickerclass.split('z')[0]
+    CLASS = tickerclass.split('z')[1]
+    if   CLASS == 'c':  TO_FIND = TICKER+'-USD' #This is a crypto
+    elif CLASS == 's':  TO_FIND = TICKER        #This is a stock
+    elif CLASS == 'f':  TO_FIND = TICKER+'/USD' #This is a fiat
 
-    raw_data = yf2.YahooFinancials([crypto_ticker+'-USD'])  #0ms
+    date = str(datetime.date(datetime( int(date[:4]), int(date[5:7]), int(date[8:10]) )))
+    raw_data = yf2.YahooFinancials([TO_FIND])  #0ms
     
-    #We HAVE to do this extra function, because get_historical_price_data never ends if it gets an unsupported market pair input
-    if crypto_ticker+'-USD' not in raw_data.get_summary_data():
-        print('||ERROR|| Yahoo Finance API Error: ' + crypto_ticker+'-USD' + ' is not a supported market pair on Yahoo Finance.')
-        return '0'
+    #We HAVE to do this extra function, because get_historical_price_data never stops running if it gets an unsupported market pair input
+    if TO_FIND not in raw_data.get_summary_data():
+        print('||ERROR|| Yahoo Finance API Error: ' + TO_FIND + ' is not a supported market pair on Yahoo Finance.')
+        return None
         #Message(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
 
     raw_data = raw_data.get_historical_price_data(date, date, 'daily')    #300ms 
 
-    return str(raw_data[crypto_ticker+'-USD']['prices'][0]['open'])    # We assume the open is "good enough" an approximation for missing data
+    return str(raw_data[TO_FIND]['prices'][0]['close'])    # We assume the close is "good enough" an approximation for missing data
         
 
 
@@ -148,7 +149,7 @@ def CryptoDataLoop(mainPortREF, online_event):
         }
         headers = {
         'Accepts': 'application/json',
-        'X-CMC_PRO_API_KEY': settings('CMCAPIkey'),
+        'X-CMC_PRO_API_KEY': setting('CMCAPIkey'),
         }
 
         session = Session()
@@ -203,10 +204,9 @@ def CryptoDataLoop(mainPortREF, online_event):
                         'price' :       '0',
                         'volume24h' :   '0',
                     }
-
-                mainPortREF.market_metrics_ASSET(crypto + 'zc', False) #Updates summary info for all the relevant ledgers NOTE!!! This cannot be simplified to just 'metrics'! This set of assets is a subset of 
-            mainPortREF.market_metrics_PORTFOLIO()                      #Updates the overall portfolio summary info
-            mainPortREF.render(mainPortREF.asset, True)
+                
+            mainPortREF.market_metrics()                      #Updates the overall portfolio summary info
+            mainPortREF.render(sort=True)
 
         #Updates the timestamp for last update of the marketdatalib
         marketdatalib['_timestamp'] = str(datetime.now())

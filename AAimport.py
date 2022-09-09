@@ -1,8 +1,6 @@
 
 import pandas as pd
 from io import StringIO
-from datetime import datetime, tzinfo
-from mpmath import mpf as precise
 from AAobjects import *
 
 from AAdialogues import Message
@@ -12,18 +10,16 @@ from AAdialogues import Message
 def finalize_import(mainAppREF, TO_MERGE):
     MAIN_PORTFOLIO.loadJSON(TO_MERGE.toJSON(), True, False)   # Imports new transactions, doesn't overwrite duplicates (to preserve custom descriptions, type changes, etc.)
     mainAppREF.metrics()
-    mainAppREF.render(mainAppREF.asset, True)
+    mainAppREF.render(sort=True)
     mainAppREF.undo_save()
 
 
 def isCoinbasePro(fileDir): #Returns true if this is a Coinbase Pro file
     try:    return open(fileDir, 'r').readlines()[0][0:9] == 'portfolio'
     except: return False
-
 def isGeminiEarn(data): #Returns true if this is a Gemini Earn file (uses data to do this)
     if 'APY' in data.columns:   return True
     else:                       return False
-
 def isEtherscanERC20(data): # Returns true if this is a Etherscan ERC-20 tokens transaction file
     if 'TokenSymbol' in data:   return True
     else:                       return False
@@ -36,7 +32,6 @@ def loadCoinbaseFile(fileDir):
     data = ''
     for line in raw: data += line + '\n'
     return pd.read_csv(StringIO(data), dtype='string') #We read the data all as strings to preserve accuracy
-
 def loadEtherscanFile(fileDir):
     #Etherscan's CSV file is fucky and has an extra column for every transaction, but not an extra row. We have to fix that by adding in another column.
     raw = open(fileDir, 'r').readlines()
@@ -47,8 +42,8 @@ def loadEtherscanFile(fileDir):
     return pd.read_csv(StringIO(data), dtype='string') #We read the data all as strings to preserve accuracy
 
 
-
-def import_etherscan(mainAppREF, ethFileDir, erc20FileDir, etherscanWallet=None):      #Imports the Etherscan transaction history for ETH only
+def import_etherscan(mainAppREF, ethFileDir, erc20FileDir, etherscanWallet):      #Imports the Etherscan transaction history, requires both ETH and ERC-20 history
+    '''Reads the pair of CSV files you downloaded from Etherscan on ETH and ERC-20 transactions, imports them into your portfolio'''
     eth_data = loadEtherscanFile(ethFileDir)
     erc20_data = loadEtherscanFile(erc20FileDir)
     if isEtherscanERC20(eth_data):
@@ -85,34 +80,34 @@ def import_etherscan(mainAppREF, ethFileDir, erc20FileDir, etherscanWallet=None)
         if t not in eth_trans:
             trans = erc20_trans.pop(t)
             this_wallet_address = trans[2]
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=[trans[4],trans[3],None]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=[trans[4],trans[3],None]))
     for t in list(eth_trans):
         trans = eth_trans[t]
         if not pd.isna(trans[7]):      #There is an error - just an expense of the fee, then.
             eth_trans.pop(t)
-            TO_MERGE.add_transaction(Transaction(trans[0], 'expense', etherscanWallet, loss=['ETHzc',trans[5],trans[6]]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'expense', etherscanWallet, loss=['ETHzc',trans[5],trans[6]]))
         elif trans[2] == this_wallet_address:  #If its TO this wallet, then it's a transfer_in of ETH. Possibly a gift_in, but that's up to the user to correct. No fees.
             eth_trans.pop(t)
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=['ETHzc',trans[3],None]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=['ETHzc',trans[3],None]))
         elif trans[8]=='Swap Exact ETH For Tokens': #A swap! A Trade! This is only for swapping ETH to something, not anything to anything.
             erc20 = erc20_trans.pop(t)
             eth_trans.pop(t)
-            TO_MERGE.add_transaction(Transaction(trans[0], 'trade', etherscanWallet, '', ['ETHzc',trans[4],trans[6]],['ETHzc',trans[5],trans[6]],[erc20[4],erc20[3],None]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'trade', etherscanWallet, '', ['ETHzc',trans[4],trans[6]],['ETHzc',trans[5],trans[6]],[erc20[4],erc20[3],None]))
     for t in list(eth_trans):       #Independent expenses, probably related to staking
         if t not in erc20_trans:
             trans = eth_trans.pop(t)
-            TO_MERGE.add_transaction(Transaction(trans[0], 'expense', etherscanWallet, loss=['ETHzc',trans[5],trans[6]]))
-    for t in list(erc20_trans):     #Transfers of ERC-20 tokens, probably for staking
+            TO_MERGE.import_transaction(Transaction(trans[0], 'expense', etherscanWallet, loss=['ETHzc',trans[5],trans[6]]))
+    for t in list(erc20_trans):     #Transfers of ERC-20 tokens, assumed to be for staking or something similar
         eth = eth_trans.pop(t)
         trans = erc20_trans.pop(t)
         if trans[1] == this_wallet_address:
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_out', etherscanWallet, '', [trans[4],trans[3],None],['ETHzc',eth[5],eth[6]]))
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_in', None, gain=[trans[4],trans[3],None]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_out', etherscanWallet, '', [trans[4],trans[3],None],['ETHzc',eth[5],eth[6]]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_in', None, gain=[trans[4],trans[3],None]))
         else:
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=[trans[4],trans[3],None]))
-            #Expense is just the fee for transfer_out, but the fee is applied to the ETH wallet, not the wallet we're transferring out of
-            TO_MERGE.add_transaction(Transaction(trans[0], 'expense', etherscanWallet, loss=['ETHzc',eth[5],eth[6]]))
-            TO_MERGE.add_transaction(Transaction(trans[0], 'transfer_out', None, loss=[trans[4],trans[3],None]))
+            #This is like, the only case where a transfer_in has a fee. This is since the fee to unstake assets is applied to the Metamask wallet,
+            #While the transfer_out happens in the staking pool 
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_in', etherscanWallet, gain=[trans[4],trans[3],None],fee=['ETHzc',eth[5],eth[6]]))
+            TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_out', None, loss=[trans[4],trans[3],None]))
     
     if len(eth_trans) > 0: print('||IMPORT ERROR|| '+str(len(eth_trans)+len(erc20_trans)) + ' ETH transactions failed to parse.')
     if len(erc20_trans) > 0: print('||IMPORT ERROR|| '+str(len(eth_trans)+len(erc20_trans)) + ' ERC-20 transactions failed to parse.')
@@ -120,8 +115,8 @@ def import_etherscan(mainAppREF, ethFileDir, erc20FileDir, etherscanWallet=None)
     finalize_import(mainAppREF, TO_MERGE)
  
 
-def import_coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'):    #Imports Coinbase Pro transaction history
-    '''Reads the CSV file you downloaded from Coinbase Pro, spits out a dictionary in the same format as PERM, to be merged and overwrite the old PERM'''
+def import_coinbase_pro(mainAppREF, fileDir, coinbaseProWallet):    #Imports Coinbase Pro transaction history
+    '''Reads the CSV file you downloaded from Coinbase Pro, imports it into your portfolio'''
     TO_MERGE = Portfolio()
     if not isCoinbasePro(fileDir):
         Message(mainAppREF, 'IMPORT ERROR!','This is Coinbase history, not Coinbase Pro history.')
@@ -145,8 +140,8 @@ def import_coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'): 
 
         # First, simple transactions are completed
         if asset == 'USDzc' and type in ['deposit','withdrawal']: continue
-        elif type == 'deposit':    TO_MERGE.add_transaction(Transaction(date, 'transfer_in', coinbaseProWallet, gain=[asset,quantity,None]))
-        elif type == 'withdrawal': TO_MERGE.add_transaction(Transaction(date, 'transfer_out', coinbaseProWallet, loss=[asset,quantity,None]))
+        elif type == 'deposit':    TO_MERGE.import_transaction(Transaction(date, 'transfer_in', coinbaseProWallet, gain=[asset,quantity,None]))
+        elif type == 'withdrawal': TO_MERGE.import_transaction(Transaction(date, 'transfer_out', coinbaseProWallet, loss=[asset,quantity,None]))
 
         #Not simple. Ok, add it to the list of losses/fees/gains
         elif type == 'fee':     fees[ID] = [asset, quantity, None]
@@ -154,7 +149,7 @@ def import_coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'): 
             if isLoss:          losses[ID] = [asset, quantity, None]
             else:               gains[ID] = [asset, quantity, None]
         else:
-            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase PRO history due to unknown transaction type \"'+type+'\".')
+            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Coinbase PRO history due to unknown transaction type \"'+type+'\".')
             return
 
     # COMPLEX TRANSACTIONS - Adds in the rest of the transactions that come in triplets
@@ -164,13 +159,13 @@ def import_coinbase_pro(mainAppREF, fileDir, coinbaseProWallet='Coinbase Pro'): 
         for a in [L,F,G]: 
             if a[0]=='USDzc': a[0]=None #Get rid of USD's
         
-        if L[0] == None:    TO_MERGE.add_transaction(Transaction(date, 'purchase', coinbaseProWallet, '', L, F, G))
-        else:               TO_MERGE.add_transaction(Transaction(date, 'sale', coinbaseProWallet, '', L, F, G))
+        if L[0] == None:    TO_MERGE.import_transaction(Transaction(date, 'purchase', coinbaseProWallet, '', L, F, G))
+        else:               TO_MERGE.import_transaction(Transaction(date, 'sale', coinbaseProWallet, '', L, F, G))
         
     finalize_import(mainAppREF, TO_MERGE)
 
-def import_coinbase(mainAppREF, fileDir, coinbaseWallet='Coinbase'):    #Imports Coinbase transaction history
-    '''Reads the CSV file you downloaded from Coinbase (not PRO), spits out a dictionary in the same format as PERM, to be merged and overwrite the old PERM'''   
+def import_coinbase(mainAppREF, fileDir, coinbaseWallet):    #Imports Coinbase transaction history
+    '''Reads the CSV file you downloaded from Coinbase (not PRO), imports it into your portfolio'''   
     if isCoinbasePro(fileDir):
         Message(mainAppREF, 'IMPORT ERROR!','This is Coinbase Pro history, not Coinbase history.')
         return 
@@ -203,8 +198,14 @@ def import_coinbase(mainAppREF, fileDir, coinbaseWallet='Coinbase'):    #Imports
                 else:                               gain_asset = market_pair[0]
             loss_asset += 'zc'
             gain_asset += 'zc'
+        elif trans_type == 'Convert': #Description is of format "convert quantity thing, to quantity thing"
+            loss_quantity = desc.split(' to ')[0].split(' ')[1]
+            loss_asset =    desc.split(' to ')[0].split(' ')[2] + 'zc'
+            gain_quantity = desc.split(' to ')[1].split(' ')[0]
+            gain_asset =    desc.split(' to ')[1].split(' ')[1] + 'zc'
+            if not TO_MERGE.hasAsset(gain_asset): TO_MERGE.add_asset(Asset(gain_asset, gain_asset[:-2]))
 
-        if trans_type == 'Buy' or loss_asset == 'USDzc': # Buy and "advanced trade buy" with a -USD market pair
+        if   trans_type == 'Buy' or loss_asset == 'USDzc': # Buy and "advanced trade buy" with a -USD market pair
             trans = Transaction(date, 'purchase', coinbaseWallet, desc, [None,subtotal,None],[None,fee,None],[asset,quantity,None])
         elif trans_type == 'Sell' or gain_asset == 'USDzc': # Sell and "advanced trade sell" with a -USD market pair
             trans = Transaction(date, 'sale', coinbaseWallet, desc, [asset,quantity,None],[None,fee,None],[None,subtotal,None])
@@ -212,24 +213,29 @@ def import_coinbase(mainAppREF, fileDir, coinbaseWallet='Coinbase'):    #Imports
             trans = Transaction(date, 'card_reward', coinbaseWallet, desc, gain=[asset,quantity,spot_price])
         elif trans_type == 'Receive':
             trans = Transaction(date, 'transfer_in', coinbaseWallet, desc, gain=[asset,quantity,None])
+        elif trans_type == 'Send':
+            if not pd.isna(fee): Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import \'Send\' transaction, because it had a fee, and that is currently an unimplemented feature.')
+            trans = Transaction(date, 'transfer_out', coinbaseWallet, desc, loss=[asset,quantity,None])
         elif trans_type in ['Coinbase Earn', 'Rewards Income'] or trans_type == 'Receive':   #Coinbase Learn & Earn treated as income by the IRS, according to Coinbase
             trans = Transaction(date, 'income', coinbaseWallet, desc, gain=[asset,quantity,spot_price])
         elif trans_type == 'Advanced Trade Buy': #Trades.... even worse than Gemini! Missing quantity recieved data.
             trans = Transaction(date, 'trade', coinbaseWallet, desc, [loss_asset,None,None],[fee_asset,None,None],[gain_asset,quantity,None])
         elif trans_type == 'Advanced Trade Sell':
             trans = Transaction(date, 'trade', coinbaseWallet, desc, [loss_asset,quantity,spot_price],[fee_asset,None,None],[gain_asset,None,None])
+        elif trans_type == 'Convert':
+            trans = Transaction(date, 'trade', coinbaseWallet, desc, [loss_asset,loss_quantity,spot_price],[None,fee,None],[gain_asset,gain_quantity,None])
 
         else:
-            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + trans_type + '\'')
             return
 
-        TO_MERGE.add_transaction(trans)
+        TO_MERGE.import_transaction(trans)
 
     finalize_import(mainAppREF, TO_MERGE)
                 
 
-def import_gemini_earn(mainAppREF, fileDir, geminiEarnWallet='Gemini Earn'):   #Imports Gemini Earn transaction history
-    '''Reads the XLSX file you downloaded from Gemini or Gemini Earn, spits out a dictionary in the same format as PERM, to be merged and overwrite the old PERM'''
+def import_gemini_earn(mainAppREF, fileDir, geminiEarnWallet):   #Imports Gemini Earn transaction history
+    '''Reads the XLSX file you downloaded from Gemini or Gemini Earn, imports it into your portfolio'''
     data = pd.read_excel(fileDir, dtype='string', keep_default_na=False)
     if not isGeminiEarn(data):
         Message(mainAppREF, 'IMPORT ERROR!','This is Gemini history, not Gemini Earn history.')
@@ -259,18 +265,20 @@ def import_gemini_earn(mainAppREF, fileDir, geminiEarnWallet='Gemini Earn'):   #
         if not TO_MERGE.hasAsset(asset):     TO_MERGE.add_asset(Asset(asset, asset_ticker))
 
         # TRANSACTION HANDLING - Handles the three different transaction types within Gemini Earn Reports: Deposit, Redeem, Interest Credit
-        if trans_type == 'Deposit':             TO_MERGE.add_transaction(Transaction(date, 'transfer_in', geminiEarnWallet, '', gain=[asset, quantity, None]))
-        elif trans_type == 'Redeem':            TO_MERGE.add_transaction(Transaction(date, 'transfer_out', geminiEarnWallet, '', loss=[asset, quantity, None]))
-        elif trans_type == 'Interest Credit':   TO_MERGE.add_transaction(Transaction(date, 'income', geminiEarnWallet, '', gain=[asset, quantity, price]))
+        if trans_type == 'Deposit':             trans = Transaction(date, 'transfer_in', geminiEarnWallet, '', gain=[asset, quantity, None])
+        elif trans_type == 'Redeem':            trans = Transaction(date, 'transfer_out', geminiEarnWallet, '', loss=[asset, quantity, None])
+        elif trans_type == 'Interest Credit':   trans = Transaction(date, 'income', geminiEarnWallet, '', gain=[asset, quantity, price])
         
         else:
-            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Earn) history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Gemini (Earn) history due to unimplemented transaction type, \'' + trans_type + '\'')
             return
+        
+        TO_MERGE.import_transaction(trans)
 
     finalize_import(mainAppREF, TO_MERGE)
 
-def import_gemini(mainAppREF, fileDir, geminiWallet='Gemini'):   #Imports Gemini transaction history
-    '''Reads the XLSX file you downloaded from Gemini or Gemini Earn, spits out a dictionary in the same format as PERM, to be merged and overwrite the old PERM'''
+def import_gemini(mainAppREF, fileDir, geminiWallet):   #Imports Gemini transaction history
+    '''Reads the XLSX file you downloaded from Gemini or Gemini Earn, imports it into your portfolio'''
     data = pd.read_excel(fileDir, dtype='string', keep_default_na=False)
     if isGeminiEarn(data):
         Message(mainAppREF, 'IMPORT ERROR!','This is Gemini Earn history, not Gemini history.')
@@ -318,11 +326,100 @@ def import_gemini(mainAppREF, fileDir, geminiWallet='Gemini'):   #Imports Gemini
             trans = Transaction(date, 'trade', geminiWallet, desc, [LA,LQ,None],[FA,FQ,None],[GA,GQ,None])
             trans.ERROR = True #
         else:
-            Message(mainAppREF, 'Import ERROR', 'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'' + trans_type + '\'')
             return
 
-        TO_MERGE.add_transaction(trans)
+        TO_MERGE.import_transaction(trans)
             
 
     finalize_import(mainAppREF, TO_MERGE)
 
+def import_binance(mainAppREF, fileDir, binanceWallet):   #Imports Binance transaction history
+    '''Reads the CSV file you downloaded from Binance tax transaction history, imports it into your portfolio'''
+    data = pd.read_csv(fileDir, dtype='string')
+    TO_MERGE = Portfolio()
+
+    print('||WARNING|| I don\'t know whether Binance transaction times are reported in UTC or your local time zone... the dates/times may be wrong')
+    print('||WARNING|| Also I may have messed up how the dates were saved in my copy of the Binance CSV file.... so it might be very broken...')
+
+    for t in data.iterrows():
+        #This is still here in case I actually broke the date when I re-saved the CSV file
+        #date =      t[1][1].replace('-','/')
+        date = t[1][1].replace('/',' ').replace(':',' ').split(' ')
+        date = date[2]+'/'+date[0]+'/'+date[1]+' '+date[3]+':'+date[4]+':'+date[5] #TODO TODO TODO: This date might be wrong! I may have messed up my copy of the binance CSV file.
+        category =  t[1][2]
+        operation = t[1][3]
+        PA, PQ, PV = t[1][6]+'zc', t[1][7], t[1][8]  #Primary Asset
+        try:    PP = str(precise(PV.replace('$',''))/precise(PQ))
+        except: pass
+        BA, BQ, BV = t[1][9]+'zc', t[1][10],t[1][11] #Base Asset
+        try:    BP = str(precise(BV.replace('$',''))/precise(BQ))
+        except: pass
+        QA, QQ, QV = t[1][12]+'zc',t[1][13],t[1][14] #Quote Asset
+        try:    QP = str(precise(QV.replace('$',''))/precise(QQ))
+        except: pass
+        FA, FQ, FV = t[1][15]+'zc',t[1][16],t[1][17] #Fee Asset
+        try:    FP = str(precise(FV.replace('$',''))/precise(FQ))
+        except: pass
+
+        for asset in [PA, BA, QA, FA]:
+            if not pd.isna(asset) and asset != 'USDzc' and not TO_MERGE.hasAsset(asset): TO_MERGE.add_asset(Asset(asset, asset[:-2]))
+
+        if operation == 'USD Deposit':  continue
+        elif operation == 'Staking Rewards':
+            trans = Transaction(date, 'income', binanceWallet, operation, gain=[PA, PQ, PP])
+        elif category == 'Quick Buy': #For quick buys, the base_asset is the USD loss, the quote_asset is the crypto gain, fee is USD fee
+            trans = Transaction(date, 'purchase', binanceWallet, operation, [None, BQ, None], [None, FQ, None], [QA, QQ, QP])
+        elif category == 'Spot Trading' and operation == 'Buy' and QA == 'USDzc': #For spot buys, base_asset is the gain, quote_asset is the loss, fee is crypto fee
+            trans = Transaction(date, 'purchase_crypto_fee', binanceWallet, operation, [None, QQ, None], [FA, FQ, FP], [BA, BQ, None])
+
+        else:
+            Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import unknown Binance wallet transaction type: ' + category + ' - ' + operation + '.')
+            return
+
+
+        TO_MERGE.import_transaction(trans)
+    
+    finalize_import(mainAppREF, TO_MERGE)
+
+def import_yoroi(mainAppREF, fileDir, yoroiWallet): #Imports Yoroi Wallet transaction history
+    '''Reads the CSV file you downloaded from your Yoroi wallet, imports it into your portfolio'''
+    data = pd.read_csv(fileDir, dtype='string')
+    TO_MERGE = Portfolio()
+
+    for t in data.iterrows():
+        #Crap, the date is in GMT-4, so I have to add 4 hours to make it UTC/GMT time. Ah!
+        date = t[1][10]
+        date = datetime( int(date[:4]), int(date[5:7]), int(date[8:10]), int(date[11:13]), int(date[14:16]), int(date[17:19]) )
+        date += timedelta(hours=4)
+        date = str(date).replace('-','/')
+
+        #1111/11/11 20:11:11
+        trans_type = t[1][0]
+        gain_quantity = t[1][1]
+        gain_asset =    t[1][2]+'zc'
+        loss_quantity = t[1][3]
+        loss_asset =    t[1][4]+'zc'
+        fee_quantity =  t[1][5]
+        fee_asset =     t[1][6]+'zc'
+        comment =       t[1][9]
+        for asset in [loss_asset, fee_asset, gain_asset]:
+            if not pd.isna(asset) and not TO_MERGE.hasAsset(asset):   TO_MERGE.add_asset(Asset(asset, asset[:-2]))
+
+        # Only three type of transactions that I know of at this point: transfer_in, expense, and income
+        # Unfortunately their report gives us NO price information at all! At least I can automatically get this from YahooFinance...
+
+        if trans_type == 'Deposit' and not pd.isna(comment) and 'Staking Reward' in comment: #Staking reward
+            trans = Transaction(date, 'income', yoroiWallet, gain=[gain_asset, gain_quantity, None])    #Missing price date
+        elif trans_type == 'Deposit':   #Transfer of crypto into the wallet
+            trans = Transaction(date, 'transfer_in', yoroiWallet, gain=[gain_asset, gain_quantity, None])
+        elif trans_type == 'Withdrawal' and loss_quantity == '0.0':
+            trans = Transaction(date, 'expense', yoroiWallet, loss=[fee_asset, fee_quantity, None])    #Missing price date
+        
+        else:
+            Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import unknown Yoroi wallet transaction type: ' + trans_type + '.')
+            return
+        
+        TO_MERGE.import_transaction(trans)
+    
+    finalize_import(mainAppREF, TO_MERGE)

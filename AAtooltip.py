@@ -1,8 +1,7 @@
-import tkinter as tk
+
 from AAlib import *
 import threading
 from functools import partial as p
-import time
 
 
 class ToolTipWindow(object):
@@ -16,7 +15,7 @@ class ToolTipWindow(object):
         self.tipwindow = tk.Toplevel(self.widget)
         self.tipwindow.wm_attributes('-alpha', 0)   #Invisible
         self.tipwindow.wm_overrideredirect(1)
-        self.label = tk.Label(self.tipwindow, justify='left', bd=0, bg=palette('tooltipbg'), fg=palette('tooltipfg'), font=settings('font', 0.5))
+        self.label = tk.Label(self.tipwindow, justify='left', bd=0, bg=palette('tooltipbg'), fg=palette('tooltipfg'), font=setting('font', 0.5))
         self.label.pack(ipadx=1)
 
         #Threading
@@ -56,7 +55,7 @@ class ToolTipWindow(object):
         self.leave_event.set()
         self.enter_event.clear()
 
-    def CreateToolTip(self, widget, displayText):
+    def SetToolTip(self, widget, displayText):
         widget.bind('<Enter>', p(self.enter, widget, displayText))
         widget.bind('<Leave>', self.leave)
 
