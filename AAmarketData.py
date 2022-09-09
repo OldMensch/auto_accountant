@@ -1,5 +1,5 @@
 
-#from AA__start__ import *
+
 
 from AAmessageBox import MessageBox
 from AAlib import *
@@ -31,10 +31,10 @@ def startMarketDataLoops(mainPortREF, sandbox=False):
 def StockDataLoop(mainPortREF):
     global marketdatalib
     while True:
-        stockList = []   #creates a list of "tickers" or "symbols" or whatever you want to call them
-        for asset in list(PERM["assets"]):
-            if asset.split("z")[1] == "s":
-                stockList.append(asset.split("z")[0])
+        stockList = []   #creates a list of 'tickers' or 'symbols' or whatever you want to call them
+        for asset in list(PERM['assets']):
+            if asset.split('z')[1] == 's':
+                stockList.append(asset.split('z')[0])
 
         if len(stockList) == 0:    #No reason to update nothing!
             time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
@@ -57,41 +57,42 @@ def StockDataLoop(mainPortREF):
                 INVALID.append(stock)
         stockList = list(curr)  #Updates the list of all valid stocks after removing the invalid ones
         if len(INVALID) > 0:
-            invalidString = ""
+            invalidString = ''
             for badTicker in INVALID:
-                invalidString += badTicker + ", "
+                invalidString += badTicker + ', '
             invalidString = invalidString[:-2]
-            MessageBox(mainPortREF, "Yahoo Finance API Error", "The following stock tickers could not be identified: " + invalidString + ".")
+            MessageBox(mainPortREF, 'Yahoo Finance API Error', 'The following stock tickers could not be identified: ' + invalidString + '.')
 
-        raw_data = raw_data.get_historical_price_data(date_month, date_today, "daily")    #300ms
+        raw_data = raw_data.get_historical_price_data(date_month, date_today, 'daily')    #300ms
 
         for stock in stockList:
             #creates the initial dictionary ready for filling. This removes all the unnecessary data from curr[stock], leaving just the info we want in a universal format
             export = {
-                "marketCap" : curr[stock]["marketCap"],
-                "price" :  curr[stock]["regularMarketPrice"],
-                "volume24h" : curr[stock]["volume24Hr"],
+                'marketcap' : curr[stock]['marketCap'],
+                'price' :  curr[stock]['regularMarketPrice'],
+                'volume24h' : curr[stock]['volume24Hr'],
             }
             #historical data from yesterday or before all comes form the historical data thing
-            dataref = raw_data[stock]["prices"]
-            export["day%"] =   export["price"] / dataref[len(dataref) - 1]["close"] - 1   #Daily % change is always relative to the first ACTIVE trading day before today
-            export["month%"] = export["price"] / dataref[0]["close"] - 1                  #Monthly % change is always relative to the first ACTIVE trading day after a month ago
+            dataref = raw_data[stock]['prices']
+            export['day%'] =   export['price'] / dataref[len(dataref) - 1]['close'] - 1   #Daily % change is always relative to the first ACTIVE trading day before today
+            export['month%'] = export['price'] / dataref[0]['close'] - 1                  #Monthly % change is always relative to the first ACTIVE trading day after a month ago
             for i in range(len(dataref)):
-                date_hist = dataref[i]["formatted_date"]
+                date_hist = dataref[i]['formatted_date']
                 ddate_hist = datetime.date(datetime(int(date_hist[:4]), int(date_hist[5:7]), int(date_hist[8:])))
                 if ddate_hist == ddate_week:
-                    export["week%"] =  export["price"] / dataref[i]["close"] - 1
+                    export['week%'] =  export['price'] / dataref[i]['close'] - 1
                 elif ddate_hist > ddate_week:
-                    export["week%"] =  export["price"] / dataref[i]["close"] - 1
+                    export['week%'] =  export['price'] / dataref[i]['close'] - 1
                     break
             
-            marketdatalib[stock + "zs"] = export    #update the library which gets called to by the main portfolio
+            marketdatalib[stock + 'zs'] = export    #update the library which gets called to by the main portfolio
 
-            mainPortREF.metrics_ASSET(stock + "zs", False) #Updates summary info for all the relevant ledgers
-        mainPortREF.metrics_PORTFOLIO()                     #Updates the overall portfolio summary info
+            mainPortREF.market_metrics_ASSET(stock + 'zs', False) #Updates summary info for all the relevant ledgers
+        mainPortREF.market_metrics_PORTFOLIO()                     #Updates the overall portfolio summary info
+        mainPortREF.render(mainPortREF.asset, True)
 
         #Updates the timestamp for last update of the marketdatalib
-        marketdatalib["_timestamp"] = str(datetime.now())
+        marketdatalib['_timestamp'] = str(datetime.now())
         
         time.sleep(300) #Waits for five minutes after the load process has completed, before doing it all over again
 
@@ -105,12 +106,12 @@ def StockDataLoop(mainPortREF):
 def CryptoDataLoop(mainPortREF):
     global marketdatalib
     while True:
-        cryptoString = ""   #creates a comma-separates list of "tickers" or "symbols" or whatever you want to call them
-        for asset in list(PERM["assets"]):
-            if asset.split("z")[1] == "c":
-                cryptoString += asset.split("z")[0] + ","
+        cryptoString = ''   #creates a comma-separates list of 'tickers' or 'symbols' or whatever you want to call them
+        for asset in list(PERM['assets']):
+            if asset.split('z')[1] == 'c':
+                cryptoString += asset.split('z')[0] + ','
 
-        if cryptoString == "":    #No reason to update nothing!
+        if cryptoString == '':    #No reason to update nothing!
             time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
             continue
 
@@ -119,11 +120,11 @@ def CryptoDataLoop(mainPortREF):
 
         url = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest'
         parameters = {
-            "symbol": cryptoString
+            'symbol': cryptoString
         }
         headers = {
         'Accepts': 'application/json',
-        'X-CMC_PRO_API_KEY': '56db3614-f01f-4621-8bae-d13ce950904f',
+        'X-CMC_PRO_API_KEY': settings('CMCAPIkey'),
         }
 
         session = Session()
@@ -133,46 +134,47 @@ def CryptoDataLoop(mainPortREF):
             response = session.get(url, params=parameters)
             data = json.loads(response.text)
         except (ConnectionError, Timeout, TooManyRedirects) as e:
-            MessageBox(mainPortREF, "CoinMarketCap API Error", e)
-        if data != None and data["status"]["error_message"] != None:
-            errmsg = data["status"]["error_message"]
-            MessageBox(mainPortREF, "CoinMarketCap API Error", errmsg)
+            MessageBox(mainPortREF, 'CoinMarketCap API Error', e)
+        if data != None and data['status']['error_message'] != None:
+            errmsg = data['status']['error_message']
+            MessageBox(mainPortREF, 'CoinMarketCap API Error', errmsg)
 
             ###Removal of all the INVALID token tickers. All remaining valid tokens will still be updated
-            INVALID = errmsg.split("\"")[3].split(",")  #creates a list of all the invalid tokens
-            cryptoString += ","
+            INVALID = errmsg.split('\'')[3].split(',')  #creates a list of all the invalid tokens
+            cryptoString += ','
 
             for inv in INVALID:
-                cryptoString = cryptoString.replace(inv+",", "")
+                cryptoString = cryptoString.replace(inv+',', '')
 
-            if cryptoString == "":    #If all of the tokens are invalid, there is no reason to update nothing!
+            if cryptoString == '':    #If all of the tokens are invalid, there is no reason to update nothing!
                 time.sleep(120)      #Waits for 2 minutes
                 continue
 
             cryptoString = cryptoString[:-1]
 
             parameters = {
-                "symbol": cryptoString
+                'symbol': cryptoString
             }
 
             response = session.get(url, params=parameters)  #reloads 
             data = json.loads(response.text)
 
         if data != None:
-            for crypto in data["data"]:
-                marketdatalib[crypto + "zc"] =  {
-                    "marketCap" : data["data"][crypto]["quote"]["USD"]["market_cap"],
-                    "day%" : data["data"][crypto]["quote"]["USD"]["percent_change_24h"],
-                    "week%" : data["data"][crypto]["quote"]["USD"]["percent_change_7d"],
-                    "month%" : data["data"][crypto]["quote"]["USD"]["percent_change_30d"],
-                    "price" :  data["data"][crypto]["quote"]["USD"]["price"],
-                    "volume24h" : data["data"][crypto]["quote"]["USD"]["volume_24h"],
+            for crypto in data['data']:
+                marketdatalib[crypto + 'zc'] =  {
+                    'marketcap' :   str(data['data'][crypto]['quote']['USD']['market_cap']),
+                    'day%' :        str(data['data'][crypto]['quote']['USD']['percent_change_24h']/100),
+                    'week%' :       str(data['data'][crypto]['quote']['USD']['percent_change_7d']/100),
+                    'month%' :      str(data['data'][crypto]['quote']['USD']['percent_change_30d']/100),
+                    'price' :       str(data['data'][crypto]['quote']['USD']['price']),
+                    'volume24h' :   str(data['data'][crypto]['quote']['USD']['volume_24h']),
                 }
-                mainPortREF.metrics_ASSET(crypto + "zc", False) #Updates summary info for all the relevant ledgers
-            mainPortREF.metrics_PORTFOLIO()                      #Updates the overall portfolio summary info
+                mainPortREF.market_metrics_ASSET(crypto + 'zc', False) #Updates summary info for all the relevant ledgers NOTE!!! This cannot be simplified to just 'metrics'! This set of assets is a subset of 
+            mainPortREF.market_metrics_PORTFOLIO()                      #Updates the overall portfolio summary info
+            mainPortREF.render(mainPortREF.asset, True)
 
         #Updates the timestamp for last update of the marketdatalib
-        marketdatalib["_timestamp"] = str(datetime.now())
+        marketdatalib['_timestamp'] = str(datetime.now())
         
         time.sleep(300) #Waits for five minutes after the load process has completed, before doing it all over again
 
