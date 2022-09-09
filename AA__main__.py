@@ -32,10 +32,13 @@ class AutoAccountant(tk.Tk):
         self.sorted = []
         self.ToolTips = ToolTipWindow(self.get_mouse_pos)
         self.mouse_pos = (0,0)
+        #Sets the timezone to 
+        info_format_lib['date']['name'] = info_format_lib['date']['headername'] = info_format_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
         self.create_GUI()
         self.create_taskbar()
         self.create_MENU()
+
 
         self.online_event = threading.Event()
 
@@ -106,7 +109,6 @@ class AutoAccountant(tk.Tk):
         #'Settings' Tab
         self.TASKBAR['settings'] = tk.Menu(self, tearoff=0)
         self.TASKBAR['taskbar'].add_cascade(menu=self.TASKBAR['settings'], label='Settings')
-        #self.TASKBAR['settings'].add_command(label='Restore Default Settings', command=self.restoreDefaultSettings)
 
         def toggle_offline_mode():
             set_setting('offlineMode',not setting('offlineMode'))
@@ -120,10 +122,23 @@ class AutoAccountant(tk.Tk):
                 self.GUI['offlineIndicator'].forget() #Removes the offline indicator
 
         self.TASKBAR['settings'].values = {}
-
         self.TASKBAR['settings'].values['offlineMode'] = tk.BooleanVar(value=setting('offlineMode'))
+
         self.TASKBAR['settings'].add_checkbutton(label='Offline Mode', command=toggle_offline_mode, variable=self.TASKBAR['settings'].values['offlineMode'])
 
+        def set_timezone(tz:str):
+            set_setting('timezone', tz)                         # Change the timezone setting itself
+            for transaction in MAIN_PORTFOLIO.transactions():   # Recalculate the displayed ISO time on all of the transactions
+                transaction.calc_iso_date()
+            info_format_lib['date']['name'] = info_format_lib['date']['headername'] = info_format_lib['date']['name'].split('(')[0]+'('+tz+')'
+            self.render()   #Only have to re-render, since metrics is based on the UNIX time
+
+
+        self.TASKBAR['timezone'] = tk.Menu(self, tearoff=0)
+        self.TASKBAR['settings'].add_cascade(menu=self.TASKBAR['timezone'], label='Timezone')
+        self.TASKBAR['settings'].values['timezone'] = tk.StringVar(value='('+setting('timezone')+') '+timezones[setting('timezone')][0])
+        for tz in timezones:
+            self.TASKBAR['timezone'].add_radiobutton(label='('+tz+') '+timezones[tz][0], command=p(set_timezone, tz), variable=self.TASKBAR['settings'].values['timezone'])
 
         #'About' Tab
         self.TASKBAR['about'] = tk.Menu(self, tearoff=0)
@@ -448,7 +463,7 @@ class AutoAccountant(tk.Tk):
         if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
         self.GUI['GRID'].set_selection()
         if self.rendered[0] == 'portfolio': self.render(('asset',self.sorted[i].tickerclass()), True)
-        else:                               TransEditor(self, self.sorted[i].get_hash())
+        else:                               TransEditor(self, self.sorted[i])
     def _right_click_row(self, GRID_ROW1:int, GRID_ROW2:int, GRID_ROW3:int): # Opens up a little menu of stuff you can do to this asset/transaction
         #we've right clicked with a selection of multiple items
         if GRID_ROW2 != GRID_ROW3:
@@ -472,8 +487,8 @@ class AutoAccountant(tk.Tk):
                 m.add_command(label ='Delete ' + ticker, command=p(self.delete_selection, GRID_ROW1))
             else:
                 trans_title = item.date() + ' ' + item.prettyPrint('type')
-                m.add_command(label ='Edit ' + trans_title, command=p(TransEditor, self, item.get_hash()))
-                m.add_command(label ='Copy ' + trans_title, command=p(TransEditor, self, item.get_hash(), True))
+                m.add_command(label ='Edit ' + trans_title, command=p(TransEditor, self, item))
+                m.add_command(label ='Copy ' + trans_title, command=p(TransEditor, self, item, True))
                 m.add_command(label ='Delete ' + trans_title, command=p(self.delete_selection, GRID_ROW1))
                 if item.ERROR:
                     m.add_separator()
@@ -511,7 +526,6 @@ class AutoAccountant(tk.Tk):
         self.MENU['redo'] = tk.Button(self.GUI['menuFrame'], image=icons('redo'), bg=palette('entry'), command=p(self._ctrl_y, None))
 
         self.MENU['wallets'] = tk.Button(self.GUI['menuFrame'], text='Wallets',  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'), command=p(WalletManager, self))
-        self.MENU['addresses'] = tk.Button(self.GUI['menuFrame'], text='Addresses',  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'), command=p(AddressManager, self))
         self.MENU['profiles'] = tk.Button(self.GUI['menuFrame'], image=icons('profiles'),  bg=palette('entry'), fg=palette('entrycursor'), font=setting('font'),command=p(ProfileManager, self))
 
         #MENU RENDERING
@@ -525,7 +539,6 @@ class AutoAccountant(tk.Tk):
         self.MENU['redo']               .grid(column=5,row=0, sticky='NS', padx=(0,setting('font')[1]))
 
         self.MENU['wallets']            .grid(column=8,row=0, sticky='NS')
-        self.MENU['addresses']          .grid(column=9,row=0, sticky='NS', padx=(0,setting('font')[1]))
 
         self.MENU['profiles']           .grid(column=10,row=0, sticky='NS')
 
@@ -541,7 +554,6 @@ class AutoAccountant(tk.Tk):
             'redo':             'Redo last action',
 
             'wallets':          'Manage wallets',
-            'addresses':        'Manage addresses',
             'profiles':         'Manage filter profiles',
         }
         for button in self.MENU:
@@ -740,7 +752,7 @@ class AutoAccountant(tk.Tk):
         # MASS INFORMATION
         for data in ['price','value', 'marketcap', 'volume24h', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%']:
             info_format = info_format_lib[data]['format']
-            fg_color = asset.color(data)[0] #Returns the foreground color we want for this info bit, if it has one
+            fg_color = asset.color(data, ignoreError=True)[0] #Returns the foreground color we want for this info bit, if it has one
             if fg_color == None: fg_color = DEFCOLOR
             text1 = '• '+ info_format_lib[data]['name']+':\t\t\t\t'
             if data == 'price':
@@ -803,6 +815,8 @@ class AutoAccountant(tk.Tk):
         transfer_IN = []    #A list of all transfer_INs, chronologically ordered
         transfer_OUT = []   #A list of all transfer_OUTs, chronologically ordered
         for t in transactions:
+            if t.get('missing')[0]: continue    #Have to skip transfers missing data
+
             #For both case we assume there is an ERROR until we can resolve it.
             if t.type() == 'transfer_in':     
                 t.ERROR,t.ERR_MSG = True,'Failed to automatically find a '+t.get('gain_asset')[:-2]+' \'Transfer Out\' transaction that pairs with this \'Transfer In\'.'
@@ -816,7 +830,7 @@ class AutoAccountant(tk.Tk):
         for t_out in transfer_OUT:
             for t_in in transfer_IN: #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
-                if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.date(),t_out.date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
+                if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
                         #SUCCESS - We've paired this t_out with a t_in!
                         transfer_IN.remove(t_in) # Remove it from the transfer_IN list.
                         t_out._data['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
@@ -849,9 +863,6 @@ class AutoAccountant(tk.Tk):
                 holdings[asset][wallet] = gain_heap(accounting_method) 
 
         # STORE and DISBURSE QUANTITY - functions which add, or remove a 'gain', to the HOLDINGS data structure.
-        def store_quantity(hash:int, price:mpf, quantity:mpf, date:str, a:str, w:str):   #NOTE: Lag is ~45 ms for ~13779 stores, almost identical to performance of gain_heap itself
-            '''Adds specified gaining transaction to specified wallet.'''
-            holdings[a][w].store(hash, price, quantity, date)
         def disburse_quantity(t:Transaction, quantity:mpf, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
@@ -864,7 +875,7 @@ class AutoAccountant(tk.Tk):
             for gain in result[1]: #Result[1] is a list of gain objects that were just disbursed
                 cost_basis += gain._price*gain._quantity
                 if tax_report == '8949': tax_8949(t, gain, quantity)
-                if w2: store_quantity(gain._hash, gain._price, gain._quantity, gain._date, a, w2)   #Moves transfers into the other wallet
+                if w2: holdings[a][w2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
             return cost_basis
             
         def tax_8949(t:Transaction, gain:gain_obj, total_disburse:mpf):
@@ -873,7 +884,7 @@ class AutoAccountant(tk.Tk):
             ################################################################################################
             if zeroish_mpf(gain._quantity):     return
             if t.type() == 'transfer_out':  return 
-            store_date = MAIN_PORTFOLIO.transaction(gain._hash).date()  # Date of aquisition
+            store_date = MAIN_PORTFOLIO.transaction(gain._hash).date()  # Date of aquisition - note: we do this so we don't have to convert the gain's date from UNIX to ISO
             disburse_date = t.date()                                    # Date of disposition
             cost_basis = gain._price*gain._quantity
             #The 'post-fee-value' is the sales profit, after fees, weighted to the actual quantity sold 
@@ -894,7 +905,7 @@ class AutoAccountant(tk.Tk):
             if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
 
             #NOTE: Lag ~35ms for ~12000 transactions
-            HASH,DATE,TYPE,WALLET = t.get_hash(),t.date(),t.type(),t.wallet()
+            HASH,TYPE,WALLET = t.get_hash(),t.type(),t.wallet()
             WALLET2 = t.get('dest_wallet')
             LA,FA,GA = t.get('loss_asset'),         t.get('fee_asset'),         t.get('gain_asset')
             LQ,FQ,GQ = t.precise('loss_quantity'),  t.precise('fee_quantity'),  t.precise('gain_quantity')
@@ -907,7 +918,7 @@ class AutoAccountant(tk.Tk):
 
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
             # GAINS - We gain assets one way or another     #NOTE: Lag ~180ms, on average
-            if COST_BASIS_PRICE:    store_quantity(HASH, COST_BASIS_PRICE, GQ, DATE, GA, WALLET) # Purchase price includes fee
+            if COST_BASIS_PRICE:    holdings[GA][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
             # FEE LOSS - We lose assets because of a fee     #NOTE: Lag ~70ms, on average
             if FA:                  FEE_COST_BASIS =  disburse_quantity(t, FQ, FA, WALLET)
             # LOSS - We lose assets one way or another.
@@ -943,7 +954,7 @@ class AutoAccountant(tk.Tk):
             if TYPE in ['card_reward','income']:    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
                 metrics[GA]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
-                    TEMP['taxes']['1099-MISC'] = TEMP['taxes']['1099-MISC'].append( {'Date acquired':DATE, 'Value of assets':str(GV)}, ignore_index=True)
+                    TEMP['taxes']['1099-MISC'] = TEMP['taxes']['1099-MISC'].append( {'Date acquired':t.date(), 'Value of assets':str(GV)}, ignore_index=True)
 
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
 
@@ -1091,7 +1102,7 @@ class AutoAccountant(tk.Tk):
                 self.undoRedo[2] = (self.undoRedo[2]+1)%len(TEMP['undo'])
                 MAIN_PORTFOLIO.loadJSON(TEMP['undo'][nextAction])    #9ms to merely reload the data into memory
                 self.profile = ''   #name of the currently selected profile. Always starts with no filter applied.
-                self.metrics()  #2309 ms holy fuck
+                self.metrics()
                 self.render(sort=True)
     def undo_save(self):        #Create a savepoint which can be returned to
         '''Saves current portfolio in the memory should the user wish to undo their last modification'''

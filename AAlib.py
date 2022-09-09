@@ -1,15 +1,15 @@
 
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 import tkinter as tk
 
 from mpmath import mpf
 from mpmath import mp
-mp.dps = 50
-#mp.pretty = True
-absolute_precision = 1e-10
+mp.dps = 100
+#mp.pretty = True       #Rounds continuous decimals and makes MPFs look nicer... supposedly
+absolute_precision = 1e-80
 relative_precision = 1e-8
 def appxEq(x,y):    return abs(mpf(x)-mpf(y)) < absolute_precision
 def zeroish(x):     return abs(mpf(x)) < absolute_precision 
@@ -26,7 +26,7 @@ marketdatalib = {}
 TEMP = { #Universal temporary data dictionary
         'metrics' : {},
         'widgets' : {},
-        'undo' : [{'addresses' : {},'assets' : {},'transactions' : {},'wallets' : {}}]
+        'undo' : [{'assets' : {},'transactions' : {},'wallets' : {}}]
         } 
 TEMP['undo'].extend([0]*49)
 
@@ -71,23 +71,15 @@ def ttt(string:str='reset'):
 
 
 
-def acceptableTimeDiff(date1:str, date2:str, second_gap:int) -> bool:
+def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
     '''True if the dates are within second_gap of eachother. False otherwise.'''
-    d1 = datetime( int(date1[:4]), int(date1[5:7]), int(date1[8:10]), int(date1[11:13]), int(date1[14:16]), int(date1[17:19]) )
-    d2 = datetime( int(date2[:4]), int(date2[5:7]), int(date2[8:10]), int(date2[11:13]), int(date2[14:16]), int(date2[17:19]) )
-    s = timedelta(seconds=second_gap)
-    if d1 > d2 - s and d1 < d2 + s: return True
-    return False
+    return abs(unix_date2-unix_date1) < second_gap
 
-def acceptableDifference(value1:mpf, value2:mpf, percent_gap:float) -> bool:
+def acceptableDifference(v1:mpf, v2:mpf, percent_gap:float) -> bool:
     '''True if the values are within percent_gap of eachother. False otherwise.\n
         percent_gap is the maximum multiplier between value1 and value2, where 2 is a 1.02 multiplier, 0.5 is a 1.005 multiplier, and so on. '''
-    v1 = mpf(value1)
-    v2 = mpf(value2)
-    p = mpf(1+percent_gap/100)
-    if v1 < v2 * p and v1 > v2 / p: #If value1 is within percent_gap of value2, then it is acceptable
-        return True
-    return False
+    p = 1+percent_gap/100
+    return v1 < v2 * p and v1 > v2 / p #If value1 is within percent_gap of value2, then it is acceptable
 
 def format_general(data:str, style:str=None, charlimit:int=0) -> str:
     toReturn = MISSINGDATA
@@ -227,7 +219,7 @@ assetinfolib = [ #list of mutable info headers for the Portfolio rendering view
     'unrealized_profit_and_loss%','average_buy_price'
 ]
 
-transinfolib = ["date", "type", "wallet", "quantity", "value", "price"] #list of (currently immutable) info headers for the Portfolio rendering view
+transinfolib = ['date', 'type', 'wallet', 'quantity', 'value', 'price'] #list of (currently immutable) info headers for the Portfolio rendering view
 
 info_format_lib = {
     #Unique to portfolios
@@ -355,6 +347,55 @@ valid_transaction_data_lib = {
 }
 
 
+timezones = {
+    'GMT':  ('Greenwich Mean Time',                     0, 0),
+    'UTC':  ('Universal Coordinated Time',              0, 0),
+    'ECT':  ('European Central Time',                   1, 0),
+    'EET':  ('Eastern European Time',                   2, 0),
+    'ART':  ('(Arabic) Egypt Standard Time',            2, 0),
+    'EAT':  ('Eastern African Time',                    3, 0),
+    'MET':  ('Middle East Time',                        3, 30),
+    'NET':  ('Near East Time',                          4, 0),
+    'PLT':  ('Pakistan Lahore Time',                    5, 0),
+    'IST':  ('India Standard Time',                     5, 30),
+    'BST':  ('Bangladesh Standard Time',                6, 0),
+    'VST':  ('Vietnam Standard Time',                   7, 0),
+    'CTT':  ('China Taiwan Time',                       8, 0),
+    'JST':  ('Japan Standard Time',                     9, 0),
+    'ACT':  ('Australia Central Time',                  9, 30),
+    'AET':  ('Australia Eastern Time',                  10, 0),
+    'SST':  ('Solomon Standard Time',                   11, 0),
+    'NST':  ('New Zealand Standard Time',               12, 0),
+    'MIT':  ('Midway Islands Time',                     -11, 0),
+    'HST':  ('Hawaii Standard Time',                    -10, 0),
+    'AST':  ('Alaska Standard Time',                    -9, 0),
+    'PST':  ('Pacific Standard Time',                   -8, 0),
+    'PNT':  ('Phoenix Standard Time',                   -7, 0),
+    'MST':  ('Mountain Standard Time',                  -7, 0),
+    'CST':  ('Central Standard Time',                   -6, 0),
+    'EST':  ('Eastern Standard Time',                   -5, 0),
+    'IET':  ('Indiana Eastern Standard Time',           -5, 0),
+    'PRT':  ('Puerto Rico and US Virgin Islands Time',  -4, 0),
+    'CNT':  ('Canada Newfoundland Time',                -3, -30),
+    'AGT':  ('Argentina Standard Time',                 -3, 0),
+    'BET':  ('Brazil Eastern Time',                     -3, 0),
+    'CAT':  ('Central African Time',                    -1, 0),
+}
+
+def unix_to_local_timezone(unix_timestamp:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
+    date = datetime.utcfromtimestamp(unix_timestamp)   #Uses the UNIX timestamp, not the 'datetime' column
+    if tz_override: tz = timezones[tz_override]
+    else:           tz = timezones[setting('timezone')]
+    date += timedelta(hours=tz[1], minutes=tz[2])
+    return str(date).replace('-','/')
+def timezone_to_unix(iso_time:str, tz:str) -> int:
+    date = datetime( int(iso_time[:4]), int(iso_time[5:7]), int(iso_time[8:10]), int(iso_time[11:13]), int(iso_time[14:16]), int(iso_time[17:19]) )
+    tz = timezones[tz]
+    date -= timedelta(hours=tz[1], minutes=tz[2]) #We're going backwards here
+    return (date - datetime(1970, 1, 1)).total_seconds()
+    
+
+
 defsettingslib = { # A library containing all of the default settings
     'portHeight': 1080,
     'portWidth': 1920,
@@ -371,7 +412,8 @@ defsettingslib = { # A library containing all of the default settings
     'sort_trans': ['date', False],
     'CMCAPIkey': '',
     'accounting_method': 'hifo',
-    "base_currency": "USDzf",
+    'base_currency': 'USDzf',
+    'timezone': 'GMT',
 }
 settingslib = deepcopy(defsettingslib)
 

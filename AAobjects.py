@@ -7,18 +7,6 @@ import heapq
 from functools import partial as p
 
 
-class Address():
-    def __init__(self, address:str, wallet:str):
-        self._address = address
-        self._wallet = wallet
-        
-    #access functions
-    def address(self) -> str:  return self._address
-    def wallet(self) -> str:   return self._wallet
-
-    #JSON Function
-    def toJSON(self) -> dict:   return {'wallet':self._wallet}
-    
 class Wallet():
     def __init__(self, name:str, description:str=''):
         self._name = name
@@ -32,7 +20,7 @@ class Wallet():
     def toJSON(self) -> dict:   return {'description':self._description}
 
 class Transaction():
-    def __init__(self, date:str=None, type:str=None, wallet:str=None, description:str='', loss:tuple=(None,None,None), fee:tuple=(None,None,None), gain:tuple=(None,None,None)):
+    def __init__(self, unix_time:int=None, type:str=None, wallet:str=None, description:str='', loss:tuple=(None,None,None), fee:tuple=(None,None,None), gain:tuple=(None,None,None)):
 
         #Set to true for transfers that don't have a partner, and transfers with missing data. Stops metrics() short, and tells the renderer to color this RED
         self.ERROR =    False  
@@ -40,7 +28,7 @@ class Transaction():
 
         #Fully-encompassing data dictionary
         self._data = {
-            'date' :            date,
+            'date' :            unix_time,
             'type' :            type,
             'wallet' :          wallet,
             'description' :     description,
@@ -60,6 +48,7 @@ class Transaction():
             'dest_wallet':      None,
         }
         self._metrics = {
+            'date':             None,
             'loss_quantity' :   None,
             'fee_quantity' :    None,
             'gain_quantity' :   None,
@@ -81,6 +70,8 @@ class Transaction():
     #Pre-calculates useful information
     def recalculate(self):
         self.calc_hash()
+        try:    self.calc_iso_date()    #We try to calculate this, because otherwise, if a transaction is missing some data, it won't display its ISO date
+        except: pass
         self.calc_has_required_data()
         if self._data['missing'][0]:    return  # Don't continue performing calculations if we're missing data!
         self.calc_metrics()
@@ -90,16 +81,20 @@ class Transaction():
     def calc_has_required_data(self):
         missing = []
         #We assume that the transaction has a type
-        if self._data['fee_asset'] and not self._data['fee_quantity']:  missing.append('fee_quantity')
-        if self._data['fee_asset'] and not self._data['fee_price']:     missing.append('fee_price')
+        if self._data['fee_asset'] != None and self._data['fee_quantity'] == None:  missing.append('fee_quantity')
+        if self._data['fee_asset'] != None and self._data['fee_price'] == None:     missing.append('fee_price')
         for data in valid_transaction_data_lib[self._data['type']]:
             if data in ('fee_asset','fee_quantity','fee_price'):    continue    #Ignore fees, we already check them
             if self._data[data] == None:                            missing.append(data)
         self._data['missing'] = (len(missing)!=0,missing)
+    def calc_iso_date(self):
+        # DATE - convert the transaction's unix timestamp to ISO format, in your specified local timezone
+        self._metrics['date'] = unix_to_local_timezone(self._data['date'])
     def calc_metrics(self):
+        # PRECISE METRICS - we pre-convert the data strings to MPFs to significantly increase performance
         for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):
             d = self._data[data]
-            if d:   self._metrics[data] = mpf(d)
+            if d != None:   self._metrics[data] = mpf(d)
         
         # VALUES - the USD value of the quantity of the loss, fee, and gain at time of transaction
         TYPE = self._data['type']
@@ -135,8 +130,8 @@ class Transaction():
             if a == GA:
                 Q += GQ
                 V += GV
-            V = abs(V)
             if Q!=0 and V!=0:  P = V/Q 
+            V = abs(V)
 
             self._metrics['price'][a], self._metrics['quantity'][a], self._metrics['value'][a] = P,Q,V
 
@@ -147,10 +142,11 @@ class Transaction():
 
     #Comparison operator overrides
     def __eq__(self, __o: object) -> bool:
+        if type(__o) != Transaction: return True
         return self.get_hash() == __o.get_hash()
     def __lt__(self, __o: object) -> bool:
         # Basically, we try to sort transactions by date, unless they're the same, then we sort by type, unless that's also the same, then by wallet... and so on.
-        S,O = self.date(),__o.date()
+        S,O = self.unix_date(),__o.unix_date()
         if S!=O:   return S<O
         S,O = self.type(),__o.type()
         if S!=O:   return trans_priority[S]<trans_priority[O]
@@ -164,24 +160,21 @@ class Transaction():
         # if S and O and S!=O: return S<O
         return False
 
-    #Modification functions
-    def set_from_dict(self, dict:dict): #Allows for the creation of a transaction directly from a dictionary
-        self._data.update(dict)
-        self.recalculate()
-        return self
-
     #Access functions for basic information
-    def date(self) -> str:             return self._data['date']
-    def type(self) -> str:             return self._data['type']
-    def wallet(self) -> str:           return self._data['wallet']
-    def desc(self) -> str:             return self._data['description']
-    def get_hash(self) -> str:         return self._data['hash']
-    def price(self, asset:str) -> str:     return self._metrics['price'][asset]
-    def quantity(self, asset:str) -> str:  return self._metrics['quantity'][asset]
-    def value(self, asset:str) -> str:     return self._metrics['value'][asset]
+    def unix_date(self) -> int:         return self._data['date']
+    def date(self) -> str:              return self._metrics['date']
+    def type(self) -> str:              return self._data['type']
+    def wallet(self) -> str:            return self._data['wallet']
+    def desc(self) -> str:              return self._data['description']
+    def get_hash(self) -> int:          return self._data['hash']
+    def price(self, asset:str) -> str:      return self._metrics['price'][asset]
+    def quantity(self, asset:str) -> str:   return self._metrics['quantity'][asset]
+    def value(self, asset:str) -> str:      return self._metrics['value'][asset]
 
     def get(self, info:str, asset:str=None) -> str:    
-        if info in ['value','quantity','price']:         return self._metrics[info][asset]
+        if info in ['value','quantity','price']:    
+            try:    return self._metrics[info][asset]
+            except: return MISSINGDATA
         try:                        return self._data[info]
         except:                     return None #If we try to access non-existant data, its basically just "None"
     def precise(self, info:str) -> mpf:
@@ -189,7 +182,8 @@ class Transaction():
         except: return None
 
     def prettyPrint(self, info:str, asset:str=None) -> str:  #pretty printing for anything
-        if info == 'type':      return pretty_trans[self._data['type']]
+        if info == 'date':      return self.date()
+        elif info == 'type':    return pretty_trans[self._data['type']]
         elif info == 'missing':
             toReturn = 'Transaction is missing data: '
             for m in self._data[info][1]:   toReturn += '\'' + info_format_lib[m]['name'] + '\', '
@@ -219,6 +213,12 @@ class Transaction():
             if self._data[data] != None:  toReturn[data] = self._data[data]
         return toReturn #This is what we save to JSON for transactions.
    
+def trans_from_dict(dict:dict): #Allows for the creation of a transaction directly from a dictionary
+    new_trans = Transaction()
+    new_trans._data.update(dict)
+    new_trans.recalculate()
+    return new_trans
+
 class Asset():  
     def __init__(self, tickerclass:str, name:str, description:str=''):
         self.ERROR =        False  
@@ -303,7 +303,6 @@ class Asset():
 class Portfolio():
     def __init__(self):
         '''Initializes a Portfolio object, which contains dictionaries and lists of all the below:'''
-        self._addresses = {}
         self._assets = {}
         self._transactions = {}
         self._wallets = {}
@@ -321,41 +320,37 @@ class Portfolio():
     
     #Modification Functions
     def clear(self):
-        self._addresses.clear()
         self._assets.clear()
         self._transactions.clear()
         self._wallets.clear()
 
-    def add_address(self, address_obj:Address):
-        self._addresses[address_obj.address()] = address_obj
     def add_asset(self, asset_obj:Asset):
         self._assets[asset_obj.tickerclass()] = asset_obj
     def add_transaction(self, transaction_obj:Transaction):
-        if self.hasTransaction(transaction_obj.get_hash()): print('||WARNING|| Overwrote transaction with same hash.')
+        if self.hasTransaction(transaction_obj.get_hash()): print('||WARNING|| Overwrote transaction with same hash.', transaction_obj.get_hash())
         self._transactions[transaction_obj.get_hash()] = transaction_obj
         for a in set((transaction_obj.get('loss_asset'),transaction_obj.get('fee_asset'),transaction_obj.get('gain_asset'))):
             if a != None: self.asset(a).add_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
     def import_transaction(self, transaction_obj:Transaction): #Merges simultaneous fills from the same order
+        transaction_obj._fills = 1
         if not self.hasTransaction(transaction_obj.get_hash()): self.add_transaction(transaction_obj)
         else:
             other_trans = self.transaction(transaction_obj.get_hash())
+            other_trans._fills += 1
+            print('||INFO|| ' + other_trans.wallet() + ' transaction at time ' + other_trans.date() + ' had '+str(other_trans._fills)+' simultaneous fills. They were merged.')
             for part in ['loss','fee','gain']:
-                if transaction_obj.get(part+'_quantity') != None and other_trans.get(part+'_quantity') != None:
-                    old_quantity = other_trans.precise(part+'_quantity')
-                    new_quantity = transaction_obj.precise(part+'_quantity')
-                    merged_quantity = old_quantity + new_quantity
-                    merged_price = other_trans.get(part+'_price')
+                NQ,OQ = transaction_obj.precise(part+'_quantity'), other_trans.precise(part+'_quantity')
+                NP,OP = transaction_obj.precise(part+'_price'), other_trans.precise(part+'_price')
+                if NQ and OQ:
+                    merged_quantity = OQ + NQ
                     other_trans._data[part+'_quantity'] =   str(merged_quantity)
-                    other_trans._data[part+'_price'] =      str(merged_price)
-                if transaction_obj.get(part+'_price') != None and other_trans.get(part+'_price') != None:
-                    old_price = other_trans.precise(part+'_price')
-                    new_price = transaction_obj.precise(part+'_price')
-                    if not appxEqmpf(old_price, new_price):    merged_price = (old_quantity/merged_quantity*old_price)+(new_quantity/merged_quantity*new_price)
-                    other_trans._data[part+'_price'] =      str(merged_price)
+                if NP and OP and not appxEqmpf(OP, NP):
+                    other_trans._data[part+'_price'] = str((OQ/merged_quantity*OP)+(NQ/merged_quantity*NP)) #Weighted average of prices
+            other_trans.recalculate()
     def add_wallet(self, wallet_obj:Wallet):
         self._wallets[wallet_obj.name()] = wallet_obj
 
-    def delete_address(self, address:str):          self._addresses.pop(address)
+
     def delete_asset(self, asset:str):              self._assets.pop(asset)
     def delete_transaction(self, transaction_hash:int):  
         transaction_obj = self._transactions.pop(transaction_hash) #Removes transaction from the portfolio itself
@@ -375,36 +370,27 @@ class Portfolio():
 
         if not merge:   self.clear()
 
-        # ADDRESSES
-        if 'addresses' in JSON:
-            for address in JSON['addresses']:
-                if (merge and not overwrite) and self.hasAddress(address):    continue
-                a = JSON['addresses'][address]
-                self.add_address(Address(address, a['wallet']))
-        else: print('||WARNING|| Failed to find any addresses in JSON.')
         # ASSETS
         if 'assets' in JSON:
             for asset in JSON['assets']:
-                if (merge and not overwrite) and self.hasAsset(asset):    continue
+                if merge and not overwrite and self.hasAsset(asset):    continue
                 a = JSON['assets'][asset]
                 self.add_asset(Asset(asset, a['name'], a['description']))
         else: print('||WARNING|| Failed to find any assets in JSON.')
         # TRANSACTIONS - NOTE: Lag is ~230ms for ~4000 transactions
-        ttt('start')
         if 'transactions' in JSON:
             for t in JSON['transactions']:
                 try:
                     #Creates a rudimentary transaction, then fills in the data from the JSON. Bad data is cleared upon saving, not loading.
-                    trans = Transaction().set_from_dict(t)
-                    if merge and not overwrite and self.hasTransaction(trans.get_hash()):    continue     #Don't overwrite identical transactions
+                    trans = trans_from_dict(t)
+                    if merge and not overwrite and self.hasTransaction(trans.get_hash()): continue     #Don't overwrite identical transactions
                     self.add_transaction(trans) #45ms for ~4000 transactions
                 except:  print('||WARNING|| Transaction ' + t['date'] + ' failed to load.')
         else: print('||WARNING|| Failed to find any transactions in JSON.')
-        ttt('terminate')
         #WALLETS
         if 'wallets' in JSON:
             for wallet in JSON['wallets']:
-                if (merge and not overwrite) and self.hasWallet(wallet):    continue
+                if merge and not overwrite and self.hasWallet(wallet):    continue
                 w = JSON['wallets'][wallet]
                 self.add_wallet(Wallet(wallet, w['description']))
         else: print('||WARNING|| Failed to find any wallets in JSON.')
@@ -422,17 +408,15 @@ class Portfolio():
                         self.delete_transaction(transaction.get_hash()) #Delete the old erroneous transaction
                         for data in ['loss_asset','fee_asset','gain_asset']:    #Update all relevant tickers to the new ticker name
                             if data in newTrans and newTrans[data] == asset:    newTrans[data] = new_ticker
-                        self.add_transaction(Transaction().set_from_dict(newTrans)) #add the fixed transaction back in
+                        self.add_transaction(trans_from_dict(newTrans)) #add the fixed transaction back in
                 if len(self.asset(asset)._ledger) == 0:  self.delete_asset(asset)
 
     def toJSON(self) -> dict:
         toReturn = {
-            'addresses':{},
             'assets':{},
             'transactions':[],
             'wallets':{},
         }
-        for address in self.addresses():        toReturn['addresses']    [address.address()]   = address.toJSON()
         for asset in self.assets():             toReturn['assets']       [asset.tickerclass()] = asset.toJSON()
         for transaction in self.transactions(): toReturn['transactions'].append(transaction.toJSON())
         for wallet in self.wallets():           toReturn['wallets']      [wallet.name()]       = wallet.toJSON()
@@ -440,25 +424,21 @@ class Portfolio():
         return copy.deepcopy(toReturn) #TODO TODO TODO: Not sure if deepcopy is necessary here. Should test this. Might be needlessly inefficient.
     
     #Status functions
-    def isEmpty(self) -> bool:  return {} == self._addresses == self._assets == self._transactions == self._wallets
+    def isEmpty(self) -> bool:  return {} == self._assets == self._transactions == self._wallets
 
     def hasAsset(self, asset:str) -> bool:                  return asset in self._assets
     def hasTransaction(self, transaction:int) -> bool:      return transaction in self._transactions
-    def hasAddress(self, address:str) -> bool:              return address in self._addresses
     def hasWallet(self, wallet:str) -> bool:                return wallet in self._wallets
     
     #Access functions:
-    def address(self, address:str) -> Address:              return self._addresses[address]
     def asset(self, asset:str) -> Asset:                    return self._assets[asset]
     def transaction(self, transaction:int) -> Transaction:  return self._transactions[transaction]
     def wallet(self, wallet:str) -> Wallet:                 return self._wallets[wallet]
 
-    def addresses(self) -> list:                            return self._addresses.values()
     def assets(self) -> list:                               return self._assets.values()
     def transactions(self) -> list:                         return self._transactions.values()
     def wallets(self) -> list:                              return self._wallets.values()
 
-    def addresskeys(self) -> list:                          return self._addresses
     def assetkeys(self) -> list:                            return self._assets
     def walletkeys(self) -> list:                           return self._wallets
 
@@ -503,7 +483,6 @@ class gain_obj(): #A unit of assets aquired. Could be a purchase, gift_in, incom
         if self._accounting_method == 'fifo':   return self._date < __o._date   #"Smallest" element in the minheap is the oldest (least) date       #NOTE: Insertion is 20ms avg
         if self._accounting_method == 'lifo':   return self._date > __o._date   #"Smallest" element in the minheap is the newest (greatest) date    #NOTE: Insertion is 30ms avg
 
-
 class gain_heap(): #Sorts the gains depending on the accounting method chosen. HIFO, FIFO, LIFO. Uses a heap for maximum efficiency
     def __init__(self, accounting_method:str):
         self._heap = [] #Stores all gains with minimum at the top
@@ -517,6 +496,14 @@ class gain_heap(): #Sorts the gains depending on the accounting method chosen. H
             self._dict[hash] = new_gain                         #4ms for ~14000 stores
         else:
             self._dict[hash]._quantity += quantity          #~1ms for ~14000 stores (few will fit this category)
+
+    def store_direct(self, new_gain:gain_obj):
+        hash = new_gain._hash
+        if hash not in self._dict:  #Re-unite same-source gains, if possible, to be a little more efficient, and for less discombobulated tax reports
+            heapq.heappush(self._heap, new_gain)                #25ms for ~14000 stores
+            self._dict[hash] = new_gain                         #4ms for ~14000 stores
+        else:
+            self._dict[hash]._quantity += new_gain._quantity          #~1ms for ~14000 stores (few will fit this category)
 
     def disburse(self, quantity:mpf): #Removes quantity, returns list of the gains which were sold #NOTE: 30ms on avg for 231 disbursals
         

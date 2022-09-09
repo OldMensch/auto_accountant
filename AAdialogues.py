@@ -123,12 +123,12 @@ class AssetEditor(Dialogue):    #For editing an asset's name, title, class, and 
         self.close()
 
 class TransEditor(Dialogue):    #The most important, and most complex editor. For editing transactions' date, type, wallet, second wallet, tokens, price, usd, and description.
-    def __init__(self, upper, transaction='', copy=False):
-        if transaction == '' or copy:   self.t = ''
-        else:                           self.t = MAIN_PORTFOLIO.transaction(transaction)
+    def __init__(self, upper, transaction:Transaction=None, copy=False):
+        if not transaction or copy:     self.t = None
+        else:                           self.t = transaction
 
         # DIALOGUE INITIALIZATION
-        if transaction == '':   super().__init__(upper, 'Create Transaction')
+        if not transaction:     super().__init__(upper, 'Create Transaction')
         elif copy:              super().__init__(upper, 'Edit Copied Transaction')
         else:                   super().__init__(upper, 'Edit Transaction')
 
@@ -136,15 +136,8 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
 
         # LABELS AND ENTRY BOXES - all containing their default inputs
         self.add_label(0,0,'',rowspan=3)  #Empty label for decor purposes only
-        self.add_label(1,0,'Date',columnspan=2)
-        self.ENTRIES['date'] = self.add_entry(1, 1, # default datetime is... right now.
-                str(datetime.now())[0:4]+'/'
-                +str(datetime.now())[5:7]+'/'
-                +str(datetime.now())[8:10]+' '
-                +str(datetime.now())[11:13]+':'
-                +str(datetime.now())[14:16]+':'
-                +str(datetime.now())[17:19],
-                width=24, format='date',columnspan=2)
+        self.add_label(1,0,'Date (' + setting('timezone') + ')',columnspan=2)
+        self.ENTRIES['date'] = self.add_entry(1, 1, str(datetime.now()).split('.')[0].replace('-','/'), width=24, format='date',columnspan=2)
         self.add_label(3,0,'Type')
         self.ENTRIES['type'] =  self.add_dropdown_list(3, 1, pretty_trans.values(), ' -TYPE- ', selectCommand=self.select_type)
         self.add_label(4,0,'Wallet')
@@ -171,19 +164,20 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         self.ENTRIES['description'] = self.add_entry(1,6,'', height=8, format='description', columnspan=4)
 
         # ENTRY BOX DATA - if editing, overwrites entry boxes with transaction data
-        if transaction != '':
-            t_obj = MAIN_PORTFOLIO.transaction(transaction)
-            for data in valid_transaction_data_lib[t_obj.type()]:
-                tdata = t_obj.get(data)
+        if transaction:
+            for data in valid_transaction_data_lib[transaction.type()]:
+                tdata = transaction.get(data)
                 if tdata == None:    continue       #Ignores missing data. Usually data is missing to save space in JSON.
                 
                 #Update entry box with known data.
-                if data[-6:] == '_asset':
+                if data == 'date':
+                    self.ENTRIES[data].set(unix_to_local_timezone(tdata))
+                elif data == 'type':
+                    self.ENTRIES[data].set(pretty_trans[tdata])
+                elif data[-6:] == '_asset':
                     a = MAIN_PORTFOLIO.asset(tdata)
                     self.ENTRIES[data].set(a.ticker())                              #Set asset ticker entry to ticker
                     self.ENTRIES[data[:-6]+'_class'].set(a.prettyPrint('class'))    #Set asset class dropdown to class
-                elif data == 'type':
-                    self.ENTRIES[data].set(pretty_trans[tdata])
                 else:
                     self.ENTRIES[data].set(str(tdata))
 
@@ -195,11 +189,11 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         #Menu buttons
         self.add_menu_button('Cancel', command=self.close)
         self.add_menu_button('Save', '#0088ff', command=self.save)
-        if transaction != '' and not copy:   self.add_menu_button('Delete', "#ff0000", command=self.delete)
+        if transaction and not copy:   self.add_menu_button('Delete', "#ff0000", command=self.delete)
 
         #Runs 'select_type' to appropriately preset the color and existing entry boxes/labels, when editing an existing transaction
-        if transaction == '':   self.select_type(self.ENTRIES['type'].defaultItem)
-        else:                   self.select_type(pretty_trans[t_obj.type()])
+        if not transaction:     self.select_type(self.ENTRIES['type'].defaultItem)
+        else:                   self.select_type(pretty_trans[transaction.type()])
         
     
     def auto_purchase_sale_price(self): #Updates purchase/sale price when loss_quantity changes for a purchase/sale
@@ -266,17 +260,25 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         TO_SAVE = {}
         for entry in self.ENTRIES:
             data = self.ENTRIES[entry].entry()
-            if entry[-6:] == '_asset':  TO_SAVE[entry] = self.ENTRIES[entry].entry().upper() + 'z' + uglyClass(self.ENTRIES[entry[:-6]+'_class'].entry())
+            if entry[-6:] == '_asset':  
+                try:    TO_SAVE[entry] = data.upper() + 'z' + uglyClass(self.ENTRIES[entry[:-6]+'_class'].entry())
+                except: TO_SAVE[entry] = None
             elif entry == 'type':       TO_SAVE['type'] = uglyTrans(self.ENTRIES['type'].entry())
-            else:                       TO_SAVE[entry] = self.ENTRIES[entry].entry()
+            else:                       TO_SAVE[entry] = data
 
         #If 'no fee' was selected, cull all other fee data.
         if self.ENTRIES['fee_class'].entry() == self.ENTRIES['fee_class'].defaultItem:
             TO_SAVE['fee_asset'] =    None
             TO_SAVE['fee_quantity'] = None
             TO_SAVE['fee_price'] =    None
+        
+        #For now, USDzf is the default currency, and is just converted to "None", as well as its corresponding price
+        for asset in ('loss','fee','gain'):
+            if TO_SAVE[asset+'_asset'] == 'USDzf':  TO_SAVE[asset+'_asset'] = None
+            if TO_SAVE[asset+'_asset'] == None:     TO_SAVE[asset+'_price'] = None
+
         # Short quick-access variables
-        DATE,TYPE = TO_SAVE['date'],TO_SAVE['type']
+        TYPE = TO_SAVE['type']
         LA,LQ,LP = TO_SAVE['loss_asset'],TO_SAVE['loss_quantity'],TO_SAVE['loss_price']
         FA,FQ,FP = TO_SAVE['fee_asset'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
         GA,GQ,GP = TO_SAVE['gain_asset'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
@@ -290,27 +292,32 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         if self.ENTRIES['type'].entry() == self.ENTRIES['type'].defaultItem:
             Message(self, 'ERROR!', 'No transaction type was selected.')    #Message and return here otherwise code breaks w/o a type selected
             return
-        #valid datetime format?
-        try:        datetime( int(DATE[:4]), int(DATE[5:7]), int(DATE[8:10]), int(DATE[11:13]), int(DATE[14:16]), int(DATE[17:19]) )
+        #valid datetime format? - NOTE: This also converts the date to unix time
+        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'], setting('timezone'))
         except:     error = 'Invalid date!'
         #selected a wallet? (start out with nothing selected)
         if TO_SAVE['wallet'] == self.ENTRIES['wallet'].defaultItem: error = 'No wallet was selected.'
 
         valids = valid_transaction_data_lib[TYPE]
 
+        ######################################################
+        # NOTE: Currently, checking for missing price input is ignored
+        # We allow the user to automatically get price data from YahooFinance, if they don't know it
+        ######################################################
+
         # Valid loss?
         if 'loss_asset' in valids and    not MAIN_PORTFOLIO.hasAsset(LA): error = 'Loss asset does not exist in portfolio.'
         if 'loss_quantity' in valids and zeroish(LQ):                     error = 'Loss quantity must be non-zero.'
-        if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.'
+        #if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.'
         # Valid fee?
         if FA: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
-            if                'fee_asset' in valids  and   not MAIN_PORTFOLIO.hasAsset(FA): error = 'Fee asset does not exist in portfolio.'
+            if        'fee_asset' in valids  and   not MAIN_PORTFOLIO.hasAsset(FA): error = 'Fee asset does not exist in portfolio.'
             if FQ and 'fee_quantity' in valids and zeroish(FQ):                     error = 'Fee quantity must be non-zero.'
-            if FP and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
+            #if FP and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
         # Valid gain?
         if 'gain_asset' in valids and    not MAIN_PORTFOLIO.hasAsset(GA): error = 'Gain asset does not exist in portfolio.'
         if 'gain_quantity' in valids and zeroish(GQ):                     error = 'Gain quantity must be non-zero.'
-        if 'gain_price' in valids and    zeroish(GP):                     error = 'Gain price must be non-zero.'
+        #if 'gain_price' in valids and    zeroish(GP):                     error = 'Gain price must be non-zero.'
 
         # If loss/fee asset identical, or fee/gain asset identical, then the loss/fee or fee/gain price MUST be identical
         if 'loss_price' in valids and FA and LA==FA and not appxEq(LP,FP): error = 'If the loss and fee assets are the same, their price must be the same.'
@@ -327,16 +334,21 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         # TRANSACTION SAVING AND OVERWRITING
         #==============================
         #Creates the new transaction or overwrites the old one
-        new_trans = Transaction().set_from_dict(TO_SAVE)
+        new_trans = trans_from_dict(TO_SAVE)
+        NEWHASH = new_trans.get_hash()
+        OLDHASH = None
+        if self.t:    OLDHASH = self.t.get_hash()
 
         #transaction will be unique?
-        if (self.t == '' or new_trans.get_hash() != self.t.get_hash()) and MAIN_PORTFOLIO.hasTransaction(new_trans.get_hash()):
+        has_hash = MAIN_PORTFOLIO.hasTransaction(NEWHASH)
+        if (not self.t and has_hash) or (NEWHASH != OLDHASH and has_hash):
             Message(self, 'ERROR!', 'This is too similar to an existing transaction!')
             return
 
-        MAIN_PORTFOLIO.add_transaction(new_trans)               # Add the new transaction
-        if self.t != '' and new_trans.get_hash() != self.t.get_hash():
-            MAIN_PORTFOLIO.delete_transaction(self.t.get_hash())    # Delete the old transaction if it's hash will have changed
+        print('||INFO|| Saved transaction. ')
+        MAIN_PORTFOLIO.add_transaction(new_trans)                   # Add the new transaction, or overwrite the old
+        if OLDHASH != None and NEWHASH != OLDHASH:
+            MAIN_PORTFOLIO.delete_transaction(OLDHASH)    # Delete the old transaction if it's hash will have changed
             
         self.upper.undo_save()
         self.upper.metrics()
@@ -344,72 +356,6 @@ class TransEditor(Dialogue):    #The most important, and most complex editor. Fo
         self.close()
 
 
-class AddressManager(Dialogue): #For selecting addresses to edit
-    '''Creates a small window for selecting addresses to edit, or creating new addresses'''
-    def __init__(self, upper):
-        super().__init__(upper, 'Manage Addresses')
-        self.LIST_addresses = self.add_selection_list(0, 0, MAIN_PORTFOLIO.addresskeys(), False, False, width=24, truncate=True, button_command=self.edit_address)
-        self.add_menu_button('Cancel', command=self.close)
-        self.add_menu_button('+ Address', palette('purchase'), '#000000', command=p(AddressEditor, self))
-        self.center_dialogue()
-    
-    def edit_address(self, item, selectionList): #Command executed when button is pressed in the manager
-        AddressEditor(self, item)
-
-    def refresh_addresses(self):
-        self.LIST_addresses.update_items(MAIN_PORTFOLIO.addresskeys())
-
-class AddressEditor(Dialogue): #For editing Addresses
-    '''Creates an address editing window, with master walletEditor \'walletEditor\', target wallet address list in MAIN_PORTFOLIO \'target\', and if editing an old address, address \'address\''''
-    def __init__(self, addressManager, address=''):
-        self.address = address
-        if address == '':   
-            super().__init__(addressManager, 'Create Address')
-            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, MAIN_PORTFOLIO.walletkeys(), '-SELECT WALLET-')
-        else:               
-            super().__init__(addressManager, 'Edit Address')
-            self.DROPDOWN_wallets = self.add_dropdown_list(0, 1, MAIN_PORTFOLIO.walletkeys(), '-SELECT WALLET-', MAIN_PORTFOLIO.address(address).wallet())
-        self.ENTRY_address = self.add_entry(0, 0, address, width=52, charLimit=52)
-        self.add_menu_button('Cancel', command=self.close)
-        self.add_menu_button('Save', '#0088ff', command=self.save)
-        if address != '': self.add_menu_button('Delete', "#ff0000", command=self.delete)
-        self.center_dialogue()
-
-    def delete(self):
-        MAIN_PORTFOLIO.delete_address(self.address) #remove the old address
-        self.upper.refresh_addresses()
-        self.upper.upper.undo_save()
-        self.close()
-
-    def save(self):
-        ADDRESS = self.ENTRY_address.entry()
-        WALLET = self.DROPDOWN_wallets.entry()
-        # CHECKS
-        #==============================
-        #Name isn't an empty string?
-        if ADDRESS == '':
-            Message(self, 'ERROR!', 'Must enter something!')
-            return
-        #new address will be unique?
-        if MAIN_PORTFOLIO.hasAddress(ADDRESS):
-            Message(self, 'ERROR!', 'This address already exists!')
-            return
-        #Selected a wallet?
-        if WALLET == self.DROPDOWN_wallets.defaultItem:
-            Message(self, 'ERROR!', 'Must select a wallet!')
-            return
-
-        #ADDRESS SAVING
-        #==============================
-        MAIN_PORTFOLIO.add_address(Address(ADDRESS, WALLET))
-        #If we've renamed an address, delete the old one.
-        if self.address != '' and self.address != ADDRESS:
-            MAIN_PORTFOLIO.delete_address(self.address)
-
-        self.upper.refresh_addresses()
-        self.upper.upper.undo_save()
-        self.close()
-    
 
 class WalletManager(Dialogue): #For selecting wallets to edit
     '''Creates a small window for selecting wallets to edit, or creating new wallets'''
@@ -453,7 +399,6 @@ class WalletEditor(Dialogue): #For editing Wallets
                 return
 
         MAIN_PORTFOLIO.delete_wallet(self.wallet)  #destroy the old wallet
-        self.updateAddresses() #If we delete a wallet w/ attached addresses, delete those addresses
         #Don't need to recalculate metrics or rerender AA, since you can only delete wallets if they're not in use
         self.upper.refresh_wallets()
         self.upper.upper.undo_save()
@@ -480,13 +425,12 @@ class WalletEditor(Dialogue): #For editing Wallets
         if self.wallet not in ['', NAME]:   #WALLET RE-NAMED
             #destroy the old wallet
             MAIN_PORTFOLIO.delete_wallet(self.wallet) 
-            self.updateAddresses(NAME)  
             for t in list(MAIN_PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
                 if t.wallet() == self.wallet:      
                     new_trans = t.toJSON()
                     MAIN_PORTFOLIO.delete_transaction(t.get_hash()) #Changing the wallet name changes the transactions HASH, so we have to remove and re-add it
                     new_trans['wallet'] = NAME 
-                    MAIN_PORTFOLIO.add_transaction(Transaction().set_from_dict(new_trans))
+                    MAIN_PORTFOLIO.add_transaction(trans_from_dict(new_trans))
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()
@@ -496,15 +440,8 @@ class WalletEditor(Dialogue): #For editing Wallets
         self.upper.upper.undo_save()
         self.close()
 
-    def updateAddresses(self, newWalletName=None):
-        '''If a wallet name is modified, or a wallet is deleted, modifies or deletes addresses accordingly'''
-        for address in MAIN_PORTFOLIO.addresses():
-            if address.wallet() == self.wallet:
-                if newWalletName == None:   MAIN_PORTFOLIO.delete_address(address) #If this address's corresponding wallet has been deleted, delete it too
-                else:                       address._wallet = newWalletName #Otherwise we just renamed it, just rename it in the address object.
 
-
-class ImportationDialogue(Dialogue): #For selecting addresses to edit
+class ImportationDialogue(Dialogue): #For selecting wallets to import transactions to
     '''Allows user to specify one or two wallets which transactions will be imported to, for Gemini, Gemini Earn, Coinbase, etc.'''
     def __init__(self, upper, continue_command, wallet_name):
         super().__init__(upper, 'Manage Addresses')

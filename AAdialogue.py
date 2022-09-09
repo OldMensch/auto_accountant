@@ -6,21 +6,6 @@ import datetime
 from AAlib import *
 
 
-
-#This is the superclass for dialogue boxes for Auto-Accountant. It is used by:
-# Address Manager       |   Selecting addresses to edit
-# Address Editor        |   New address, Editing addresses associated with wallets (Used by the IMPORT functions to automatically figure out where assets come from and go to)
-# Asset Editor          |   New Asset, Editing assets' Ticker, Name, Class, Description
-# Message Box           |   Displaying Text, save/save and close/cancel/delete/ok operations
-# Profile Editor        |   New/Deleting profiles, Editing name of a profile
-# Profile Manager       |   Creating new profiles, 
-# Transaction Editor    |   New Transaction, editing various transaction info
-# Wallet Editor         |   New wallet, Editing wallet name/description
-# Wallet Manager        |   Selecting wallets to edit
-
-
-
-
 class Dialogue(tk.Toplevel):
     def __init__(self, upper, title):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 
         '''The generalized dialogue superclass for Auto-Accountant'''
