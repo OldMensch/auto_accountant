@@ -70,9 +70,10 @@ def palette_accentless():    # uses blacks/grays of Windows file explorer for ma
 
 
 def calc_palette(style:str=''): # Creates and returns the palette to overwrite qdarkstyle with
-    if style == 'file_explorer': return palette_file_explorer()
-    elif style == 'accentless': return palette_accentless()
-    else:   return palette_qdarkstyle()
+    match style:
+        case 'file_explorer':   return palette_file_explorer()
+        case 'accentless':      return palette_accentless()
+        case other:             return palette_qdarkstyle()
     
 UNIVERSAL_PALETTE = calc_palette('accentless')
 

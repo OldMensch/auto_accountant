@@ -16,7 +16,7 @@ class Message2(Dialog): #Simple text popup, can add text with colors to it
     def __init__(self, upper, title, message, tabStopWidth=None):
         super().__init__(upper, title)
         availableSpace = QDesktopWidget().availableGeometry()
-        self.setFixedSize(availableSpace.width()*.5, availableSpace.height()*.8)
+        self.setFixedSize(availableSpace.width()*.70, availableSpace.height()*.8)
         self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'))
         if tabStopWidth: self.text.setTabStopWidth(tabStopWidth)
         self.add_menu_button('Ok', self.close)
@@ -203,16 +203,17 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
             TYPE = uglyTrans(self.ENTRIES['type'].entry())
             LQ = Decimal(self.ENTRIES['loss_quantity'].entry())
             GQ = Decimal(self.ENTRIES['gain_quantity'].entry())
-            if TYPE == 'purchase':
-                self.ENTRIES['gain_price'].set(str(LQ/GQ))
-                self.ENTRIES['gain_price'].setCursorPosition(0)
-            elif TYPE == 'sale':
-                self.ENTRIES['loss_price'].set(str(GQ/LQ))
-                self.ENTRIES['loss_price'].setCursorPosition(0)
-            elif TYPE == 'trade':
-                LP = Decimal(self.ENTRIES['loss_price'].entry())
-                self.ENTRIES['gain_price'].set(str(LQ*LP/GQ))
-                self.ENTRIES['gain_price'].setCursorPosition(0)
+            match TYPE:
+                case 'purchase':
+                    self.ENTRIES['gain_price'].set(str(LQ/GQ))
+                    self.ENTRIES['gain_price'].setCursorPosition(0)
+                case 'sale':
+                    self.ENTRIES['loss_price'].set(str(GQ/LQ))
+                    self.ENTRIES['loss_price'].setCursorPosition(0)
+                case 'trade':
+                    LP = Decimal(self.ENTRIES['loss_price'].entry())
+                    self.ENTRIES['gain_price'].set(str(LQ*LP/GQ))
+                    self.ENTRIES['gain_price'].setCursorPosition(0)
         except: return
 
     def select_type(self, selection):
@@ -290,10 +291,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
             Message(self, 'ERROR!', 'No transaction type was selected.')    #Message and return here otherwise code breaks w/o a type selected
             return
         #valid datetime format? - NOTE: This also converts the date to unix time
-        try:        
-            print(TO_SAVE['date'])
-            TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
-            print(TO_SAVE['date'],'\n\n')
+        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
         except:     error = 'Invalid date!'
         #selected a wallet? (start out with nothing selected)
         if self.ENTRIES['wallet'].isDefault(): error = 'No wallet was selected.'
@@ -340,8 +338,10 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         if self.t:    OLDHASH = self.t.get_hash()
 
         #transaction will be unique?
+        #transaction already exists if: 
+        #   hash already in transactions, and we're not just saving an unmodified transaction over itself
         has_hash = MAIN_PORTFOLIO.hasTransaction(NEWHASH)
-        if (not self.t and has_hash) or (NEWHASH != OLDHASH and has_hash):
+        if has_hash and not (self.t and NEWHASH == OLDHASH):
             Message(self, 'ERROR!', 'This is too similar to an existing transaction!')
             return
 
@@ -407,10 +407,13 @@ class WalletEditor(Dialog): #For editing Wallets
     def save(self):
         NAME = self.ENTRY_name.entry()
         DESC = self.ENTRY_desc.entry()
+
+        new_wallet = Wallet(NAME, DESC)
+
         # CHECKS
         #==============================
         #new ticker will be unique?
-        if MAIN_PORTFOLIO.hasWallet(NAME) and NAME != self.wallet:
+        if MAIN_PORTFOLIO.hasWallet(new_wallet.get_hash()) and NAME != self.wallet:
             Message(self, 'ERROR!', 'A wallet already exists with this name!')
             return
         #Name isn't an empty string?
@@ -420,7 +423,7 @@ class WalletEditor(Dialog): #For editing Wallets
 
         #WALLET SAVING AND OVERWRITING
         #==============================
-        MAIN_PORTFOLIO.add_wallet(Wallet(NAME, DESC))   #Creates the new wallet, or overwrites the existing one's description
+        MAIN_PORTFOLIO.add_wallet(new_wallet)   #Creates the new wallet, or overwrites the existing one's description
 
         if self.wallet not in ('', NAME):   #WALLET RE-NAMED
             #destroy the old wallet

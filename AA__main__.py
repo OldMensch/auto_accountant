@@ -165,15 +165,15 @@ class AutoAccountant(QMainWindow):
         about = self.TASKBAR['about'] = QMenu('About')
         taskbar.addMenu(about)
         about.addAction('MIT License', self.copyright)
-
+        
         #'Info' Tab
         infomenu = self.TASKBAR['info'] = QMenu('Info')
         taskbar.addMenu(infomenu)
         
         self.infoactions = {
-            info:QAction(info_format_lib[info]['name'], parent=infomenu, triggered=p(self.toggle_header, info), checkable=True, checked=(info in setting('header_portfolio'))) for info in assetinfolib
+            info:QAction(info_format_lib[info]['name'], parent=infomenu, triggered=p(self.toggle_header, info), checkable=True, checked=info in setting('header_portfolio')) for info in assetinfolib
             }
-        for action in self.infoactions:   infomenu.addAction(action)
+        for action in self.infoactions.values():   infomenu.addAction(action)
 
         #'Taxes' Tab
         taxes = self.TASKBAR['taxes'] = QMenu('Taxes')
@@ -485,20 +485,22 @@ class AutoAccountant(QMainWindow):
         if self.rendered[0] == 'asset':  return  #There is no menu for the transactions ledger view
         info = setting('header_portfolio')[col]
         m = QMenu(parent=self)
-        if col != 0:                                      m.addAction('Move Left',          p(self.move_header, info, 'left'))
-        if col != len(setting('header_portfolio'))-1:     m.addAction('Move Right',         p(self.move_header, info, 'right'))
-        if col != 0:                                      m.addAction('Move to Beginning',  p(self.move_header, info, 'beginning'))
-        if col != len(setting('header_portfolio'))-1:     m.addAction('Move to End',        p(self.move_header, info, 'end'))
+        if col != 0:                                      
+            m.addAction('Move to Beginning',  p(self.move_header, info, 'beginning'))
+            m.addAction('Move Left',          p(self.move_header, info, 'left'))
+        if col != len(setting('header_portfolio'))-1:     
+            m.addAction('Move Right',         p(self.move_header, info, 'right'))
+            m.addAction('Move to End',        p(self.move_header, info, 'end'))
         m.addSeparator()
         m.addAction('Hide ' + info_format_lib[info]['name'], self.infoactions[info].trigger)
         m.exec_(event.globalPos())
     def move_header(self, info, shift='beginning'):
-        if   shift == 'beginning':  i = 0
-        elif shift == 'right':      i = setting('header_portfolio').index(info) + 1
-        elif shift == 'left':       i = setting('header_portfolio').index(info) - 1
-        elif shift == 'end':        i = len(setting('header_portfolio'))
-        else:   # We've dragged and dropped a header onto this one
-            i = setting('header_portfolio').index(shift)
+        match shift:
+            case 'beginning':   i = 0
+            case 'right':       i = setting('header_portfolio').index(info) + 1
+            case 'left':        i = setting('header_portfolio').index(info) - 1
+            case 'end':         i = len(setting('header_portfolio'))
+            case other:         i = setting('header_portfolio').index(shift)    # We've dragged and dropped a header onto this one
         new = setting('header_portfolio')
         new.remove(info)
         new.insert(i, info)
@@ -682,8 +684,9 @@ class AutoAccountant(QMainWindow):
         textbox = self.GUI['info_pane']
         toDisplay = '<meta name="qrichtext" content="1" />'
         
-        for info in ('value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
+        for info in ('price', 'value','day%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             if self.rendered[0] == 'portfolio':
+                if info == 'price': continue # Continues on if it's the spot price: this is only relevant to asset info_panes, not the overall portfolio
                 formatted_info = list(MAIN_PORTFOLIO.pretty(info))
             else:
                 formatted_info = list(MAIN_PORTFOLIO.asset(self.rendered[1]).pretty(info))    
@@ -700,25 +703,25 @@ class AutoAccountant(QMainWindow):
     def set_sort(self, col:int): #Sets the sorting mode, sorts the assets by it, then rerenders everything
         if self.rendered[0] == 'portfolio':
             info = setting('header_portfolio')[col]
-            if setting('sort_asset')[0] == info:    set_setting('sort_asset',[info, not setting('sort_asset')[1]])
-            else:                                   set_setting('sort_asset',[info, False])
+            if setting('sort_portfolio')[0] == info:    set_setting('sort_portfolio',[info, not setting('sort_portfolio')[1]])
+            else:                                   set_setting('sort_portfolio',[info, False])
         else:
             info = setting('header_asset')[col]
-            if setting('sort_trans')[0] == info:    set_setting('sort_trans',[info, not setting('sort_trans')[1]])
-            else:                                   set_setting('sort_trans',[info, False])
+            if setting('sort_asset')[0] == info:    set_setting('sort_asset',[info, not setting('sort_asset')[1]])
+            else:                                   set_setting('sort_asset',[info, False])
         self.render(sort=True)
     def sort(self): #Sorts the assets or transactions by the metric defined in settings #NOTE: 7ms at worst for ~900 transactions on one ledger
         '''Sorts the assets or transactions by the metric defined in settings'''
         if self.rendered[0] == 'portfolio':  #Assets
-            info = setting('sort_asset')[0]    #The info we're sorting by
-            reverse = setting('sort_asset')[1] #Whether or not it is in reverse order
+            info = setting('sort_portfolio')[0]    #The info we're sorting by
+            reverse = setting('sort_portfolio')[1] #Whether or not it is in reverse order
 
             sorted = list(MAIN_PORTFOLIO.assets())
             def tickerclasskey(e):  return e.tickerclass()
             sorted.sort(key=tickerclasskey) #Sorts the assets alphabetically by their tickerclass first. This is the default.
         else:   #Transactions
-            info = setting('sort_trans')[0]    #The info we're sorting by
-            reverse = setting('sort_trans')[1] #Whether or not it is in reverse order
+            info = setting('sort_asset')[0]    #The info we're sorting by
+            reverse = setting('sort_asset')[1] #Whether or not it is in reverse order
 
             sorted = list(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger.values()) #a dict of relevant transactions, this is a list of their keys.
             sorted.sort(reverse=not reverse)    #By default, we sort by the special sorting algorithm (date, then type, then wallet, etc. etc.)
@@ -744,7 +747,7 @@ class AutoAccountant(QMainWindow):
         else:                   maxpage = math.ceil(len(MAIN_PORTFOLIO.asset(self.rendered[1])._ledger)/setting('itemsPerPage')-1)
 
         if page < 0:          page = 0
-        elif page > maxpage:    page = maxpage
+        elif page > maxpage:  page = maxpage
 
         if page != self.page:
             self.page = page
@@ -813,16 +816,17 @@ class AutoAccountant(QMainWindow):
 
         # UNITS PER WALLET
         toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
         wallets = list(MAIN_PORTFOLIO.asset(a).get('wallets'))  
         def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)
+        value = MAIN_PORTFOLIO.asset(a).precise('price') # gets asset price for this asset
         for w in wallets:
-            quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w]
+            quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w] # gets quantity of tokens for this asset
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
-                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '<br>'
+                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(quantity*value, 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
 
         # MASS INFORMATION
         for data in ('price','value', 'marketcap', 'volume24h', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
@@ -836,7 +840,8 @@ class AutoAccountant(QMainWindow):
             if data == 'price':
                 toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD/'+asset.ticker() + '<br>'
             elif info_format == 'percent':
-                toDisplay += label + HTMLify(format_general(asset.precise(data)*100, 'alpha', 20), S) + ' %<br>'
+                try:    toDisplay += label + HTMLify(format_general(asset.precise(data)*100, 'alpha', 20), S) + ' %<br>'
+                except: pass
             else:
                 toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD<br>'
 
@@ -907,6 +912,9 @@ class AutoAccountant(QMainWindow):
             for t_in in list(transfer_IN): #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
                 if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
+                        # we've already paired this t_in or t_out. Skip this!
+                        if (t_in not in transfer_IN) or (t_out not in transfer_OUT):    continue
+                        
                         #SUCCESS - We've paired this t_out with a t_in!
                         t_out._data['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
 
@@ -928,9 +936,7 @@ class AutoAccountant(QMainWindow):
         ###################################
         #Transfers linked. It's showtime. Time to perform the Auto-Accounting!
         # INFO VARIABLES - data we collect as we account for every transaction #NOTE: Lag is 0ms for ~12000 transactions
-        metrics = {
-            asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in MAIN_PORTFOLIO.assetkeys()
-        }
+        metrics = { asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in MAIN_PORTFOLIO.assetkeys() }
         
         # HOLDINGS - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
         accounting_method = setting('accounting_method')
@@ -1007,11 +1013,12 @@ class AutoAccountant(QMainWindow):
             # METRIC CALCULATION    #NOTE: Lag is ~44ms for ~12000 transactions
             
             # CASH FLOW - Only sales/purchases/trades affect cash_flow. trades, because it makes more sense to have them than not, even though they are independent of USD.
-            if TYPE in ('purchase','purchase_crypto_fee'):  metrics[GA]['cash_flow'] -= GV + FV
-            elif TYPE  == 'sale':                           metrics[LA]['cash_flow'] += LV - FV
-            elif TYPE == 'trade':   # Trades are a sort of 'indirect purchase/sale' of an asset. For them, the fee is lumped with the sale, not the purchase
-                metrics[LA]['cash_flow'] += LV - FV
-                metrics[GA]['cash_flow'] -= GV
+            match TYPE:
+                case 'purchase' | 'purchase_crypto_fee':    metrics[GA]['cash_flow'] -= GV + FV
+                case 'sale':                                metrics[LA]['cash_flow'] += LV - FV
+                case 'trade': # Trades are a sort of 'indirect purchase/sale' of an asset. For them, the fee is lumped with the sale, not the purchase
+                    metrics[LA]['cash_flow'] += LV - FV
+                    metrics[GA]['cash_flow'] -= GV
             
             # REALIZED PROFIT AND LOSS - Sales and trades sometimes profit, whereas gift_outs, expenses, as well as any fees always incur a loss
             # Fees are always a realized loss, if there is one
@@ -1024,7 +1031,7 @@ class AutoAccountant(QMainWindow):
 
             # CAPITAL GAINS TAX
             #Independent transfer fees are taxed as a 'sale'
-            if TYPE in ('gift_out','transfer_out','transfer_in') and FA: metrics[FA]['tax_capital_gains'] += FV - FEE_COST_BASIS
+            if FA and TYPE in ('gift_out','transfer_out','transfer_in'): metrics[FA]['tax_capital_gains'] += FV - FEE_COST_BASIS
             #Expenses taxed as a 'sale', trade treated as an immediate sale and purchase
             elif TYPE in ('sale','trade'):                               metrics[LA]['tax_capital_gains'] += (LV - FV) - LOSS_COST_BASIS 
             elif TYPE == 'expense':                                      metrics[LA]['tax_capital_gains'] += (LV + FV) - LOSS_COST_BASIS 
@@ -1047,9 +1054,9 @@ class AutoAccountant(QMainWindow):
                 if t.get('fee_asset'):  MAIN_PORTFOLIO.asset(t.get('fee_asset')).ERROR =  True
                 if t.get('gain_asset'): MAIN_PORTFOLIO.asset(t.get('gain_asset')).ERROR = True
 
-        for a in MAIN_PORTFOLIO.assetkeys(): #TODO: Lag is like 30ms for ~4000 transactions
+        for asset in MAIN_PORTFOLIO.assets(): #TODO: Lag is like 30ms for ~4000 transactions
             #Update this asset's metrics dictionary with our newly calculated information
-            asset = MAIN_PORTFOLIO.asset(a)
+            a = asset.tickerclass()
             asset._metrics.update(metrics[a])
 
             total_cost_basis = 0    #The overall cost basis of what you currently own

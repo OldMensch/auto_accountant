@@ -1,6 +1,8 @@
 
+
 import json
 import time
+from enum import Enum
 from datetime import datetime, timedelta
 from copy import deepcopy
 import sys, os
@@ -57,27 +59,28 @@ def ttt(string:str='reset'):
     global timestamp
     global time_sum
     global time_avg_windows
-    if string == 'reset':
-        print(str(timestamp) + ' ms')
-        time_sum = 0
-        time_avg_windows = 0
-        timestamp = 0
-    elif string == 'start':
-        timestamp -= time.time()*1000
-    elif string == 'end':
-        timestamp += time.time()*1000
-    elif string == 'terminate':
-        timestamp += time.time()*1000
-        ttt('reset')
-    elif string == 'avg_save':
-        time_sum += timestamp
-        time_avg_windows += 1
-        timestamp = 0
-    elif string == 'avg_end':
-        ttt('end')
-        ttt('avg_save')
-    elif string == 'average_report':
-        print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
+    match string:
+        case 'reset':
+            print(str(timestamp) + ' ms')
+            time_sum = 0
+            time_avg_windows = 0
+            timestamp = 0
+        case 'start':
+            timestamp -= time.time()*1000
+        case 'end':
+            timestamp += time.time()*1000
+        case 'terminate':
+            timestamp += time.time()*1000
+            ttt('reset')
+        case 'avg_save':
+            time_sum += timestamp
+            time_avg_windows += 1
+            timestamp = 0
+        case 'avg_end':
+            ttt('end')
+            ttt('avg_save')
+        case 'average_report':
+            print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
 
 class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow
     def __init__(self, method):
@@ -103,7 +106,7 @@ class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow
 def HTMLify(text, styleSheet:str=''): # Uses a styleSheet to format HTML text
     if text == '': return ''
     if styleSheet == '': return text
-    return '<font style="'+styleSheet+'">'+text+'</font>'
+    return f'<font style="{styleSheet}">{text}</font>' # Uses an 'f-String', a new Python 3.6 type of string formatting. Nifty!
 
 
 def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
@@ -118,23 +121,29 @@ def acceptableDifference(v1:Decimal, v2:Decimal, percent_gap:float) -> bool:
 
 def format_general(data:str, style:str=None, charlimit:int=0) -> str:
     toReturn = MISSINGDATA
-    if style == 'alpha':        toReturn = str(data)
-    elif style == 'integer':      
-        try:                    toReturn = str(int(data))
-        except: pass
-    elif style == 'percent':      
-        try:                    toReturn = format_number(float(data)*100, '.2f') + '%'
-        except: pass
-    elif style == 'penny':      toReturn = format_number(data, '.2f')
-    elif style == 'accounting':   
-        try:
-            if float(data) < 0: toReturn = '('+format_number(abs(data), '.5f')+')'
-            else:               toReturn = format_number(data, '.5f')
-        except: pass
-    elif style == '':           toReturn = format_number(data)
+    match style:
+        case 'alpha':       toReturn = str(data)
+        case 'integer':      
+            try:            toReturn = str(int(data))
+            except: pass
+        case 'percent':      
+            try:            toReturn = format_number(float(data)*100, '.2f') + '%'
+            except: pass
+        case 'penny':      toReturn = format_number(data, '.2f')
+        case 'accounting':   
+            try:
+                if float(data) < 0: toReturn = '('+format_number(abs(data), '.5f')+')'
+                else:               toReturn = format_number(data, '.5f')
+            except: pass
+        case '':           toReturn = format_number(data)
+
+    # Shortens/lengthens the returned string, if there is a character limit
     if charlimit > 0 and len(toReturn) > charlimit:
-        if '.' in toReturn and toReturn.index('.') > charlimit: return toReturn.split('.')[0] #Returns the number as an integer, if it is an integer longer than the charlimit
+        if '.' in toReturn and toReturn.index('.') > charlimit: return toReturn.split('.')[0] #Returns the number as an integer, if it is longer than the charlimit
         return toReturn[0:charlimit].removesuffix('.') #Removes the decimal, if its the very last character
+    elif charlimit > 0 and len(toReturn) < charlimit:
+        if '.' not in toReturn or 'e' in toReturn.lower():  return toReturn + '.' + ('0' * (charlimit - len(toReturn) - 1)) # If there's no decimal, add a decimal, then add 0's until we're at the charlimit
+        else:                                               return toReturn + ('0' * (charlimit - len(toReturn))) # If there is a decimal, just add 0's until we're at the charlimit
     return toReturn
 
 def format_number(number:float, standard:str=None) -> str:
@@ -150,20 +159,20 @@ def format_number(number:float, standard:str=None) -> str:
     if standard: return format(float(number), standard)
 
     #Otherwise, we have fancy formatting
-    if abs(number) >= 1000000000000000:   #In quadrillions
-        return format(number/1000000000000000) + ' QD'
-    elif abs(number) >= 1000000000000:   #In trillions
-        return format(number/1000000000000,'.1f') + ' T'
-    elif abs(number) >= 1000000000:   #In billions
-        return format(number/1000000000,'.1f') + ' B'
-    elif abs(number) >= 1000000:   #In millions
-        return format(number/1000000,'.1f') + ' M'
-    elif abs(number) >= 1:       #If number greater than 1, show all digits and 2 following the decimal
-        return format(number, '.2f')
-    elif abs(number) >= .0001:   #If the number is tiny and greater than 0.0001, show those 4 digits following the decimal
-        return format(number, '.4f')
-    elif abs(number) > 0:        #If number less than .0001, use scientific notation with 3 values of meaning after the decimal
-        return format(number,'.3E')
+    # Probably a clearner way to write this code?
+    scales = (
+        # Scale, rescaling, ending word, formatting code
+        (10**15,    10**15, 'QD',   '.1f'),
+        (10**12,    10**12, 'T',    '.1f'),
+        (10**9,     10**9,  'B',    '.1f'),
+        (10**6,     10**6,  'M',    '.1f'),
+        (1,         1,      '',     '.2f'),
+        (.0001,     1,      '',     '.4f'),
+        (0,         1,      '',     '.3E'),
+    )
+    for size in scales:
+        if abs(number) > size[0]:
+            return ' '.join((format(number/size[1], size[3]), size[2]))
     else:
         return '0.00'
 
@@ -328,7 +337,7 @@ info_format_lib = {
 
 forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. This is for assets which have changed tickers over time.
     'CGLDzc':   ('CELOzc', '9999/12/31 00:00:00'),
-    'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00')
+    'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00'),
 }
 
 def prettyClasses() -> list:
@@ -451,24 +460,20 @@ def timezone_to_unix(iso:str, tz_override:str=None) -> int:
     return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
 
 
-defsettingslib = { # A library containing all of the default settings
-    'portHeight': 1080,
-    'portWidth': 1920,
-    'font_size': 16,
-    'itemsPerPage':30,
-    'startWithLastSaveDir': True,
-    'lastSaveDir': '',
-    'offlineMode': True,
-    'header_portfolio': list(assetinfolib),
-    'header_asset': list(transinfolib),
-    'sort_asset': ('ticker', False),
-    'sort_trans': ('date', False),
-    'CMCAPIkey': '',
-    'accounting_method': 'hifo',
-    'base_currency': 'USDzf',
-    'timezone': 'GMT',
+settingslib = { # A library containing all of the default settings
+    'font_size': 16,                            # Used to determine the scale of several GUI features in the program
+    'itemsPerPage':30,                          # Number of items to display on one page
+    'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
+    'lastSaveDir': '',                          # Our last opened portfolio's filepath
+    'offlineMode': True,                        # Whether or not to start in offline/online mode
+    'header_portfolio': list(assetinfolib),     # List of columns displayed when showing a portfolio
+    'header_asset': list(transinfolib),         # List of columns displayed when showing an asset
+    'sort_portfolio': ['ticker', False],        # Which column to sort our portfolio by, and whether this ought to be in reverse order
+    'sort_asset': ['date', False],              # Which column to sort our asset by, and whether this ought to be in reverse order
+    'CMCAPIkey': '',                            # Our CoinMarketCap API key, so we can get current crypto market data
+    'accounting_method': 'hifo',                # Accounting method to use when performing automated calculations
+    'timezone': 'GMT',                          # Timezone to report times in. Times are saved permanently in UNIX.
 }
-settingslib = deepcopy(defsettingslib)
 
 def setting(request:str, mult:float=1):
     '''Returns the value of the requested Auto-Accountant setting\n
@@ -480,24 +485,28 @@ def setting(request:str, mult:float=1):
         return (settingslib[request][0], int(settingslib[request][1] * mult))
     return settingslib[request]
 
-def set_setting(request:str, newValue):
-    settingslib[request] = newValue
+def set_setting(setting:str, newValue):     settingslib[setting] = newValue
 
 def saveSettings():
     with open('settings.json', 'w') as file:
         json.dump(settingslib, file, indent=4, sort_keys=True)
 
 def loadSettings():
+    '''Loads all settings for the program, if the file can be found. This method should only ever be called once.'''
     global settingslib
-    settingslib = deepcopy(defsettingslib)
+    # Tries to open our settings JSON file. If this fails, 
     try:
         with open('settings.json', 'r') as file:
             settings_JSON = json.load(file)
-        for setting in defsettingslib:
-            try:    
-                if type(settingslib[setting])==type(settings_JSON[setting]): settingslib[setting] = settings_JSON[setting]
-            except: pass
     except:
         print('||ERROR|| Could not load settings.json, reverting to default settings')
+        return
+    
+    # Tries to load each setting. We perform a minimal check just to make sure we have the right datatype. This doesn't prevent all errors, however.
+    for setting in settingslib:
+        try:    
+            if type(settingslib[setting])==type(settings_JSON[setting]): 
+                set_setting(setting, settings_JSON[setting])
+        except: pass 
 
 

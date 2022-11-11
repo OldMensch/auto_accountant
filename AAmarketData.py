@@ -17,6 +17,7 @@ from threading import Thread
 import yahoofinancials as yf2
 
 
+
 ###Daemon which re-loads market data every 5 minutes:
 ###=================================================
 
@@ -94,9 +95,10 @@ def getMissingPrice(date, tickerclass):
         While it works, it's kinda slow. And innacurate, though so is Etherscan's price data.'''   
     TICKER = tickerclass.split('z')[0]
     CLASS = tickerclass.split('z')[1]
-    if   CLASS == 'c':  TO_FIND = TICKER+'-USD' #This is a crypto
-    elif CLASS == 's':  TO_FIND = TICKER        #This is a stock
-    elif CLASS == 'f':  TO_FIND = TICKER+'/USD' #This is a fiat
+    match CLASS:
+        case 'c':  TO_FIND = TICKER+'-USD' #This is a crypto
+        case 's':  TO_FIND = TICKER        #This is a stock
+        case 'f':  TO_FIND = TICKER+'/USD' #This is a fiat
 
     date = str(datetime.date(datetime( int(date[:4]), int(date[5:7]), int(date[8:10]) )))
     raw_data = yf2.YahooFinancials([TO_FIND])  #0ms
@@ -127,8 +129,6 @@ def CryptoDataLoop(mainPortREF, online_event):
         if cryptoString == '':    #No reason to update nothing!
             time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
             continue
-
-        cryptoString = cryptoString[:-1]
 
 
         url = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest'

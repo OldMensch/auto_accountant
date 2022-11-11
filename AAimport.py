@@ -240,16 +240,22 @@ def etherscan(mainAppREF, ethFileDir, erc20FileDir, wallet):      #Imports the E
     
     TO_MERGE.add_asset(Asset('ETHzc','ETH'))
 
-    # Indexed by txhash - Date(unix timestamp), from, to, value_in, value_out, fee, price, error_code, methodQ
+    # REFORMATTING OUR TRANSACTIONS:
+    # Fixes NA issues
+    eth_data.fillna('', inplace=True)
+    erc20_data.fillna('', inplace=True)
+
+    # Indexed by txhash:    Unixtime, from, to, value_in, value_out, fee, price, error_code, methodQ
     eth_trans = {t[1][0]:(int(t[1][2]), t[1][4], t[1][5], t[1][7], t[1][8], t[1][10], t[1][12], t[1][14], t[1][15]) for t in eth_data.iterrows()}
 
-    # Indexed by txhash - Date(unix timestamp), from, to, value, ticker
+    # Indexed by txhash:    Unixtime, from, to, value, ticker
     #NOTE: The 'value' has commas in it, like for '75,688.999011', gotta remove those
     erc20_trans = {}
     for t in erc20_data.iterrows():
-        erc20_trans[t[1][0]] = (int(t[1][1]), t[1][3], t[1][4], t[1][5].replace(',',''), t[1][8]+'zc')
-        if not TO_MERGE.hasAsset(t[1][8]+'zc'): TO_MERGE.add_asset(Asset(t[1][8]+'zc',t[1][8]))
+        erc20_trans[t[1][0]] = (int(t[1][2]), t[1][4], t[1][5], t[1][6].replace(',',''), t[1][10]+'zc')
+        if not TO_MERGE.hasAsset(t[1][10]+'zc'): TO_MERGE.add_asset(Asset(t[1][10]+'zc',t[1][10])) # add asset to portfolio if this one is new to us
     
+
     for t in list(erc20_trans): #Transfer_in of ERC-20 tokens, from an external wallet
         if t not in eth_trans:
             trans = erc20_trans.pop(t)
@@ -272,8 +278,9 @@ def etherscan(mainAppREF, ethFileDir, erc20FileDir, wallet):      #Imports the E
             trans = eth_trans.pop(t)
             TO_MERGE.import_transaction(Transaction(trans[0], 'expense', wallet, loss=['ETHzc',trans[5],trans[6]]))
     for t in list(erc20_trans):     #Transfers of ERC-20 tokens, assumed to be for staking or something similar
-        eth = eth_trans.pop(t)
         trans = erc20_trans.pop(t)
+        try: eth = eth_trans.pop(t) # there should be a corresponding ETH transaction. If not... we're missing data. this is an issue
+        except: break
         if trans[1] == this_wallet_address:
             TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_out', wallet, '', [trans[4],trans[3],None],['ETHzc',eth[5],eth[6]]))
             TO_MERGE.import_transaction(Transaction(trans[0], 'transfer_in', None, gain=[trans[4],trans[3],None]))
@@ -287,6 +294,7 @@ def etherscan(mainAppREF, ethFileDir, erc20FileDir, wallet):      #Imports the E
     if len(erc20_trans) > 0: print('||IMPORT ERROR|| '+str(len(eth_trans)+len(erc20_trans)) + ' ERC-20 transactions failed to parse.')
         
     finalize_import(mainAppREF, TO_MERGE)
+
 
 
 def gemini_earn(mainAppREF, fileDir, wallet):   #Imports Gemini Earn transaction history
