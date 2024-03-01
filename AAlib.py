@@ -6,16 +6,18 @@ from enum import Enum
 from datetime import datetime, timedelta
 from copy import deepcopy
 import sys, os
+import textwrap
 
 import AAstylesheet
 from AAstylesheet import UNI_PALETTE
 
-from PySide2.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QAction, 
-    QShortcut, QApplication, QMainWindow, QDialog, QDesktopWidget, QMessageBox, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit, QActionGroup,
+
+from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QWidgetAction, QButtonGroup,
+    QApplication, QMainWindow, QDialog, QMessageBox, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
     QComboBox, QListView, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea, QScrollBar, QStyle)
-from PySide2.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QCursor, QDoubleValidator, QDrag, 
-    QDropEvent, QDragEnterEvent, QImage, QPainter)
-from PySide2.QtCore import Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QTextDecoder
+from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QCursor, QDoubleValidator, QDrag, 
+    QDropEvent, QDragEnterEvent, QImage, QPainter, QActionGroup, QAction, QShortcut, QGuiApplication)
+from PySide6.QtCore import (Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QPoint) 
 
 import decimal
 decimal.getcontext().prec = 100
@@ -37,10 +39,8 @@ marketdatalib = {}
 
 TEMP = { #Universal temporary data dictionary
         'metrics' : {},
-        'widgets' : {},
-        'undo' : [{'assets' : {},'transactions' : {},'wallets' : {}}]
+        'undo' : [] # List of saves we can revert to if we make mistakes
         } 
-TEMP['undo'].extend([0]*49)
 
 MISSINGDATA = '???'
 
@@ -82,7 +82,7 @@ def ttt(string:str='reset'):
         case 'average_report':
             print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
 
-class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow
+class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows any thread to tell the main thread to run something
     def __init__(self, method):
         '''Can be called from any thread to run any function on the main thread'''
         super().__init__()
@@ -156,7 +156,7 @@ def format_number(number:float, standard:str=None) -> str:
     except: return MISSINGDATA
 
     #If we set a certain formatting standard, then its this
-    if standard: return format(float(number), standard)
+    if standard: return f"{float(number):,{standard}}"
 
     #Otherwise, we have fancy formatting
     # Probably a clearner way to write this code?
@@ -172,7 +172,7 @@ def format_number(number:float, standard:str=None) -> str:
     )
     for size in scales:
         if abs(number) > size[0]:
-            return ' '.join((format(number/size[1], size[3]), size[2]))
+            return f"{number/size[1]:,{size[3]}} {size[2]}"
     else:
         return '0.00'
 
@@ -181,6 +181,7 @@ def format_number(number:float, standard:str=None) -> str:
 ### LIBRARIES
 ###==========================================
 
+# STYLESHEETS
 styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 
     # Good fonts: 
@@ -198,10 +199,13 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'GRID_hover':           "background: "+UNI_PALETTE.A2+";",
     'GRID_selection':       "background: "+UNI_PALETTE.A1+";",
     'GRID_none':            "color: #ff0000; background: transparent;",
-                            
+    
+    'timestamp_indicator_online':   "background-color: transparent; color: #ffffff;",
+    'timestamp_indicator_offline':   "background-color: #ff0000; color: #ffffff;",
 
-    'title':                "background-color: #000000; color: #ffff00; font-family: 'Calibri'; font-size: 30px;",
-    'subtitle':             "background-color: #000000; color: #ffff00; font-family: 'Calibri'; font-size: 15px;",
+    'title':                "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 30px;",
+    'subtitle':             "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 15px;",
+    'error':                "background-color: transparent; color: #ff0000; font-family: 'Courier New'; font-size: 15px;",
     'dialog':               "font-family: 'Calibri'; font-size: 20px;",
     'displayFont':          "border: 0; font-family: 'Calibri'; font-size: 20px;",
     'info_pane':            "font-family: 'Calibri'; font-size: 20px;",
@@ -216,6 +220,10 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'neutral':              "color: "+UNI_PALETTE.B6+";",
     'profit':               "color: #00ff00;",
     'loss':                 "color: #ff0000;",
+
+    'main_menu_button_disabled':    "background-color: "+UNI_PALETTE.B2+";",
+    'main_menu_filtering':          "background-color: #ff5500;",
+    'main_menu_button_enabled':     "",
 
     'entry':                "color: #ffff00; background: #000000; font-family: 'Courier New';",
     'disabledEntry':        "color: #aaaaaa; font-family: 'Courier New';",
@@ -237,13 +245,12 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'transfer_out':         'background: #4488ff;',  'transfer_outtext':          'background: #0044bb;',
     'trade':                'background: #ffc000;',  'tradetext':                 'background: #d39700;',
 }
-
-def style(styleSheet:str):
+def style(styleSheet:str): # returns the formatting for a given part of the GUI
     try:    return styleSheetLib[styleSheet]
     except: return ''
 
-
-def loadIcons():
+# ICONS
+def loadIcons(): # loads the icons for the GUI
     global iconlib
     
     #Makes the icons work when the images are stored inside the compiled EXE file
@@ -262,7 +269,7 @@ def loadIcons():
         'save' : QPixmap(extra_dir+'icons/save.png'),
         'settings2' : QPixmap(extra_dir+'icons/settings2.png'),
         'info2' : QPixmap(extra_dir+'icons/info2.png'),
-        'profiles' : QPixmap(extra_dir+'icons/profiles.png'),
+        'filter' : QPixmap(extra_dir+'icons/filter.png'),
         'undo' : QPixmap(extra_dir+'icons/undo.png'),
         'redo' : QPixmap(extra_dir+'icons/redo.png'),
 
@@ -272,13 +279,11 @@ def loadIcons():
         'settings' : QPixmap(extra_dir+'icons/settings.png'),
         'info' : QPixmap(extra_dir+'icons/info.png'),
     }
-
-def icon(icon:str) -> QPixmap:
-    return iconlib[icon]
+def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI
 
 
-
-assetinfolib = ( #list of mutable info headers for the Portfolio rendering view
+# Contains all kinds of display info for various parts of the program
+default_portfolio_headers = ( # The default list of MUTABLE info headers for the Portfolio rendering view
     'ticker','name','class',
     'holdings','price','marketcap',
     'value','volume24h','day_change',
@@ -288,27 +293,31 @@ assetinfolib = ( #list of mutable info headers for the Portfolio rendering view
     'unrealized_profit_and_loss%','average_buy_price'
 )
 
-transinfolib = ('date', 'type', 'wallet', 'quantity', 'value', 'price') #list of (currently immutable) info headers for the Asset rendering view
+default_asset_headers = ('date', 'type', 'wallet', 'quantity', 'value', 'price') #list of (currently immutable) info headers for the Asset rendering view
 
-info_format_lib = {
-    #Unique to portfolios
-    'number_of_transactions': {     'format':'integer', 'color' : None,         'name':'# Transactions',    'headername':'# Transactions'},
-    'number_of_assets': {           'format':'integer', 'color' : None,         'name':'# Assets',          'headername':'# Assets'},
+# List of all metrics which can be used as a filter
+# NOTE: Same as two above combined, just not able to filter by DATE
+filterable_metrics = (
+    'ticker','name','class',
+    'holdings','price','marketcap',
+    'value','volume24h','day_change',
+    'day%','week%','month%',
+    'portfolio%','cash_flow','net_cash_flow',
+    'realized_profit_and_loss','tax_capital_gains','tax_income','unrealized_profit_and_loss',
+    'unrealized_profit_and_loss%','average_buy_price',
+
+    'type', 'wallet', 'quantity', 'value', 'price'
+)
+
+metric_formatting_lib = { # Includes formatting information for every metric in the program
+    # Shared by portfolios, assets, and transactions
+    'value':{                       'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
 
     #Unique to portfolios and assets
-    'ticker': {                     'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
-    'name':{                        'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
-    'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
-    'holdings':{                    'format': '',           'color' : None,             'name':'Holdings',          'headername':'Holdings'},
-    'price':{                       'format': '',           'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
-    'marketcap':{                   'format': '',           'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
-    'value':{                       'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
-    'volume24h':{                   'format': '',           'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
     'day_change':{                  'format': 'penny',      'color' : 'profitloss',     'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
     'day%':{                        'format': 'percent',    'color' : 'profitloss',     'name':'24-Hour %',         'headername':'24-Hr %'},
     'week%':{                       'format': 'percent',    'color' : 'profitloss',     'name':'7-Day %',           'headername':'7-Day %'},
     'month%':{                      'format': 'percent',    'color' : 'profitloss',     'name':'30-Day %',          'headername':'30-Day %'},
-    'portfolio%':{                  'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
     'cash_flow':{                   'format': 'penny',      'color' : 'profitloss',     'name':'Cash Flow',         'headername':'Cash\nFlow'},
     'net_cash_flow':{               'format': 'penny',      'color' : 'profitloss',     'name':'Net Cash Flow',     'headername':'Net Cash\nFlow'},
     'realized_profit_and_loss':{    'format': 'penny',      'color' : 'profitloss',     'name':'Realized P&L',      'headername':'Real\nP&L'},
@@ -316,6 +325,20 @@ info_format_lib = {
     'tax_income':{                  'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
     'unrealized_profit_and_loss':{  'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
+
+    #Unique to portfolios
+    'number_of_transactions': {     'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
+    'number_of_assets': {           'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
+
+    # Unique to assets
+    'ticker': {                     'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
+    'name':{                        'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
+    'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
+    'price':{                       'format': '',           'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
+    'marketcap':{                   'format': '',           'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
+    'holdings':{                    'format': '',           'color' : None,             'name':'Holdings',          'headername':'Holdings'},
+    'volume24h':{                   'format': '',           'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
+    'portfolio%':{                  'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
     'average_buy_price':{           'format': '',           'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
 
     #Unique to transactions
@@ -335,22 +358,72 @@ info_format_lib = {
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 }
 
-forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. This is for assets which have changed tickers over time.
-    'CGLDzc':   ('CELOzc', '9999/12/31 00:00:00'),
-    'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00'),
+metric_desc_lib = { # Includes descriptions for all metrics: this depends on whether you are looking at the portfolio overall, individual assets, or individual transactions
+    'portfolio':{
+        #Unique to portfolios
+        'number_of_transactions': "The total number of transactions across all assets",
+        'number_of_assets': "",
+
+        #Unique to portfolios and assets
+        'value': "The USD value of all assets at current market prices.",
+        'day_change': "The USD value gained/lost over the past day.",
+        'day%': "The relative change in value over the past day.",
+        'week%': "The relative change in value over the past week.",
+        'month%': "The relative change in value over the past month.",
+        'cash_flow': "The total USD which has gone in/out of all assets. 0$ is breakeven.",
+        'net_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
+        'tax_capital_gains': "The total value taxable as capital gains.",
+        'tax_income': "The total value taxable as income.",
+        'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
+        'unrealized_profit_and_loss': "Measures the USD gained on unsold assets since their purchase.",
+        'unrealized_profit_and_loss%': "The relative unrealized P&L of your asset. A basic measure of performance since purchasing the asset.",
+    }, 
+    'asset':{
+        #Unique to portfolios and assets
+        'value': "The USD value of this asset at current market price.",
+        'day_change': "The absolute change in value over the past day.",
+        'day%': "The relative change in value over the past day.",
+        'week%': "The relative change in value over the past week.",
+        'month%': "The relative change in value over the past month.",
+        'cash_flow': "The total USD which has gone in/out of this asset. 0$ is breakeven.",
+        'net_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
+        'tax_capital_gains': "The total value taxable as capital gains.",
+        'tax_income': "The total value taxable as income.",
+        'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
+        'unrealized_profit_and_loss': "Measures the USD gained on unsold assets since their purchase.",
+        'unrealized_profit_and_loss%': "The relative unrealized P&L of your asset. A basic measure of performance since purchasing the asset.",
+
+        # Unique to assets
+        'ticker': "The ticker for this asset. BTC, ETH, etc.",
+        'name': "The longer name of the asset. Bitcoin, Ethereum, etc.",
+        'class': "The asset class: a stock, cryptocurrency, or fiat currency.",
+        'price': "The current market value of this asset",
+        'marketcap': "The total USD invested into this asset.",
+        'holdings': "The total units owned of this asset (tokens, stocks, etc.)",
+        'volume24h': "The USD which has gone into/out of the asset in the past day.",
+        'portfolio%': "The percentage of USD which this asset makes up in your overall portfolio.",
+        'average_buy_price': "The average market price of all your assets at the time of their purchase.",
+    }, 
+    'transaction':{
+        #Unique to transactions
+        'date': "The date and time this transaction occurred. Note: Order fills are lumped together if they occurred simultaneously.",
+        'type': "The nature of the transaction: purchase, sale, trade, etc.",
+        'wallet': "The wallet or platform on which the transaction was held.",
+        'loss_asset': "The asset lost from this transaction.",
+        'loss_quantity': "The quantity lost of the loss asset.",
+        'loss_price': "The USD market value of the loss asset at the time of the transaction.",
+        'fee_asset': "The asset used to pay the fee.",
+        'fee_quantity': "The quantity lost of the fee asset.",
+        'fee_price': "The USD market value of the fee asset at the time of the transaction.",
+        'gain_asset': "The asset gained from this transaction.",
+        'gain_quantity': "The quantity gained of the gain asset.",
+        'gain_price': "The USD market value of the gain asset at the time of the transaction.",
+    
+        'quantity': "The quantity gained/lost for this asset in this transaction.",
+        'value': "The USD value of the tokens involved in this transaction, for this asset.",
+        'price': "The USD value per token in this transaction.",
+    }
 }
-
-def prettyClasses() -> list:
-    '''Returns a list of all asset classes, keyed by their longer prettier name'''
-    # This is using LIST COMPREHENSION. Very useful! Shorter code! Pythonic!
-    # It allows me to create a list with a for loop in one little line
-    return [assetclasslib[c]['name'] for c in assetclasslib] 
-
-def uglyClass(name:str) -> str:
-    '''AAlib function which returns the short class tag given its longer name'''
-    for c in assetclasslib:
-        if assetclasslib[c]['name'] == name:    return c
-    return None #Return None if we fail to find the class letter
 
 assetclasslib = {  #List of asset classes, by name tag
     'c' : {
@@ -367,11 +440,14 @@ assetclasslib = {  #List of asset classes, by name tag
     }
 }
 
-def uglyTrans(pretty:str) -> str:
-    '''AAlib function which returns the program's name for a transaction type from its pretty type name'''
-    for ugly in pretty_trans:
-        if pretty_trans[ugly] == pretty: return ugly
+# List of assets which have changed tickers or have multiple tickers, so we can use the right one
+forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. This is for assets which have changed tickers over time.
+    'CGLDzc':   ('CELOzc', '9999/12/31 00:00:00'), # Ticker is different on certain platforms
+    'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00'),
+}
 
+
+# Display names for all transaction types
 pretty_trans = {
     'purchase':             'Purchase',
     'purchase_crypto_fee':  'Purchase w / Crypto Fee',
@@ -386,7 +462,9 @@ pretty_trans = {
     'trade':                'Trade',
 }
 
-trans_priority = {  #Dictionary that sorts simultaneous transactions by what makes sense
+
+#Dictionary that sorts simultaneous transactions by what makes sense
+trans_priority = {  
     'purchase':             0,  #In only
     'card_reward':          1,  #In only
     'income':               2,  #In only
@@ -400,6 +478,7 @@ trans_priority = {  #Dictionary that sorts simultaneous transactions by what mak
     'sale':                 10,  #Out only
 }
 
+# Dictionary defining what data is required for each type of transaction
 valid_transaction_data_lib = {
     'purchase':             ('type', 'date', 'wallet', 'description',               'loss_quantity',                            'fee_quantity',              'gain_asset', 'gain_quantity'),
     'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',               'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
@@ -415,41 +494,41 @@ valid_transaction_data_lib = {
 }
 
 
+# TIMEZONES
 timezones = {
-    'GMT':  ('Greenwich Mean Time',                     0, 0),
-    'UTC':  ('Universal Coordinated Time',              0, 0),
-    'ECT':  ('European Central Time',                   1, 0),
-    'EET':  ('Eastern European Time',                   2, 0),
-    'ART':  ('(Arabic) Egypt Standard Time',            2, 0),
-    'EAT':  ('Eastern African Time',                    3, 0),
-    'MET':  ('Middle East Time',                        3, 30),
-    'NET':  ('Near East Time',                          4, 0),
-    'PLT':  ('Pakistan Lahore Time',                    5, 0),
-    'IST':  ('India Standard Time',                     5, 30),
-    'BST':  ('Bangladesh Standard Time',                6, 0),
-    'VST':  ('Vietnam Standard Time',                   7, 0),
-    'CTT':  ('China Taiwan Time',                       8, 0),
-    'JST':  ('Japan Standard Time',                     9, 0),
-    'ACT':  ('Australia Central Time',                  9, 30),
-    'AET':  ('Australia Eastern Time',                  10, 0),
-    'SST':  ('Solomon Standard Time',                   11, 0),
-    'NST':  ('New Zealand Standard Time',               12, 0),
-    'MIT':  ('Midway Islands Time',                     -11, 0),
-    'HST':  ('Hawaii Standard Time',                    -10, 0),
-    'AST':  ('Alaska Standard Time',                    -9, 0),
-    'PST':  ('Pacific Standard Time',                   -8, 0),
-    'PNT':  ('Phoenix Standard Time',                   -7, 0),
-    'MST':  ('Mountain Standard Time',                  -7, 0),
-    'CST':  ('Central Standard Time',                   -6, 0),
-    'EST':  ('Eastern Standard Time',                   -5, 0),
-    'IET':  ('Indiana Eastern Standard Time',           -5, 0),
-    'PRT':  ('Puerto Rico and US Virgin Islands Time',  -4, 0),
-    'CNT':  ('Canada Newfoundland Time',                -3, -30),
-    'AGT':  ('Argentina Standard Time',                 -3, 0),
-    'BET':  ('Brazil Eastern Time',                     -3, 0),
-    'CAT':  ('Central African Time',                    -1, 0),
+    'GMT':  ('[UTC+0] Greenwich Mean Time',                     0, 0),
+    'UTC':  ('[UTC+0] Universal Coordinated Time',              0, 0),
+    'ECT':  ('[UTC+1] European Central Time',                   1, 0),
+    'EET':  ('[UTC+2] Eastern European Time',                   2, 0),
+    'ART':  ('[UTC+2] (Arabic) Egypt Standard Time',            2, 0),
+    'EAT':  ('[UTC+3] Eastern African Time',                    3, 0),
+    'MET':  ('[UTC+3:30] Middle East Time',                     3, 30),
+    'NET':  ('[UTC+4] Near East Time',                          4, 0),
+    'PLT':  ('[UTC+5] Pakistan Lahore Time',                    5, 0),
+    'IST':  ('[UTC+5:30] India Standard Time',                  5, 30),
+    'BST':  ('[UTC+6] Bangladesh Standard Time',                6, 0),
+    'VST':  ('[UTC+7] Vietnam Standard Time',                   7, 0),
+    'CTT':  ('[UTC+8] China Taiwan Time',                       8, 0),
+    'JST':  ('[UTC+9] Japan Standard Time',                     9, 0),
+    'ACT':  ('[UTC+9:30] Australia Central Time',               9, 30),
+    'AET':  ('[UTC+10] Australia Eastern Time',                 10, 0),
+    'SST':  ('[UTC+11] Solomon Standard Time',                  11, 0),
+    'NST':  ('[UTC+12] New Zealand Standard Time',              12, 0),
+    'MIT':  ('[UTC-11] Midway Islands Time',                    -11, 0),
+    'HST':  ('[UTC-10] Hawaii Standard Time',                   -10, 0),
+    'AST':  ('[UTC-9] Alaska Standard Time',                    -9, 0),
+    'PST':  ('[UTC-8] Pacific Standard Time',                   -8, 0),
+    'PNT':  ('[UTC-7] Phoenix Standard Time',                   -7, 0),
+    'MST':  ('[UTC-7] Mountain Standard Time',                  -7, 0),
+    'CST':  ('[UTC-6] Central Standard Time',                   -6, 0),
+    'EST':  ('[UTC-5] Eastern Standard Time',                   -5, 0),
+    'IET':  ('[UTC-5] Indiana Eastern Standard Time',           -5, 0),
+    'PRT':  ('[UTC-4] Puerto Rico and US Virgin Islands Time',  -4, 0),
+    'CNT':  ('[UTC-3:30] Canada Newfoundland Time',             -3, -30),
+    'AGT':  ('[UTC-3] Argentina Standard Time',                 -3, 0),
+    'BET':  ('[UTC-3] Brazil Eastern Time',                     -3, 0),
+    'CAT':  ('[UTC-1] Central African Time',                    -1, 0),
 }
-
 def unix_to_local_timezone(unix:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
     if tz_override: tz = timezones[tz_override]
     else:           tz = timezones[setting('timezone')]
@@ -460,21 +539,22 @@ def timezone_to_unix(iso:str, tz_override:str=None) -> int:
     return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
 
 
+# SETTINGS
 settingslib = { # A library containing all of the default settings
     'font_size': 16,                            # Used to determine the scale of several GUI features in the program
     'itemsPerPage':30,                          # Number of items to display on one page
+    'max_undo_saves': 100,                      # Maximum # of saved progress points, before we start deleting the oldest ones 
     'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
     'lastSaveDir': '',                          # Our last opened portfolio's filepath
     'offlineMode': True,                        # Whether or not to start in offline/online mode
-    'header_portfolio': list(assetinfolib),     # List of columns displayed when showing a portfolio
-    'header_asset': list(transinfolib),         # List of columns displayed when showing an asset
+    'header_portfolio': list(default_portfolio_headers),     # List of headers displayed when showing a portfolio
+    'header_asset': list(default_asset_headers),         # List of headers displayed when showing an asset
     'sort_portfolio': ['ticker', False],        # Which column to sort our portfolio by, and whether this ought to be in reverse order
     'sort_asset': ['date', False],              # Which column to sort our asset by, and whether this ought to be in reverse order
     'CMCAPIkey': '',                            # Our CoinMarketCap API key, so we can get current crypto market data
     'accounting_method': 'hifo',                # Accounting method to use when performing automated calculations
     'timezone': 'GMT',                          # Timezone to report times in. Times are saved permanently in UNIX.
 }
-
 def setting(request:str, mult:float=1):
     '''Returns the value of the requested Auto-Accountant setting\n
         Settings include: palette[color], font \n
@@ -484,13 +564,10 @@ def setting(request:str, mult:float=1):
             return (settingslib[request][0], 10)
         return (settingslib[request][0], int(settingslib[request][1] * mult))
     return settingslib[request]
-
 def set_setting(setting:str, newValue):     settingslib[setting] = newValue
-
 def saveSettings():
     with open('settings.json', 'w') as file:
         json.dump(settingslib, file, indent=4, sort_keys=True)
-
 def loadSettings():
     '''Loads all settings for the program, if the file can be found. This method should only ever be called once.'''
     global settingslib

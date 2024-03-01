@@ -41,76 +41,106 @@ class DescEntry(QPlainTextEdit): # For entering lots of text
     def entry(self) -> str:             return self.toPlainText().rstrip().lstrip()
     def set(self, text:str) -> None:  self.setPlainText(text)
 
-class DropdownEntry(QComboBox): #Single-selection-only, dropdown version of a SelectionList
-    def __init__(self, items, default=None, current=None, selectCommand=None, *args, **kwargs):
+class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a ListEntry
+    def __init__(self, dictionary:dict, default:str=None, current=None, selectCommand=None, sortOptions=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.default = default
 
-        if default: self.addItem(default)           # Adds a "default" item, if specified
-        self.addItems(items)                        # Adds all the other items you can select
-        if current: self.setCurrentText(current)    # Sets the currently selected item
+        self.default = default # A default display string which IS NOT in the lookup dictionary
+        self.lookup_dict = {} # A dictionary allowing us to look up the objects by their display name
+        self.sortOptions = sortOptions # items sorted alphabetically when true
+
+        self.update_dict(dictionary)
+        if current: self.set(current)               # Sets the currently selected item
 
         if selectCommand:    # If we specify a command, the list activates that command every time we select something, and send it the selected item
             def send_current_item():    selectCommand(self.entry())
             self.activated.connect(send_current_item)
     
     def setReadOnly(self, val:bool) -> None: 
+        '''Toggles appearance and ability to use the dropdown'''
         if val: self.setStyleSheet(style('disabledEntry'))
         else:   self.setStyleSheet(style('entry'))
         self.setDisabled(val)
-    def isDefault(self) -> bool:        return self.entry()==self.default
-    def entry(self) -> str:             return self.currentText()
-    def set(self, text:str) -> None:    self.setCurrentText(text)
+    def entry(self) -> str:
+        '''returns the selected item, or None if the default item is selected'''
+        if self.currentText()==self.default:        return None
+        return self.lookup_dict[self.currentText()]
+    def set(self, item) -> None:    
+        '''The currently selected item is set to this.\n
+        It must be the value which will be selected, NOT THE DISPLAY TEXT'''
+        self.setCurrentText({value:key for key,value in self.lookup_dict.items()}[item])
+    def update_dict(self, dictionary:dict=None) -> None: 
+        '''Deletes all previous items, adds in new items\n
+        Dict keys must be display names, values are the actual objects which the .entry() command returns'''
+
+        if dictionary == None:  self.lookup_dict = {}           # If we specify None, we clear the dictionary
+        else:                   self.lookup_dict = dictionary   # Otherwise, set our dict to the new one
+
+        self.clear() # Remove previous items
+
+        if self.default: self.addItem(self.default)     # Adds a "default" item, if specified
+        if self.sortOptions:
+            to_sort = list(dictionary.keys())
+            to_sort.sort()
+            self.addItems(to_sort)                # Adds all the other items you can select
+        else:
+            self.addItems(dictionary.keys())                # Adds all the other items you can select
+
+
 
 class ListEntry(QListWidget): # Single- or multi-item selection list
-    def __init__(self, items:list, current:list=None, mode='single', selectCommand=None, *args, **kwargs):
+    def __init__(self, dictionary:dict=None, current:list=None, mode='single', selectCommand=None, *args, **kwargs):
         super().__init__(uniformItemSizes=True, *args, **kwargs)
         self.mode = mode
+
+        self.lookup_dict = {} # A dictionary allowing us to look up the objects by their display name
 
         #Allows for selection of multiple items
         if mode=='multi':   self.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
-        # Adds all items to the list, selects them if they are in current
-        for item in items:
-            itemToAdd = QListWidgetItem(item)
-            self.addItem(itemToAdd)
-            if current and item in current: itemToAdd.setSelected(True)
+        # Adds all of our items in for the first time, if specified
+        if dictionary: self.update_dict(dictionary)
+        if current: self.set(current)
         
-        if selectCommand:    # If we specify a command, the list activates that command every time we select something, and send it the selected item
+        # If we specify a command, the list object activates that command every time we select an item, and sends it the item
+        if selectCommand:    
             def send_current_item():    selectCommand(self.entry())
             self.activated.connect(send_current_item)
 
-    def entry(self):    # Returns string or list of strings, depending on mode    
+    # Returns the value, or list of values, which the display text maps to. 
+    # So, if the values are wallet objects, we get those back. 
+    def entry(self):    
         if self.mode == 'single':
-            return self.currentItem().text()
+            return self.lookup_dict[self.currentItem().text()]
         else:
-            toReturn = list()
-            for itemindex in self.selectionModel().selectedIndexes():
-                toReturn.append(self.itemFromIndex(itemindex).text())
-            return toReturn
-    def set(self, items:list) -> None:
+            return [self.lookup_dict[item.text()] for item in self.selectedItems()]
+    def set(self, current:list) -> None:
+        '''Sets the selection to specified items'''
         # De-selects previously selected items
         for itemindex in self.selectionModel().selectedIndexes():
             self.itemFromIndex(itemindex).setSelected(False)
 
-        # Selects what we want
+        # Selects what we want, unless the list is empty
+        if current == [] or current == None: return
+        
         for i in range(self.count()):   # Iterates through QListWidget's QListWidgetItem's, activating the ones we want
-            if self.item(i).text() in items:    self.item(i).setSelected(True)
+            if self.item(i).text() in current:    self.item(i).setSelected(True)
     
-    def update_items(self, items:list) -> None: # Deletes all previous items, adds in new specified list
-        items = list(items)
-        # Deletes all the old options
-        self.clear()
-        # Adds in all the new ones
-        def alphaKey(e):    return e.lower()
-        items.sort(key=alphaKey)
-        for item in items:
-            self.addItem(item)
-        
-        
+    def update_dict(self, dictionary:dict=None) -> None: 
+        '''Deletes all previous items, adds in new items\n
+        Dict keys must be display names, values are the actual objects which the .entry() command returns'''
+
+        if dictionary == None: self.lookup_dict = {} # If we specify None, we clear the dictionary
+        else: self.lookup_dict = dictionary # Otherwise, set our dict to the new one
+
+        self.clear() # Remove previous items
+
+        for key, value in dictionary.items(): # Add new items: keys are the display names, values unused here 
+            self.addItem(QListWidgetItem(key))
+         
 
 class Dialog(QDialog):
-    def __init__(self, upper, title='', styleSheet=style('dialog')):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 
+    def __init__(self, upper, title='', errormsg='', styleSheet=style('dialog')):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 
         '''The generalized dialog superclass for Auto-Accountant'''
         super().__init__(upper, styleSheet=styleSheet)
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False) # Removes the pointless question mark from the dialog box
@@ -132,24 +162,35 @@ class Dialog(QDialog):
         if title != '':     #The title of the box
             self.GUI['title'] =     QLabel(title, alignment=Qt.AlignCenter, styleSheet=style('title'))
 
-        self.GUI['primaryLayout'] = QGridLayout()
+        self.GUI['primaryLayout'] = QGridLayout() # Contains whatever content we really want for our dialog. Controlled by our modular system below
         self.GUI['primaryFrame'] = QFrame(self, layout=self.GUI['primaryLayout'])
 
-        self.GUI['menuLayout'] = QHBoxLayout()
+        self.GUI['menuLayout'] = QHBoxLayout() # Buttons like "OK" and "CANCEL" and "SAVE", etc.
         self.GUI['menuFrame'] = QWidget(self, layout=self.GUI['menuLayout'])
+
+        self.GUI['errormsg'] =     QTextEdit(errormsg, readOnly=True, styleSheet=style('error')) # Potential error message that can popup
+        self.GUI['errormsg'].setHidden(True)
 
         ### Rendering
         if title != '':
             self.GUI['masterLayout'].addWidget(self.GUI['title'])
         self.GUI['masterLayout'].addWidget(self.GUI['primaryFrame'])
+        self.GUI['masterLayout'].addWidget(self.GUI['errormsg'])
         self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'])
+
+    def display_error(self, msg):
+        self.GUI['errormsg'].setText(msg)
+        self.GUI['errormsg'].setHidden(False)
+    def hide_error(self):
+        self.GUI['errormsg'].setHidden(True)
 
 
     #==============================
     # MODULAR GUI FRAMEWORK - commands to add labels, entry boxes, dropdowns, text boxes and more
     #==============================
-
+    
     def add_label(self, text, column, row, columnspan=1, rowspan=1, *args, **kwargs) -> QLabel:
+        '''Adds a basic label for displaying text'''
         label = QLabel(text, *args, **kwargs)
         self.GUI['primaryLayout'].addWidget(label, row, column, rowspan, columnspan)
         return label
@@ -161,6 +202,8 @@ class Dialog(QDialog):
         return label
 
     def add_entry(self, text, column, row, columnspan=1,rowspan=1, format=None, maxLength=-1, *args, **kwargs):
+        '''A box for entering text.\n
+        Format can be 'description', 'date', 'float', or 'pos_float' to restrict entry formatting'''
         if format == 'description':     box = DescEntry(text, styleSheet=style('entry'), *args, **kwargs)
         elif format == 'date':          box = DateEntry(text, styleSheet=style('entry'), *args, **kwargs)
         else:                           box = Entry(text, format, maxLength=maxLength, styleSheet=style('entry'), *args, **kwargs)
@@ -168,17 +211,19 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'].addWidget(box, row, column, rowspan, columnspan)
         return box
     
-    def add_dropdown_list(self, items, column, row, columnspan=1,rowspan=1, default='', current='', selectCommand=None, *args, **kwargs) -> DropdownEntry:
-        dropdown = DropdownEntry(items, default, current, selectCommand, styleSheet=style('entry'), *args, **kwargs)
+    def add_dropdown_list(self, dictionary, column, row, columnspan=1,rowspan=1, default='', current='', selectCommand=None, sortOptions=False, *args, **kwargs) -> DropdownEntry:
+        '''Adds a dropdown list, from which you can select a single item'''
+        dropdown = DropdownEntry(dictionary, default, current, selectCommand, styleSheet=style('entry'), sortOptions=sortOptions, *args, **kwargs)
         self.GUI['primaryLayout'].addWidget(dropdown, row, column, rowspan, columnspan)
         return dropdown
 
     def add_menu_button(self, text, command=None, *args, **kwargs) -> None:
-        '''Adds a button to the menu'''
+        '''Adds a button to the menu at the bottom of the dialog'''
         self.GUI['menuLayout'].addWidget(QPushButton(text, clicked=command, fixedHeight=icon('size').height(), *args, **kwargs))
-
-    def add_list_entry(self, items, column, row, current=None, rowspan=1,columnspan=1, mode='single', selectCommand=None, *args, **kwargs) -> ListEntry:
-        '''Adds a scrollable list, from which you can select a singular, or multiple items'''
-        selection = ListEntry(items, current, mode, selectCommand, *args, **kwargs)
+    
+    def add_list_entry(self, dictionary:dict, column, row, current=None, rowspan=1,columnspan=1, mode='single', selectCommand=None, *args, **kwargs) -> ListEntry:
+        '''Adds a scrollable list, from which you can select a singular, or multiple items\n
+        Except, it requires a dictionary mapping display text to actual values. .entry() returns the actual values. '''
+        selection = ListEntry(dictionary, current, mode, selectCommand, *args, **kwargs)
         self.GUI['primaryLayout'].addWidget(selection, row, column, rowspan, columnspan)
         return selection
