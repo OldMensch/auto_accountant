@@ -8,11 +8,10 @@ from AAdialogs import *
 
 #Default Python
 import math
-
 import threading
 
 
-class AutoAccountant(QMainWindow): # With enough coding, ideally, this ought just to be the GUI interface
+class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI interface
     def __init__(self):
         super().__init__()
         
