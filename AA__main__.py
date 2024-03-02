@@ -9,7 +9,6 @@ from AAdialogs import *
 #Default Python
 import math
 import threading
-# Test change for github control
 
 
 class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI interface
