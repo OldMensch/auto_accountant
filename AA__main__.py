@@ -9,7 +9,6 @@ from AAdialogs import *
 #Default Python
 import math
 import threading
-#Test 3
 
 
 class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI interface
@@ -39,7 +38,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if setting('offlineMode'):
             #If in Offline Mode, try to load any saved offline market data. If there is an issue, goes into online mode
             try:
-                with open('#OfflineMarketData.json', 'r') as file:
+                with open('OfflineMarketData.json', 'r') as file:
                     data = json.load(file)
                     data['_timestamp']
                     marketdatalib.update(data)
@@ -198,15 +197,15 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         """Toggles if state is unspecified, sets to state if specified"""
         if setting('offlineMode'):  #Changed from Offline to Online Mode
             self.online_event.set()
-            self.GUI['timestamp_indicator'].setText('Data from ' + marketdatalib['_timestamp'][0:16])
+            self.GUI['timestamp_indicator'].setText('Data being downloaded...')
             self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
         else:                       #Changed to from Online to Offline Mode
             if '_timestamp' in marketdatalib:   # Saves marketdatalib for offline use, if we have any data to save
-                with open('#OfflineMarketData.json', 'w') as file:
+                with open('OfflineMarketData.json', 'w') as file:
                     json.dump(marketdatalib, file, indent=4, sort_keys=True)
             else:                               # If we don't have data to save, try to load old data. If that fails... we're stuck in Online Mode
                 try:
-                    with open('#OfflineMarketData.json', 'r') as file:
+                    with open('OfflineMarketData.json', 'r') as file:
                         data = json.load(file)
                         data['_timestamp']
                         marketdatalib.update(data)
@@ -754,12 +753,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                     match f.relation():
                         case '<':   
                             if item_state >= f.state(): blacklist.add(item)
-                        case '≤':   
-                            if item_state > f.state(): blacklist.add(item)
                         case '=':   
                             if item_state != f.state(): blacklist.add(item)
-                        case '≥':   
-                            if item_state < f.state(): blacklist.add(item)
                         case '>':   
                             if item_state <= f.state(): blacklist.add(item)
                     

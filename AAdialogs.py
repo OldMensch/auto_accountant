@@ -474,7 +474,7 @@ class FilterEditor(Dialog): #For creating/editing filters
 
         # Relation
         self.add_label('Relation',0,1)
-        self.DROPDOWN_relation = self.add_dropdown_list({r:r for r in ('<','≤','=','≥','>')}, 1, 1, current='=')
+        self.DROPDOWN_relation = self.add_dropdown_list({r:r for r in ('<','=','>')}, 1, 1, current='=')
 
         # State
         self.add_label('State',0,2)
