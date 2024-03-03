@@ -177,15 +177,15 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         taskbar.addMenu(about)
         about.addAction('MIT License', self.copyright)
         
-        #'Info' Tab
-        infomenu = self.TASKBAR['info'] = QMenu('Info')
-        taskbar.addMenu(infomenu)
+        #'Metrics' Tab
+        metricsmenu = self.TASKBAR['metrics'] = QMenu('Metrics')
+        taskbar.addMenu(metricsmenu)
         
         # Adds a toggleable list for all metric headers on the portfolio page
-        self.infoactions = {
-            header:QAction(metric_formatting_lib[header]['name'], parent=infomenu, triggered=p(self.toggle_header, header), checkable=True, checked=header in setting('header_portfolio')) for header in default_portfolio_headers
+        self.metricactions = {
+            header:QAction(metric_formatting_lib[header]['name'], parent=metricsmenu, triggered=p(self.toggle_header, header), checkable=True, checked=header in setting('header_portfolio')) for header in default_portfolio_headers
             }
-        for action in self.infoactions.values():   infomenu.addAction(action)
+        for action in self.metricactions.values():   metricsmenu.addAction(action)
 
         #'Taxes' Tab
         taxes = self.TASKBAR['taxes'] = QMenu('Taxes')
@@ -421,9 +421,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #contains the buttons for opening editors, info displays, etc.
         self.GUI['buttonLayout'] = QHBoxLayout()
         self.GUI['buttonFrame'] = QWidget(layout=self.GUI['buttonLayout'])
-        self.GUI['info'] = QPushButton(icon=icon('info2'), iconSize=icon('size'),  clicked=self.portfolio_stats_and_info)
-        self.GUI['edit'] = QPushButton(icon=icon('settings2'), iconSize=icon('size'))
-        self.GUI['new_transaction'] = QPushButton('+ Trans', clicked=p(TransEditor, self), fixedHeight=icon('size2').height())
+        self.GUI['info'] = QPushButton(icon=icon('info'), iconSize=icon('size'),  clicked=self.portfolio_stats_and_info)
+        self.GUI['edit'] = QPushButton(icon=icon('settings'), iconSize=icon('size'))
         #contains the list of assets/transactions
         self.GUI['GRID'] = GRID(self, self.set_sort, self._header_menu, self._left_click_row, self._right_click_row)
         #The little bar on the bottom
@@ -465,11 +464,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['sidePanelLayout'].addWidget(self.GUI['page_prev'], 7, 0, 1, 1)
         self.GUI['sidePanelLayout'].addWidget(self.GUI['page_next'], 7, 1, 1, 1)
 
-        #Button Frame - contains info button, new transaction, sometimes new asset, or edit asset
+        #Button Frame - inside the side panel, contains info button and edit asset button
         self.GUI['buttonLayout'].addWidget(self.GUI['info'])
         self.GUI['buttonLayout'].addStretch(1)
         self.GUI['buttonLayout'].addWidget(self.GUI['edit'])
-        self.GUI['buttonLayout'].addWidget(self.GUI['new_transaction'])
         
         #Bottom Frame - This could be replaced by the QStatusBar widget, which may be better suited for this use
         self.GUI['bottomLayout'].addWidget(self.GUI['copyright'])
@@ -482,8 +480,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #GUI TOOLTIPS
         #==============================
         tooltips = {
-            'new_transaction':      'Create a new transaction',
-
             'back':                 'Return to the main portfolio',
             'page_prev':            'Go to last page',
             'page_next':            'Go to next page',
@@ -498,12 +494,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.new)
         self.MENU['load'] = QPushButton(icon=icon('load'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.load)
         self.MENU['save'] = QPushButton(icon=icon('save'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.save)
-        self.MENU['settings'] = QPushButton(icon=icon('settings2'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
+        self.MENU['settings'] = QPushButton(icon=icon('settings'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
 
         self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self._ctrl_z)
         self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self._ctrl_y)
 
-        self.MENU['wallets'] = QPushButton('Wallets', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
+        self.MENU['new_transaction'] = QPushButton('New\n  Transaction  ', clicked=p(TransEditor, self), fixedHeight=icon('size2').height())
+        self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
         #MENU RENDERING
@@ -516,6 +513,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['menuLayout'].addWidget(self.MENU['undo'])
         self.GUI['menuLayout'].addWidget(self.MENU['redo'])
         self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['new_transaction'])
         self.GUI['menuLayout'].addWidget(self.MENU['wallets'])
         self.GUI['menuLayout'].addWidget(self.MENU['filters'])
         self.GUI['menuLayout'].addStretch(1)
@@ -523,16 +521,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #MENU TOOLTIPS
         #==============================
         tooltips = {
-            'new':          'Create a new portfolio',
-            'load':         'Load an existing portfolio',
-            'save':         'Save this portfolio',
-            'settings':     'Settings',
+            'new':              'Create a new portfolio',
+            'load':             'Load an existing portfolio',
+            'save':             'Save this portfolio',
+            'settings':         'Settings',
 
-            'undo':         'Undo last action',
-            'redo':         'Redo last action',
+            'undo':             'Undo last action',
+            'redo':             'Redo last action',
 
-            'wallets':      'Manage wallets',
-            'filters':      'Manage filters',
+            'new_transaction':  'Create a new transaction',
+            'wallets':          'Manage wallets',
+            'filters':          'Manage filters',
         }
         for widget in tooltips:     self.MENU[widget].setToolTip(tooltips[widget])
 
@@ -548,7 +547,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             m.addAction('Move Right',         p(self.move_header, info, 'right'))
             m.addAction('Move to End',        p(self.move_header, info, 'end'))
         m.addSeparator()
-        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.infoactions[info].trigger)
+        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[info].trigger)
         m.exec(event.globalPos())
     def move_header(self, info, shift='beginning'):
         if self.rendered.isPortfolio():     header = 'header_portfolio'

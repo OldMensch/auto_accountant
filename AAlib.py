@@ -275,8 +275,6 @@ def loadIcons(): # loads the icons for the GUI
         'new' : QPixmap(extra_dir+'icons/new.png'),
         'load' : QPixmap(extra_dir+'icons/load.png'),
         'save' : QPixmap(extra_dir+'icons/save.png'),
-        'settings2' : QPixmap(extra_dir+'icons/settings2.png'),
-        'info2' : QPixmap(extra_dir+'icons/info2.png'),
         'filter' : QPixmap(extra_dir+'icons/filter.png'),
         'undo' : QPixmap(extra_dir+'icons/undo.png'),
         'redo' : QPixmap(extra_dir+'icons/redo.png'),
@@ -326,7 +324,7 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'unrealized_profit_and_loss':{  'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
     'number_of_transactions': {     'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
-    
+
     #Unique to portfolios
     'number_of_assets': {           'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
 

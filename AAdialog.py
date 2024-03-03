@@ -165,6 +165,8 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'] = QGridLayout() # Contains whatever content we really want for our dialog. Controlled by our modular system below
         self.GUI['primaryFrame'] = QFrame(self, layout=self.GUI['primaryLayout'])
 
+        self.GUI['menuLayoutSpacer'] = QHBoxLayout()  # I ONLY need this to add spacers before/after the menu buttons, BEFORE they are all added
+        self.GUI['menuFrameSpacer'] = QWidget(self, layout=self.GUI['menuLayoutSpacer'])
         self.GUI['menuLayout'] = QHBoxLayout() # Buttons like "OK" and "CANCEL" and "SAVE", etc.
         self.GUI['menuFrame'] = QWidget(self, layout=self.GUI['menuLayout'])
 
@@ -176,7 +178,11 @@ class Dialog(QDialog):
             self.GUI['masterLayout'].addWidget(self.GUI['title'])
         self.GUI['masterLayout'].addWidget(self.GUI['primaryFrame'])
         self.GUI['masterLayout'].addWidget(self.GUI['errormsg'])
-        self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'])
+        self.GUI['masterLayout'].addWidget(self.GUI['menuFrameSpacer'])
+        self.GUI['menuLayoutSpacer'].addStretch(1)
+        self.GUI['menuLayoutSpacer'].addWidget(self.GUI['menuFrame'])
+        self.GUI['menuLayoutSpacer'].addStretch(1)
+
 
     def display_error(self, msg):
         self.GUI['errormsg'].setText(msg)
@@ -217,9 +223,11 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'].addWidget(dropdown, row, column, rowspan, columnspan)
         return dropdown
 
-    def add_menu_button(self, text, command=None, *args, **kwargs) -> None:
-        '''Adds a button to the menu at the bottom of the dialog'''
-        self.GUI['menuLayout'].addWidget(QPushButton(text, clicked=command, fixedHeight=icon('size').height(), *args, **kwargs))
+    def add_menu_button(self, text, command=None, spacer='  ', *args, **kwargs) -> None:
+        '''Adds a button to the menu at the bottom of the dialog
+        \nNOTE: Spaces are added to the button title for a better look
+        '''
+        self.GUI['menuLayout'].addWidget(QPushButton(spacer+text+spacer, clicked=command, fixedHeight=icon('size').height(), *args, **kwargs))
     
     def add_list_entry(self, dictionary:dict, column, row, current=None, rowspan=1,columnspan=1, mode='single', selectCommand=None, *args, **kwargs) -> ListEntry:
         '''Adds a scrollable list, from which you can select a singular, or multiple items\n
