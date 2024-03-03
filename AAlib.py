@@ -55,7 +55,15 @@ time_sum = 0
 time_avg_windows = 0
 
 def ttt(string:str='reset'):
-    '''\'reset\' prints the current time then sets to 0, \'start\' subtracts a startpoint, \'end\' adds an endpoint'''
+    '''A timer for measuring program performance.\n
+    \n\'reset\' prints the current time then sets to 0, 
+    \n\'start\' subtracts a startpoint, 
+    \n\'end\' adds an endpoint,
+    \n\'terminate\' is end + reset,
+    \n\'avg_save\' adds a start/end delta to a sum, and logs the number of saves,
+    \n\'avg_end\' is end + avg_save,
+    \n\'average_report\' reports the average delta length, and number of cycles.
+    '''
     global timestamp
     global time_sum
     global time_avg_windows
@@ -73,8 +81,8 @@ def ttt(string:str='reset'):
             timestamp += time.time()*1000
             ttt('reset')
         case 'avg_save':
-            time_sum += timestamp
-            time_avg_windows += 1
+            time_sum += timestamp # adds start/end delta to time_sum
+            time_avg_windows += 1 # indicates one save has been performed
             timestamp = 0
         case 'avg_end':
             ttt('end')
@@ -295,19 +303,11 @@ default_portfolio_headers = ( # The default list of MUTABLE info headers for the
 
 default_asset_headers = ('date', 'type', 'wallet', 'quantity', 'value', 'price') #list of (currently immutable) info headers for the Asset rendering view
 
-# List of all metrics which can be used as a filter
-# NOTE: Same as two above combined, just not able to filter by DATE
-filterable_metrics = (
-    'ticker','name','class',
-    'holdings','price','marketcap',
-    'value','volume24h','day_change',
-    'day%','week%','month%',
-    'portfolio%','cash_flow','net_cash_flow',
-    'realized_profit_and_loss','tax_capital_gains','tax_income','unrealized_profit_and_loss',
-    'unrealized_profit_and_loss%','average_buy_price',
+default_grand_ledger_headers = ('date','type','wallet',
+                                'loss_asset','loss_quantity','loss_price',
+                                'fee_asset','fee_quantity','fee_price',
+                                'gain_asset','gain_quantity','gain_price')
 
-    'type', 'wallet', 'quantity', 'value', 'price'
-)
 
 metric_formatting_lib = { # Includes formatting information for every metric in the program
     # Shared by portfolios, assets, and transactions
@@ -325,9 +325,9 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'tax_income':{                  'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
     'unrealized_profit_and_loss':{  'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
-
-    #Unique to portfolios
     'number_of_transactions': {     'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
+    
+    #Unique to portfolios
     'number_of_assets': {           'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
 
     # Unique to assets
@@ -346,13 +346,13 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'type':{            'format':'alpha',      'color':'type',       'name':'Type',          'headername':'Type'           },
     'wallet':{          'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
     'loss_asset':{      'format':'alpha',      'color':None,         'name':'Loss Asset',    'headername':'Loss\nAsset'    },
-    'loss_quantity':{   'format':'',           'color':None,         'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
+    'loss_quantity':{   'format':'accounting', 'color':'accounting', 'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
     'loss_price':{      'format':'',           'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
     'fee_asset':{       'format':'alpha',      'color':None,         'name':'Fee Asset',     'headername':'Fee\nAsset'     },
-    'fee_quantity':{    'format':'',           'color':None,         'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
+    'fee_quantity':{    'format':'accounting', 'color':'accounting', 'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
     'fee_price':{       'format':'',           'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
     'gain_asset':{      'format':'alpha',      'color':None,         'name':'Gain Asset',    'headername':'Gain\nAsset'    },
-    'gain_quantity':{   'format':'',           'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
+    'gain_quantity':{   'format':'accounting', 'color':'accounting', 'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
     'gain_price':{      'format':'',           'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
 
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
@@ -547,10 +547,12 @@ settingslib = { # A library containing all of the default settings
     'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
     'lastSaveDir': '',                          # Our last opened portfolio's filepath
     'offlineMode': True,                        # Whether or not to start in offline/online mode
-    'header_portfolio': list(default_portfolio_headers),     # List of headers displayed when showing a portfolio
-    'header_asset': list(default_asset_headers),         # List of headers displayed when showing an asset
+    'header_portfolio': list(default_portfolio_headers),        # List of headers displayed when showing a portfolio
+    'header_asset': list(default_asset_headers),                # List of headers displayed when showing an asset
+    'header_grand_ledger': list(default_grand_ledger_headers),  # List of headers displayed when showing a portfolio
     'sort_portfolio': ['ticker', False],        # Which column to sort our portfolio by, and whether this ought to be in reverse order
     'sort_asset': ['date', False],              # Which column to sort our asset by, and whether this ought to be in reverse order
+    'sort_grand_ledger': ['date', False],       # Which column to sort our grand ledger by, and whether this ought to be in reverse order
     'CMCAPIkey': '',                            # Our CoinMarketCap API key, so we can get current crypto market data
     'accounting_method': 'hifo',                # Accounting method to use when performing automated calculations
     'timezone': 'GMT',                          # Timezone to report times in. Times are saved permanently in UNIX.

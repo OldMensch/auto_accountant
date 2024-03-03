@@ -4,36 +4,33 @@ from AAobjects import *
 
  
 class Message(Dialog): #Simple text popup, can add text with colors to it
-    def __init__(self, upper, title, message, *args, **kwargs):
+    """Simple textbox popup for displaying a message
+    \ncloseMenuButtonTitle - title of the button for closing the window. Default is 'Ok', typically also 'Cancel'
+    \nscrollable - set to false for brief messages, true for large messages or ones you want the user to be able to copy
+    \nbig - when true, window set to 75% of the user's monitor size vertically/horizontally
+    \ntabStopWidth - size of tab intentation in characters
+    """
+    def __init__(self, upper, title, message, closeMenuButtonTitle='Ok', scrollable=False, big=False, tabStopWidth=None, *args, **kwargs):
         super().__init__(upper, title)
-        self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=True)
-        self.add_menu_button('Ok', self.close)
-        self.show()
-    
-    def setText(self, text): self.text.setText(text)
 
-class Message2(Dialog): # extra-large message box intended for displaying lots of text
-    def __init__(self, upper, title, message, tabStopWidth=None, *args, **kwargs):
-        super().__init__(upper, title)
+        if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'))
+        else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=True)
+
+        if big:         
+            availableSpace = QGuiApplication.primaryScreen().availableGeometry()
+            self.setFixedSize(availableSpace.width()*.75, availableSpace.height()*.75)
         
-        availableSpace = QGuiApplication.primaryScreen().availableGeometry()
-        self.setFixedSize(availableSpace.width()*.70, availableSpace.height()*.8)
-        self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'))
         if tabStopWidth: self.text.setTabStopDistance(tabStopWidth)
 
-        self.add_menu_button('Ok', self.close)
+
+        self.add_menu_button(closeMenuButtonTitle, self.close)
         self.show()
     
     def setText(self, text): self.text.setText(text)
-
-class Prompt(Dialog): #Simple text popup, doesn't display, waits for additional buttons to be added before .show() has to be called
-    def __init__(self, upper, title, message, *args, **kwargs):
-        super().__init__(upper, title)
-        self.add_label(message, 0, 0, styleSheet=style('displayFont'))
-        self.add_menu_button('Cancel', self.close)
 
 
 class AssetEditor(Dialog):    #For editing an asset's name and description ONLY. The user NEVER creates assets, the program does this automatically
+    '''Opens dialog for editing assets' name/description. Asset creation/deletion is managed by the program automatically.'''
     def __init__(self, upper, asset:Asset):
         self.asset = asset
 
@@ -77,11 +74,12 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
         self.asset._name = NAME # Set existing asset name to saved name
         self.asset._description = DESC # Set existing asset description to saved description
 
-        self.upper.render(sort=True)
+        self.upper.render(True)
         self.upper.undo_save()
         self.close()
 
 class TransEditor(Dialog):    #The most important, and most complex editor. For editing transactions' date, type, wallet, second wallet, tokens, price, usd, and description.
+    """Opens dialog for creating/editing transactions"""
     def __init__(self, upper, transaction:Transaction=None, copy=False, *args, **kwargs):
         if not transaction or copy:     self.t = None
         else:                           self.t = transaction
@@ -219,7 +217,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         self.upper.undo_save()          #creates a savepoint after deleting this
         self.upper.metrics()            #recalculates metrics for this asset w/o this transaction
-        self.upper.render(sort=True)    #re-renders the main portfolio w/o this transaction
+        self.upper.render(True)    #re-renders the main portfolio w/o this transaction
         self.close()
 
     def save(self):
@@ -269,6 +267,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         ################################
         error = None
 
+        # CONVERT DATE TO VALID UNIX CODE
         #valid datetime format? - NOTE: This also converts the date to unix time
         try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
         except:     error = 'Invalid date!'
@@ -343,14 +342,14 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         self.upper.undo_save()
         self.upper.metrics()
-        self.upper.render(sort=True)
+        self.upper.render(True)
         self.close()
 
 class WalletManager(Dialog): #For selecting wallets to edit
-    '''Creates a small window for selecting wallets to edit, or creating new wallets'''
+    '''Opens dialog with list of current wallets to edit, and a button for creating new wallets'''
     def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Manage Wallets')
-        self.walletlist = self.add_list_entry(None, 0, 0, selectCommand=self.edit_wallet)
+        self.wallet_list = self.add_list_entry(None, 0, 0, selectCommand=self.edit_wallet)
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('+ Wallet', self.new_wallet, styleSheet=style('new'))
         self.refresh_wallets()
@@ -363,39 +362,40 @@ class WalletManager(Dialog): #For selecting wallets to edit
         WalletEditor(self, wallet_name)
 
     def refresh_wallets(self):
-        self.walletlist.update_dict({wallet.name():wallet for wallet in MAIN_PORTFOLIO.wallets()})
+        self.wallet_list.update_dict({wallet.name():wallet for wallet in MAIN_PORTFOLIO.wallets()})
         
 class WalletEditor(Dialog): #For creating/editing Wallets
-    def __init__(self, walletManager, wallet:Wallet=None):
-        self.wallet = wallet
-        if wallet == None: #New wallet
+    """Opens dialog for creating/editing wallets"""
+    def __init__(self, walletManager, wallet_to_edit:Wallet=None):
+        self.wallet_to_edit = wallet_to_edit
+        if wallet_to_edit == None: #New wallet
             super().__init__(walletManager, 'Create Wallet')
         else: # Edit existing wallet
-            super().__init__(walletManager, 'Edit '+ wallet.name() +' Wallet')
+            super().__init__(walletManager, 'Edit '+ wallet_to_edit.name() +' Wallet')
         # Name
         self.add_label('Name',0,0)
         self.ENTRY_name = self.add_entry('', 1, 0, maxLength=24)
-        if self.wallet: self.ENTRY_name.set(wallet.name())
+        if self.wallet_to_edit: self.ENTRY_name.set(wallet_to_edit.name())
 
         # Description
         self.add_label('Description',0,1)
         self.ENTRY_desc = self.add_entry('', 1, 1, format='description')
-        if self.wallet: self.ENTRY_desc.set(wallet.desc())
+        if self.wallet_to_edit: self.ENTRY_desc.set(wallet_to_edit.desc())
 
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if wallet != None:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        if wallet_to_edit != None:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
         self.show()
 
     def delete(self):
         # Only possible when editing an existing wallet
         # CHECK - Make sure this wallet has no transactions under it
         for t in MAIN_PORTFOLIO.transactions():
-            if t.wallet() == self.wallet.name():   #is the wallet you're deleting used anywhere in the portfolio?
+            if t.wallet() == self.wallet_to_edit.name():   #is the wallet you're deleting used anywhere in the portfolio?
                 self.display_error('[ERROR] You cannot delete this wallet, as it is used by existing transactions.') # If so, you can't delete it. 
                 return
 
-        MAIN_PORTFOLIO.delete_wallet(self.wallet)  #destroy the old wallet
+        MAIN_PORTFOLIO.delete_wallet(self.wallet_to_edit)  #destroy the old wallet
         #Don't need to recalculate metrics or rerender AA, since you can only delete wallets if they're not in use
         self.upper.refresh_wallets()
         self.upper.upper.undo_save()
@@ -410,7 +410,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         # CHECKS
         #==============================
         #new ticker will be unique?
-        if MAIN_PORTFOLIO.hasWallet(new_wallet.get_hash()) and NAME != self.wallet.name():
+        if MAIN_PORTFOLIO.hasWallet(new_wallet.get_hash()) and NAME != self.wallet_to_edit.name():
             self.display_error('[ERROR] A wallet already exists with this name!')
             return
         #Name isn't an empty string?
@@ -422,11 +422,11 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         #==============================
         MAIN_PORTFOLIO.add_wallet(new_wallet)   #Creates the new wallet, or overwrites the existing one's description
 
-        if self.wallet != None and self.wallet.name() != NAME:   #WALLET RE-NAMED
+        if self.wallet_to_edit != None and self.wallet_to_edit.name() != NAME:   #WALLET RE-NAMED
             #destroy the old wallet
-            MAIN_PORTFOLIO.delete_wallet(self.wallet) 
+            MAIN_PORTFOLIO.delete_wallet(self.wallet_to_edit) 
             for t in list(MAIN_PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
-                if t.wallet() == self.wallet.name():      
+                if t.wallet() == self.wallet_to_edit.name():      
                     new_trans = t.toJSON()
                     MAIN_PORTFOLIO.delete_transaction(t.get_hash()) #Changing the wallet name changes the transactions HASH, so we have to remove and re-add it
                     new_trans['wallet'] = NAME 
@@ -434,7 +434,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()
-            self.upper.upper.render(sort=True)
+            self.upper.upper.render(True)
 
         self.upper.refresh_wallets()
         self.upper.upper.undo_save()
@@ -442,7 +442,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
 
 # Filters are in-memory only
 class FilterManager(Dialog): #For selecting filter rules to edit
-    '''Creates a small window for selecting filters to edit, or creating new filters'''
+    '''Opens dialog with list of current filters to edit, and a button for creating new filters'''
     def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Manage Filters')
         self.filterlist = self.add_list_entry(None, 0, 0, selectCommand=self.edit_filter)
@@ -458,45 +458,63 @@ class FilterManager(Dialog): #For selecting filter rules to edit
         FilterEditor(self, filter_name)
 
     def refresh_filters(self):
-        self.filterlist.update_dict({metric_formatting_lib[filter.metric()]['name']+' '+filter.relation()+' '+str(filter.state()):filter for filter in MAIN_PORTFOLIO.filters()})
+        self.filterlist.update_dict({filter.get_rule_name():filter for filter in MAIN_PORTFOLIO.filters()})
         
 class FilterEditor(Dialog): #For creating/editing filters
-    def __init__(self, filterManager, filter:Filter=None):
-        self.filter = filter
-        if filter == None: #New filter
+    """Opens dialog for creating/editing filters"""
+    def __init__(self, filterManager, filter_to_edit:Filter=None):
+        self.filter_to_edit = filter_to_edit
+        if filter_to_edit == None: #New filter
             super().__init__(filterManager, 'Create Filter')
         else: # Edit existing filter
             super().__init__(filterManager, 'Edit Filter')
 
         # Metric
         self.add_label('Metric',0,0)
-        self.DROPDOWN_metric = self.add_dropdown_list({metric_formatting_lib[metric]['name']:metric for metric in filterable_metrics}, 1, 0, sortOptions=True)
+        all_filterable_metrics = set(default_portfolio_headers + default_asset_headers + default_grand_ledger_headers)
+        self.DROPDOWN_metric = self.add_dropdown_list({metric_formatting_lib[metric]['name']:metric for metric in all_filterable_metrics}, 1, 0, sortOptions=True)
+        self.DROPDOWN_metric.currentTextChanged.connect(self.update_date_entry_visibility) # When metric is changed, if date, it needs a special entry box.
 
         # Relation
         self.add_label('Relation',0,1)
         self.DROPDOWN_relation = self.add_dropdown_list({r:r for r in ('<','=','>')}, 1, 1, current='=')
 
         # State
-        self.add_label('State',0,2)
+        self.add_label('State',0,2,rowspan=2)
         self.ENTRY_state = self.add_entry('', 1, 2)
+        self.ENTRY_date = self.add_entry(str(datetime.now()).split('.')[0], 1, 3, format='date')
         
-        if self.filter: # When editing, fill info in
+        # EDITING - Autofill info in when editing
+        if self.filter_to_edit:
             self.DROPDOWN_metric.set(filter.metric())
             self.DROPDOWN_metric.setReadOnly(True) # Can't change metric when editing
             self.DROPDOWN_relation.set(filter.relation())
-            self.ENTRY_state.set(str(filter.state()))
+            if filter.metric() == 'date':
+                self.ENTRY_date.set(unix_to_local_timezone(filter.state()))
+            else:
+                self.ENTRY_state.set(str(filter.state()))
 
+        self.update_date_entry_visibility()
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
         if filter:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
         self.show()
 
+    def update_date_entry_visibility(self):
+        """Enables date entry box when date is selected, false otherwise"""
+        if self.DROPDOWN_metric.entry() == 'date':
+            self.ENTRY_state.hide()
+            self.ENTRY_date.show()
+        else:
+            self.ENTRY_state.show()
+            self.ENTRY_date.hide()
+
     def delete(self):
         # Only possible when editing an existing filter
-        MAIN_PORTFOLIO.delete_filter(self.filter)  #destroy the old filter
+        MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
         if len(MAIN_PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet(style('')) #Turn off filtering indicator
-        self.upper.upper.render(sort=True) # Always re-render when filters are applied/removed
+        self.upper.upper.render(True) # Always re-render when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
@@ -504,10 +522,17 @@ class FilterEditor(Dialog): #For creating/editing filters
         METRIC = self.DROPDOWN_metric.entry()
         RELATION = self.DROPDOWN_relation.entry()
         STATE = self.ENTRY_state.entry()
-
+        DATE = self.ENTRY_date.entry()
 
         # CHECKS
         #==============================
+        # CONVERT DATE TO VALID UNIX CODE, SET STATE TO DATE IF RELEVANT
+        # If relevant, valid datetime format? - NOTE: This also converts the date to unix time
+        if METRIC == 'date':
+            try:        STATE = timezone_to_unix(DATE)
+            except:     
+                self.display_error('[ERROR] Invalid date!')
+                return
         #State isn't an empty string?
         if STATE == '':
             self.display_error('[ERROR] Must enter a state for this filter')
@@ -523,34 +548,37 @@ class FilterEditor(Dialog): #For creating/editing filters
         else:
             new_filter = Filter(METRIC, RELATION, STATE)
         # Not using a non-equals, if metric is alpha?
-        if not metric_is_numeric and RELATION != '=':
+        if not metric_is_numeric and RELATION != '=' and METRIC != 'date':
             self.display_error('[ERROR] Relation must be \'=\' for text metrics')
             return
-        
+        # Identical filter doesn't already exist?
+        if new_filter is not self.filter_to_edit and new_filter in MAIN_PORTFOLIO.filters():
+            self.display_error('[ERROR] Identical filter already exists')
+            return
 
         # SAVING
         #==============================
         MAIN_PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
-        if self.filter: MAIN_PORTFOLIO.delete_filter(self.filter)
+        if self.filter_to_edit: MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)
         
         self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
-        self.upper.upper.render(sort=True)  # Always re-render when filters are applied/removed
+        self.upper.upper.render(True)  # Always re-render when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
 
 class ImportationDialog(Dialog): #For selecting wallets to import transactions to
-    '''Allows user to specify one or two wallets which transactions will be imported to, for Gemini, Gemini Earn, Coinbase, etc.'''
+    '''Opens dialog for specifying one or two wallets to which transactions will be imported, for Gemini, Gemini Earn, Coinbase, etc.'''
     def __init__(self, upper, continue_command, wallet_name):
         super().__init__(upper, 'Import to Wallet')
         self.add_label(wallet_name,0,0)
-        self.wallet_dropdown = self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
+        self.wallet_to_edit_dropdown = self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Import', p(self.complete, continue_command, wallet_name), styleSheet=style('new'))
         self.show()
     
     def complete(self, continue_command, wallet_name):
-        result = self.wallet_dropdown.entry()
+        result = self.wallet_to_edit_dropdown.entry()
         if result == None:   
             self.display_error('[ERROR] Must select a '+wallet_name+'.')
             return

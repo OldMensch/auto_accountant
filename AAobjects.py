@@ -29,6 +29,14 @@ class Filter():
     # Returns true, when format of metric/state is alpha (non-numeric)
     def is_alpha(self) -> bool: return metric_formatting_lib[self._metric]['format'] == 'alpha' 
 
+    # Prints rule-name for this filter like "Value > 5"
+    def get_rule_name(self) -> str:
+        """Returns proper title for filter, like \"Value > 5\""""
+        if self.metric() == 'date':
+            return metric_formatting_lib[self.metric()]['name']+' '+self.relation()+' '+unix_to_local_timezone(self.state())
+        else:
+            return metric_formatting_lib[self.metric()]['name']+' '+self.relation()+' '+str(self.state())
+
 
 class Wallet():
     def __init__(self, name:str, description:str=''):
@@ -230,7 +238,7 @@ class Transaction():
     def style(self, info:str, asset:str=None) -> tuple: #returns a tuple of foreground, background color
         color_format = metric_formatting_lib[info]['color']
         if color_format == 'type':                                          return style(self._data['type'])
-        elif color_format == 'accounting' and self.get(info, asset) < 0:    return style('loss')
+        elif color_format == 'accounting' and asset and self.get(info, asset) < 0:    return style('loss')
         return ''
 
     def pretty(self, info:str, asset:str=None) -> tuple: #Returns a tuple of pretty info, foreground color, and background color
@@ -873,30 +881,66 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
             toDisplay += str(r+1)+'<br>'
         self.item_indices[1].setText(toDisplay.removesuffix('<br>'))
         
-        stop = len(sorted_items)-1 #last viable index with an item in self.sorted
+        stop = len(sorted_items)-1 #last index in self.sorted
         for c in range(len(self.columns)):
-            #The header
+            # Column header
             header_title = headers[c]
-            self.columns[c][0].setText(metric_formatting_lib[header_title]['headername'])
-            self.columns[c][0].info = header_title
-            if self.upper.rendered[0] == 'portfolio':
+            self.columns[c][0].setText(metric_formatting_lib[header_title]['headername']) # Sets text to proper header name
+            self.columns[c][0].info = header_title # Sets info quick-access variable, to current header's variable
+            if self.upper.rendered.isPortfolio(): # Sets header tooltip
                 self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['asset'][header_title], 40)))
-            else:
+            elif self.upper.rendered.isAsset() or self.upper.rendered.isGrandLedger():
                 self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['transaction'][header_title], 40)))
 
 
-            #The data
-            longest_text_length = 0
-            text = self.columns[c][1]
-            toDisplay = ''
+            # Column text (the actual data)
+            longest_text_length = 0 # Records longest word/number: we use this to set the width of the column
+            toDisplay = '' # This will be the string of text for this column
             for r in rowrange:
                 if r > stop: toDisplay += '<br>' #Inserts empty lines where there is nothing to display
                 else:
-                    formatting = sorted_items[r].pretty(header_title, specialinfo) #NOTE: Lag is ~3.84ms
-                    if sorted_items[r].ERROR:   self.highlights[r%self.pagelength].error(True)
-                    if len(formatting[0]) > longest_text_length: longest_text_length = len(formatting[0])
-                    toDisplay += HTMLify(formatting[0], formatting[1])+'<br>'
-            text.setText(toDisplay.removesuffix('<br>'))
+                    formatting = sorted_items[r].pretty(header_title, specialinfo) #NOTE: Lag is ~3.84ms # Retrieves metric text and formatting from asset/transaction
+                    if sorted_items[r].ERROR:   self.highlights[r%self.pagelength].error(True) # if transaction/asset has an error, forces color to red
+                    if len(formatting[0]) > longest_text_length: longest_text_length = len(formatting[0]) # Records longest text, to set column width
+                    toDisplay += HTMLify(formatting[0], formatting[1])+'<br>' # adds this row of text to toDisplay
+            self.columns[c][1].setText(toDisplay.removesuffix('<br>')) # Sets column text to toDisplay
             
+
+class RenderState():
+    def __init__(self, func_portfolio, func_asset, func_grand_ledger, currentState, currentAsset=None):
+        self.func_asset = func_asset
+        self.func_portfolio = func_portfolio
+        self.func_grand_ledger = func_grand_ledger
+
+        self.state = currentState
+        self.asset = currentAsset
+    
+    def getState(self) -> str:
+        return self.state
+    def getAsset(self) -> str:
+        return self.asset
+    
+    def setPortfolio(self):
+        self.state = 'portfolio'
+        self.asset = None
+        self.func_portfolio()
+    def isPortfolio(self):
+        return self.state == 'portfolio'
+
+    def setAsset(self, currentAsset):
+        self.state = 'asset'
+        self.asset = currentAsset
+        self.func_asset()
+    def isAsset(self):
+        return self.state == 'asset'
+    
+    def setGrandLedger(self):
+        self.state = 'grand_ledger'
+        self.asset = None
+        self.func_grand_ledger()
+    def isGrandLedger(self):
+        return self.state == 'grand_ledger'
+
+
 
 
