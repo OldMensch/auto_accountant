@@ -88,7 +88,7 @@ def ttt(string:str='reset'):
             ttt('end')
             ttt('avg_save')
         case 'average_report':
-            print(str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows))
+            return str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows)
 
 class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows any thread to tell the main thread to run something
     def __init__(self, method):
@@ -235,12 +235,7 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 
     'entry':                "color: #ffff00; background: #000000; font-family: 'Courier New';",
     'disabledEntry':        "color: #aaaaaa; font-family: 'Courier New';",
-    'test': """
-            QPushButton             {background: #660000;} 
-            QPushButton:hover       {background: #bb0000;}
-            QPushButton:pressed     {background: #ff0000;}
-            """,
-    
+
     'purchase':             'background: #00aa00;',  'purchasetext':              'background: #005d00;',
     'purchase_crypto_fee':  'background: #00aa00;',  'purchase_crypto_feetext':   'background: #005d00;',
     'sale':                 'background: #d80000;',  'saletext':                  'background: #740000;',
@@ -289,7 +284,7 @@ def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon 
 
 
 # Contains all kinds of display info for various parts of the program
-default_portfolio_headers = ( # The default list of MUTABLE info headers for the Portfolio rendering view
+default_portfolio_headers = (
     'ticker','name','class',
     'holdings','price','marketcap',
     'value','volume24h','day_change',
@@ -299,7 +294,7 @@ default_portfolio_headers = ( # The default list of MUTABLE info headers for the
     'unrealized_profit_and_loss%','average_buy_price'
 )
 
-default_asset_headers = ('date', 'type', 'wallet', 'quantity', 'value', 'price') #list of (currently immutable) info headers for the Asset rendering view
+default_asset_headers = ('date', 'type', 'wallet', 'quantity', 'value', 'price')
 
 default_grand_ledger_headers = ('date','type','wallet',
                                 'loss_asset','loss_quantity','loss_price',
@@ -310,6 +305,7 @@ default_grand_ledger_headers = ('date','type','wallet',
 metric_formatting_lib = { # Includes formatting information for every metric in the program
     # Shared by portfolios, assets, and transactions
     'value':{                       'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
+    'description':{                 'format': 'alpha',      'color' : None,             'name':'Description',       'headername':'Description'},
 
     #Unique to portfolios and assets
     'day_change':{                  'format': 'penny',      'color' : 'profitloss',     'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
@@ -344,14 +340,24 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'type':{            'format':'alpha',      'color':'type',       'name':'Type',          'headername':'Type'           },
     'wallet':{          'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
     'loss_asset':{      'format':'alpha',      'color':None,         'name':'Loss Asset',    'headername':'Loss\nAsset'    },
-    'loss_quantity':{   'format':'accounting', 'color':'accounting', 'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
-    'loss_price':{      'format':'',           'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
     'fee_asset':{       'format':'alpha',      'color':None,         'name':'Fee Asset',     'headername':'Fee\nAsset'     },
-    'fee_quantity':{    'format':'accounting', 'color':'accounting', 'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
-    'fee_price':{       'format':'',           'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
     'gain_asset':{      'format':'alpha',      'color':None,         'name':'Gain Asset',    'headername':'Gain\nAsset'    },
-    'gain_quantity':{   'format':'accounting', 'color':'accounting', 'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
+    'loss_ticker':{     'format':'alpha',      'color':None,         'name':'Loss Ticker',    'headername':'Loss\nTicker'    },
+    'fee_ticker':{      'format':'alpha',      'color':None,         'name':'Fee Ticker',     'headername':'Fee\nTicker'     },
+    'gain_ticker':{     'format':'alpha',      'color':None,         'name':'Gain Ticker',    'headername':'Gain\nTicker'    },
+    'loss_class':{      'format':'alpha',      'color':None,         'name':'Loss Class',    'headername':'Loss\nClass'    },
+    'fee_class':{       'format':'alpha',      'color':None,         'name':'Fee Class',     'headername':'Fee\nClass'     },
+    'gain_class':{      'format':'alpha',      'color':None,         'name':'Gain Class',    'headername':'Gain\nClass'    },
+    'loss_quantity':{   'format':'accounting', 'color':None,         'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
+    'fee_quantity':{    'format':'accounting', 'color':None,         'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
+    'gain_quantity':{   'format':'accounting', 'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
+    'loss_price':{      'format':'',           'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
+    'fee_price':{       'format':'',           'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
     'gain_price':{      'format':'',           'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
+
+    'loss_value':{      'format':'',           'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
+    'fee_value':{       'format':'',           'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
+    'gain_value':{      'format':'',           'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
 
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 }
@@ -439,13 +445,13 @@ assetclasslib = {  #List of asset classes, by name tag
 }
 
 # List of assets which have changed tickers or have multiple tickers, so we can use the right one
-forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. This is for assets which have changed tickers over time.
+forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. Its possible a new asset took the ticker since.
     'CGLDzc':   ('CELOzc', '9999/12/31 00:00:00'), # Ticker is different on certain platforms
     'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00'),
 }
 
 
-# Display names for all transaction types
+# Translation dictionary between internal and display names for transaction types
 pretty_trans = {
     'purchase':             'Purchase',
     'purchase_crypto_fee':  'Purchase w / Crypto Fee',
@@ -476,19 +482,19 @@ trans_priority = {
     'sale':                 10,  #Out only
 }
 
-# Dictionary defining what data is required for each type of transaction
+# Indicates data to be stored, for each type of transaction
 valid_transaction_data_lib = {
     'purchase':             ('type', 'date', 'wallet', 'description',               'loss_quantity',                            'fee_quantity',              'gain_asset', 'gain_quantity'),
     'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',               'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
     'sale':                 ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',                            'fee_quantity',                            'gain_quantity'),
+    'expense':              ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price'),
+    'trade':                ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
+    'transfer_out':         ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price',                                            ),
+    'transfer_in':          ('type', 'date', 'wallet', 'description',                                              'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
     'gift_out':             ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price'),
     'gift_in':              ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
     'card_reward':          ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
     'income':               ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
-    'expense':              ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price'),
-    'transfer_out':         ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price',                                            ),
-    'transfer_in':          ('type', 'date', 'wallet', 'description',                                              'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
-    'trade':                ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
 }
 
 

@@ -99,11 +99,12 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.ENTRIES['type'] =  self.add_dropdown_list({pretty_trans[id]:id for id in pretty_trans}, 3, 1, default=' -TYPE- ', selectCommand=self.update_entry_interactability)
         self.add_label('Wallet',4,0)
         self.ENTRIES['wallet']= self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 4, 1, default=' -WALLET- ')
-        self.add_label('Asset',1,2,columnspan=2)
+        self.add_label('Asset Class',1,2)
         all_classes_dict = {assetclasslib[c]['name']:c for c in assetclasslib}
         self.ENTRIES['loss_class'] = self.add_dropdown_list(all_classes_dict, 1, 3, current='f')
         self.ENTRIES['fee_class'] =  self.add_dropdown_list(all_classes_dict, 1, 4, default='-NO FEE-')
         self.ENTRIES['gain_class'] = self.add_dropdown_list(all_classes_dict, 1, 5, current='f')
+        self.add_label('Ticker',2,2)
         self.ENTRIES['loss_asset'] = self.add_entry('USD', 2, 3, maxLength=24)
         self.ENTRIES['fee_asset'] =  self.add_entry('USD', 2, 4, maxLength=24)
         self.ENTRIES['gain_asset'] = self.add_entry('USD', 2, 5, maxLength=24)
@@ -124,7 +125,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         # ENTRY BOX DATA - When editing, puts existing data in entry boxes
         if transaction:
             for data in valid_transaction_data_lib[transaction.type()]:
-                tdata = transaction.get(data)
+                tdata = transaction.get_raw(data) # raw data from the JSON
                 if tdata == None:    continue       #Ignores missing data. Usually data is omitted to save space in memory, but not always
                 
                 #Update entry box with known data.
@@ -323,7 +324,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         # Create new assets that now have a transaction
         possible_new_assets = set()
         for asset_tc in ('loss_asset','fee_asset','gain_asset'):
-            asset = new_trans.get(asset_tc)
+            asset = new_trans.get_raw(asset_tc) # raw data from the json
             if asset:   possible_new_assets.add(asset)
         for a in possible_new_assets:
             if not MAIN_PORTFOLIO.hasAsset(a):
@@ -486,18 +487,18 @@ class FilterEditor(Dialog): #For creating/editing filters
         
         # EDITING - Autofill info in when editing
         if self.filter_to_edit:
-            self.DROPDOWN_metric.set(filter.metric())
+            self.DROPDOWN_metric.set(filter_to_edit.metric())
             self.DROPDOWN_metric.setReadOnly(True) # Can't change metric when editing
-            self.DROPDOWN_relation.set(filter.relation())
-            if filter.metric() == 'date':
-                self.ENTRY_date.set(unix_to_local_timezone(filter.state()))
+            self.DROPDOWN_relation.set(filter_to_edit.relation())
+            if filter_to_edit.metric() == 'date':
+                self.ENTRY_date.set(unix_to_local_timezone(filter_to_edit.state()))
             else:
-                self.ENTRY_state.set(str(filter.state()))
+                self.ENTRY_state.set(str(filter_to_edit.state()))
 
         self.update_date_entry_visibility()
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if filter:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        if filter_to_edit:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
         self.show()
 
     def update_date_entry_visibility(self):
@@ -584,5 +585,62 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
             return
         self.close()
         continue_command(result)   #Runs the importGemini or importCoinbase, or whatever command again, but with wallet data
-    
 
+class DEBUGStakingReportDialog(Dialog):
+    '''Opens dialog for reporting my current interest quantity of AMP/ALCX without having to do math'''
+    def __init__(self, upper):
+        super().__init__(upper, 'Import to Wallet')
+        self.add_label('Crypto Ticker',0,0)
+        self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24)
+        self.add_label('Staking Wallet',0,1)
+        self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
+        self.add_label('Crypto Ticker',0,2)
+        self.ENTRY_quantity = self.add_entry('', 1, 2, format='pos_float')
+        self.add_menu_button('Cancel', self.close)
+        self.add_menu_button('Report', self.report, styleSheet=style('new'))
+        self.show()
+
+    def report(self):
+        TICKER = self.ENTRY_asset.entry().upper()
+        WALLET = self.DROPDOWN_wallet.entry()
+        QUANTITY = self.ENTRY_quantity.entry()
+
+        # CHECKS
+        # Asset is in portfolio?
+        if not MAIN_PORTFOLIO.hasAsset(TICKER+'zc'):
+            self.display_error('[ERROR] Cryptocurrency \'TICKER\' not found in portfolio.')
+            return
+        # Selected a wallet?
+        if WALLET == None:   
+            self.display_error('[ERROR] Must select a staking wallet.')
+            return
+        # Quantity parsable as a decimal?
+        try: QUANTITY = Decimal(QUANTITY)
+        except:
+            self.display_error('[ERROR] Failed to parse quantity as float.')
+            return
+        # Quantity is > 0?
+        if QUANTITY <= 0:   
+            self.display_error('[ERROR] Must enter a positive, non-0 quantity.')
+            return
+
+        
+        # Add up all income transactions in this wallet for this asset
+        total_staking_income_thus_far = Decimal(0)
+        this_asset = MAIN_PORTFOLIO.asset(TICKER+'zc')
+        for transaction in this_asset._ledger.values():
+            if transaction.type() == 'income':
+                total_staking_income_thus_far += transaction.get_metric('gain_quantity')
+
+        # Quantity is < income thus far?
+        if QUANTITY < total_staking_income_thus_far:   
+            self.display_error(f'[ERROR] Staking quantity ({QUANTITY}) less than current total staking income earned ({total_staking_income_thus_far}).')
+            return
+        new_transaction = Transaction(timezone_to_unix(str(datetime.now()).split('.')[0]), 'income', WALLET.name(), 
+                                      gain=(TICKER+'zc', str(QUANTITY-total_staking_income_thus_far), str(this_asset.get_metric('price'))) )
+        MAIN_PORTFOLIO.add_transaction(new_transaction)
+
+        self.upper.undo_save()
+        self.upper.metrics()
+        self.upper.render(True)
+        self.close()

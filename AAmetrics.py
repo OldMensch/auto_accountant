@@ -65,26 +65,23 @@ class metrics:
         transactions = list(self.PORTFOLIO.transactions()) #0ms
         transactions.sort()
 
-        # ERRORS - We assume all transactions have no errors until proven erroneous
-        for t in transactions:      t.ERROR = False
-
         ###################################
         # TRANSFER LINKING - #NOTE: Lag is ~16ms for 159 transfer pairs under ~12000 transactions
         ###################################
         #Before we can iterate through all of our transactions, we need to pair up transfer_IN and transfer_OUTs, otherwise we lose track of cost basis which is BAD
-        transfer_IN = [t for t in transactions if t.type() == 'transfer_in' and not t.get('missing')[0]]    #A list of all transfer_INs, chronologically ordered
-        transfer_OUT = [t for t in transactions if t.type() == 'transfer_out' and not t.get('missing')[0]]  #A list of all transfer_OUTs, chronologically ordered
+        transfer_IN = [t for t in transactions if t.type() == 'transfer_in' and not t.ERROR]    #A list of all transfer_INs, chronologically ordered
+        transfer_OUT = [t for t in transactions if t.type() == 'transfer_out' and not t.ERROR]  #A list of all transfer_OUTs, chronologically ordered
 
         #Then, iterating through all the transactions, we pair them up. 
         for t_out in list(transfer_OUT):
             for t_in in list(transfer_IN): #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
-                if t_in.get('gain_asset') == t_out.get('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.precise('gain_quantity'), t_out.precise('loss_quantity'), 0.1):
+                if t_in.get_raw('gain_asset') == t_out.get_raw('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.get_metric('gain_quantity'), t_out.get_metric('loss_quantity'), 0.1):
                         # we've already paired this t_in or t_out. Skip this!
                         if (t_in not in transfer_IN) or (t_out not in transfer_OUT):    continue
                         
                         #SUCCESS - We've paired this t_out with a t_in!
-                        t_out._data['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
+                        t_out._metrics['dest_wallet'] = t_in.wallet() #We found a partner for this t_out, so set its _dest_wallet variable to the t_in's wallet
 
                         # Two transfers have been paired. Remove them from their respective lists
                         transfer_IN.remove(t_in)
@@ -94,9 +91,9 @@ class metrics:
         for t in transfer_IN + transfer_OUT:
             t.ERROR = True
             if t.type() == 'transfer_in':
-                t.ERR_MSG = 'Failed to automatically find a \'Transfer Out\' transaction under '+t.get('gain_asset')[:-2]+' that pairs with this \'Transfer In\'.'
+                t.ERR_MSG = 'Failed to automatically find a \'Transfer Out\' transaction under '+t.get_raw('gain_asset')[:-2]+' that pairs with this \'Transfer In\'.'
             else:
-                t.ERR_MSG = 'Failed to automatically find a \'Transfer In\' transaction under '+t.get('loss_asset')[:-2]+' that pairs with this \'Transfer Out\'.'
+                t.ERR_MSG = 'Failed to automatically find a \'Transfer In\' transaction under '+t.get_raw('loss_asset')[:-2]+' that pairs with this \'Transfer Out\'.'
                         
 
         ###################################
@@ -134,14 +131,14 @@ class metrics:
             ################################################################################################
             if zeroish_prec(gain._quantity):     return
             if t.type() == 'transfer_out':  return 
-            store_date = self.PORTFOLIO.transaction(gain._hash).date()  # Date of aquisition - note: we do this so we don't have to convert the gain's date from UNIX to ISO
-            disburse_date = t.date()                                    # Date of disposition
+            store_date = self.PORTFOLIO.transaction(gain._hash).iso_date()  # Date of aquisition - note: we do this so we don't have to convert the gain's date from UNIX to ISO
+            disburse_date = t.iso_date()                                    # Date of disposition
             cost_basis = gain._price*gain._quantity
             #The 'post-fee-value' is the sales profit, after fees, weighted to the actual quantity sold 
-            post_fee_value = (t.precise('gain_value')-t.precise('fee_value'))*(gain._quantity/total_disburse)
+            post_fee_value = (t.get_metric('gain_value')-t.get_metric('fee_value'))*(gain._quantity/total_disburse)
             if post_fee_value < 0:  post_fee_value = 0     #If we gained nothing and there was a fee, it will be negative. We can't have negative proceeds.
             form8949 = {
-                'Description of property':      str(gain._quantity) + ' ' + self.PORTFOLIO.transaction(gain._hash).get('gain_asset').split('z')[0],  # 0.0328453 ETH
+                'Description of property':      str(gain._quantity) + ' ' + self.PORTFOLIO.transaction(gain._hash).get_raw('gain_asset').split('z')[0],  # 0.0328453 ETH
                 'Date acquired':                store_date[5:7]+'/'+store_date[8:10]+'/'+store_date[:4],            # 11/12/2021    month, day, year
                 'Date sold or disposed of':     disburse_date[5:7]+'/'+disburse_date[8:10]+'/'+disburse_date[:4],   # 6/23/2022     month, day, year
                 'Proceeds':                     str(post_fee_value),    # to value gained from this sale/trade/expense/gift_out. could be negative if its a gift_out with a fee.
@@ -154,17 +151,16 @@ class metrics:
         for t in transactions:  # Lag is ~135ms for ~12000 transactions
             progBarIndex+=1
             self.MAIN_APP_REF.set_progress(progBarIndex)
-            if t.get('missing')[0]:  t.ERROR,t.ERR_MSG = True,t.prettyPrint('missing')   #NOTE: Lag ~9ms for ~12000 transactions
             if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
 
             #NOTE: Lag ~35ms for ~12000 transactions
             HASH,TYPE,WALLET = t.get_hash(),t.type(),t.wallet()
-            WALLET2 = t.get('dest_wallet')
-            LA,FA,GA = t.get('loss_asset'),         t.get('fee_asset'),         t.get('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
-            LQ,FQ,GQ = t.precise('loss_quantity'),  t.precise('fee_quantity'),  t.precise('gain_quantity')
-            LV,FV,GV = t.precise('loss_value'),     t.precise('fee_value'),     t.precise('gain_value')
+            WALLET2 = t.get_metric('dest_wallet')
+            LA,FA,GA = t.get_raw('loss_asset'),         t.get_raw('fee_asset'),         t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
+            LQ,FQ,GQ = t.get_metric('loss_quantity'),  t.get_metric('fee_quantity'),  t.get_metric('gain_quantity')
+            LV,FV,GV = t.get_metric('loss_value'),     t.get_metric('fee_value'),     t.get_metric('gain_value')
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
-            COST_BASIS_PRICE = t.precise('basis_price')
+            COST_BASIS_PRICE = t.get_metric('basis_price')
             
 
             # COST BASIS CALCULATION    #NOTE: Lag ~250ms for ~12000 transactions. 
@@ -213,7 +209,7 @@ class metrics:
             if TYPE in ('card_reward','income'):    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
                 metrics[GA]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
-                    self.TEMPDATA['taxes']['1099-MISC'] = self.TEMPDATA['taxes']['1099-MISC'].append( {'Date acquired':t.date(), 'Value of assets':str(GV)}, ignore_index=True)
+                    self.TEMPDATA['taxes']['1099-MISC'] = self.TEMPDATA['taxes']['1099-MISC'].append( {'Date acquired':t.iso_date(), 'Value of assets':str(GV)}, ignore_index=True)
 
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
 
@@ -223,9 +219,9 @@ class metrics:
         # Then we check all transactions for an ERROR state, and apply that to its parent asset(s)
         for t in transactions:
             if t.ERROR:
-                if t.get('loss_asset'): self.PORTFOLIO.asset(t.get('loss_asset')).ERROR = True
-                if t.get('fee_asset'):  self.PORTFOLIO.asset(t.get('fee_asset')).ERROR =  True
-                if t.get('gain_asset'): self.PORTFOLIO.asset(t.get('gain_asset')).ERROR = True
+                if t.get_raw('loss_asset'): self.PORTFOLIO.asset(t.get_raw('loss_asset')).ERROR = True
+                if t.get_raw('fee_asset'):  self.PORTFOLIO.asset(t.get_raw('fee_asset')).ERROR =  True
+                if t.get_raw('gain_asset'): self.PORTFOLIO.asset(t.get_raw('gain_asset')).ERROR = True
 
         for asset in self.PORTFOLIO.assets(): #TODO: Lag is like 30ms for ~4000 transactions
             #Update this asset's metrics dictionary with our newly calculated information
@@ -249,35 +245,35 @@ class metrics:
     # METRICS FOR INDIVIDUAL ASSETS
     # Market-independent
     def calculate_average_buy_price(self, asset:Asset):
-        try:    asset._metrics['average_buy_price'] = asset.precise('cost_basis') / asset.precise('holdings')
+        try:    asset._metrics['average_buy_price'] = asset.get_metric('cost_basis') / asset.get_metric('holdings')
         except: asset._metrics['average_buy_price'] = 0
     # Market-dependent
     def calculate_value(self, asset:Asset):   #Calculates the overall value of this asset
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['value'] = asset.precise('holdings') * asset.precise('price')
-        except: asset._metrics['value'] = MISSINGDATA
+        try:    asset._metrics['value'] = asset.get_metric('holdings') * asset.get_metric('price')
+        except: asset._metrics['value'] = None
     def calculate_unrealized_profit_and_loss(self, asset:Asset):
         #You need current market data for these bad boys
-        average_buy_price = asset.precise('average_buy_price')
+        average_buy_price = asset.get_metric('average_buy_price')
         try:        
-            asset._metrics['unrealized_profit_and_loss'] =      asset.precise('value') - ( average_buy_price * asset.precise('holdings') )
-            asset._metrics['unrealized_profit_and_loss%'] =   ( asset.precise('price') /  average_buy_price )-1
+            asset._metrics['unrealized_profit_and_loss'] =      asset.get_metric('value') - ( average_buy_price * asset.get_metric('holdings') )
+            asset._metrics['unrealized_profit_and_loss%'] =   ( asset.get_metric('price') /  average_buy_price )-1
         except:     asset._metrics['unrealized_profit_and_loss%'] = asset._metrics['unrealized_profit_and_loss'] = 0
     def calculate_changes(self, asset:Asset): #Calculates the unrealized USD lost or gained in the last 24 hours, week, and month for this asset
         #Must be a try statement because it relies on market data
-        value = asset.precise('value')
-        try:    asset._metrics['day_change'] =   value-(value / (1 + asset.precise('day%')))
+        value = asset.get_metric('value')
+        try:    asset._metrics['day_change'] =   value-(value / (1 + asset.get_metric('day%')))
         except: asset._metrics['day_change'] =   0
-        try:    asset._metrics['week_change'] =  value-(value / (1 + asset.precise('week%')))
+        try:    asset._metrics['week_change'] =  value-(value / (1 + asset.get_metric('week%')))
         except: asset._metrics['week_change'] =  0
-        try:    asset._metrics['month_change'] = value-(value / (1 + asset.precise('month%')))
+        try:    asset._metrics['month_change'] = value-(value / (1 + asset.get_metric('month%')))
         except: asset._metrics['month_change'] = 0
     def calculate_net_cash_flow(self, asset:Asset): #Calculates what the cash flow would become if you sold everything right now
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['net_cash_flow'] = asset.precise('cash_flow') + asset.precise('value') 
+        try:    asset._metrics['net_cash_flow'] = asset.get_metric('cash_flow') + asset.get_metric('value') 
         except: asset._metrics['net_cash_flow'] = 0
     def calculate_percentage_of_portfolio(self, asset:str): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
-        try:    asset._metrics['portfolio%'] = asset.get('value')  / self.PORTFOLIO.get('value')
+        try:    asset._metrics['portfolio%'] = asset.get_raw('value')  / self.PORTFOLIO.get_metric('value')
         except: asset._metrics['portfolio%'] = 0
 
     # METRICS FOR THE OVERALL PORTFOLIO
@@ -285,46 +281,46 @@ class metrics:
     def calculate_portfolio_cash_flow(self): # Calculates to total USD that has gone into and out of the portfolio
         cash_flow = 0
         for a in self.PORTFOLIO.assets():    #Compiles complete list of all assets in the portfolio
-            try: cash_flow += a.get('cash_flow') #Adds the cash flow for this asset to the overall portfolio cash flow.
+            try: cash_flow += a.get_raw('cash_flow') #Adds the cash flow for this asset to the overall portfolio cash flow.
             except: continue # If the cash flow was unable to be calculated, ignore this asset
         self.PORTFOLIO._metrics['cash_flow'] = cash_flow
     # Market-Dependent
     def calculate_portfolio_value(self): # Calculates the overall current market value of the portfolio
         value = 0
         for a in self.PORTFOLIO.assets():    #Compiles complete list of all wallets used in the portfolio
-            try: value += a.get('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
+            try: value += a.get_raw('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
             except: continue
         self.PORTFOLIO._metrics['value'] = value
     def calculate_portfolio_changes(self): # Calculates absolute change over the past day, week, and month
         self.PORTFOLIO._metrics.update({'day_change':0,'week_change':0,'month_change':0})
         for a in self.PORTFOLIO.assets():
             try:
-                self.PORTFOLIO._metrics['day_change'] += a.get('day_change')
-                self.PORTFOLIO._metrics['week_change'] += a.get('week_change')
-                self.PORTFOLIO._metrics['month_change'] += a.get('month_change')
+                self.PORTFOLIO._metrics['day_change'] += a.get_raw('day_change')
+                self.PORTFOLIO._metrics['week_change'] += a.get_raw('week_change')
+                self.PORTFOLIO._metrics['month_change'] += a.get_raw('month_change')
             except: pass
     def calculate_portfolio_percents(self): # Calculates relative change over the past day, week, and month
-        try:    self.PORTFOLIO._metrics['day%'] =   self.PORTFOLIO.get('day_change') /   (self.PORTFOLIO.get('value') - self.PORTFOLIO.get('day_change'))
+        try:    self.PORTFOLIO._metrics['day%'] =   self.PORTFOLIO.get_metric('day_change') /   (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('day_change'))
         except: self.PORTFOLIO._metrics['day%'] = 0
-        try:    self.PORTFOLIO._metrics['week%'] =  self.PORTFOLIO.get('week_change') /  (self.PORTFOLIO.get('value') - self.PORTFOLIO.get('week_change'))
+        try:    self.PORTFOLIO._metrics['week%'] =  self.PORTFOLIO.get_metric('week_change') /  (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('week_change'))
         except: self.PORTFOLIO._metrics['week%'] = 0
-        try:    self.PORTFOLIO._metrics['month%'] = self.PORTFOLIO.get('month_change') / (self.PORTFOLIO.get('value') - self.PORTFOLIO.get('month_change'))
+        try:    self.PORTFOLIO._metrics['month%'] = self.PORTFOLIO.get_metric('month_change') / (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('month_change'))
         except: self.PORTFOLIO._metrics['month%'] = 0
     def calculate_portfolio_value_by_wallet(self):    #Calculates the current market value held within each wallet, across all assets
         wallets = {wallet:0 for wallet in self.PORTFOLIO.all_wallet_names()}  #Creates a dictionary of wallets, defaulting to 0$ within each
         for asset in self.PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
-            for wallet in asset.get('wallets'):
+            for wallet in asset.get_raw('wallets'):
                 # Asset wallet list is total units by wallet, multiply by asset price to get value
-                try:    wallets[wallet] += asset.get('wallets')[wallet] * asset.precise('price')
+                try:    wallets[wallet] += asset.get_raw('wallets')[wallet] * asset.get_metric('price')
                 except: pass
         self.PORTFOLIO._metrics['wallets'] = wallets
     def calculate_portfolio_unrealized_profit_and_loss(self):
         total_unrealized_profit = 0
         for asset in self.PORTFOLIO.assets():
-            try:    total_unrealized_profit += asset.precise('unrealized_profit_and_loss')
+            try:    total_unrealized_profit += asset.get_metric('unrealized_profit_and_loss')
             except: continue    #Just ignore assets missing price data
         try:        
             self.PORTFOLIO._metrics['unrealized_profit_and_loss'] = total_unrealized_profit
-            self.PORTFOLIO._metrics['unrealized_profit_and_loss%'] = total_unrealized_profit / (self.PORTFOLIO.get('value') - total_unrealized_profit)
+            self.PORTFOLIO._metrics['unrealized_profit_and_loss%'] = total_unrealized_profit / (self.PORTFOLIO.get_metric('value') - total_unrealized_profit)
         except:
             self.PORTFOLIO._metrics['unrealized_profit_and_loss'] = self.PORTFOLIO._metrics['unrealized_profit_and_loss%'] = 0

@@ -49,6 +49,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.waiting_to_resize = False
         self.installEventFilter(self)
 
+
     def eventFilter(self, obj:QObject, event:QEvent, *args):
         """Automatically resizes GRID font when program is resized"""
         if event.type() == QEvent.Resize:
@@ -198,7 +199,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         taskbar.addMenu(DEBUG)
         DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
         DEBUG.addAction('DEBUG delete all transactions from wallet',     self.DEBUG_delete_all_from_wallet)
-        DEBUG.addAction('DEBUG ttt efficiency report',     p(ttt, 'average_report'))
+        DEBUG.addAction('DEBUG report staking interest',     self.DEBUG_report_staking_interest)
+        def return_report():    Message(self, 'Efficiency Report', ttt('average_report'), scrollable=True)
+        DEBUG.addAction('DEBUG ttt efficiency report', return_report)
         DEBUG.addAction('DEBUG ttt reset',     p(ttt, 'reset'))
 
     def toggle_offline_mode(self):
@@ -242,8 +245,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
     def DEBUG_find_all_missing_prices(self):
         for t in MAIN_PORTFOLIO.transactions():
-            DATE = t.date()
-            missing = t.get('missing')[1]
+            DATE = t.iso_date()
+            missing = t.get_raw('missing')
             if 'loss_price' in missing:   t._data['loss_price'] = getMissingPrice(DATE, t._data['loss_asset'])
             if 'fee_price' in missing:    t._data['fee_price'] =  getMissingPrice(DATE, t._data['fee_asset'])
             if 'gain_price' in missing:   t._data['gain_price'] = getMissingPrice(DATE, t._data['gain_asset'])
@@ -256,6 +259,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 MAIN_PORTFOLIO.delete_transaction(transaction.get_hash())
         self.metrics()
         self.render(True)
+    def DEBUG_report_staking_interest(self):
+        DEBUGStakingReportDialog(self)
 
     def import_binance(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_binance, 'Binance Wallet') 
@@ -603,13 +608,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 m.addAction('Edit ' + ticker, p(AssetEditor, self, item))
                 m.addAction('Show detailed info', p(self.asset_stats_and_info, ID))
             else:
-                trans_title = item.date() + ' ' + item.prettyPrint('type')
+                trans_title = item.iso_date() + ' ' + item.metric_to_str('type')
                 m.addAction('Edit ' + trans_title, p(TransEditor, self, item))
                 m.addAction('Copy ' + trans_title, p(TransEditor, self, item, True))
                 m.addAction('Delete ' + trans_title, p(self.delete_selection, highlighted))
                 if item.ERROR:
                     m.addSeparator()
-                    m.addAction('ERROR information...', p(Message, self, 'Transaction Error!', item.ERR_MSG))
+                    m.addAction('ERROR information...', p(Message, self, 'Transaction Error!', item.ERR_MSG, scrollable=True))
 
         m.exec(event.globalPos())
     def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
@@ -681,23 +686,25 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['grand_ledger'].hide()
         self.GUI['back'].show()
 
-    def render(self, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~30ms when switching panes, ~4ms when switching pages, ~11ms on average
+    def render(self, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
         '''Call to render the portfolio, or a ledger
         \nRefreshes page if called without any input.
         \nRe-sorts/filters assets/transactions when "sort" called'''
         #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
         if self.rendered.isAsset() and not MAIN_PORTFOLIO.hasAsset(self.rendered.getAsset()):   self.rendered.setPortfolio()
 
-        if sort:    self.sort()     # Sorts the assets/transactions NOTE: This is fast (~7ms for ~900 transactions).
+        if sort:    self.sort()     # Sorts the assets/transactions (10.4930ms for ~5300 transactions, when re-sorting in grand-ledger view).
         self.update_info_pane()     # Updates lefthand side panel metrics
-        self.update_page_buttons()  # Enables/disables page flipping buttons
+        self.update_page_buttons()  # Enables/disables page flipping buttons (0.0428 when buttons are enabled/disabled)
 
         # Retrieve appropriate header names
         if self.rendered.isPortfolio():     header = setting('header_portfolio')
         elif self.rendered.isGrandLedger(): header = setting('header_grand_ledger')
         elif self.rendered.isAsset():       header = setting('header_asset')
         # Fills in the GRID with metrics
+        ttt('start')
         self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered.getAsset())
+        ttt('avg_end')
     
     
     def update_info_pane(self): # Adds basic summary statistics on the lefthand side panel for easy viewing
@@ -783,20 +790,23 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if (self.rendered.isGrandLedger() and f.metric() not in setting('header_grand_ledger')): continue
 
             for item in unfiltered_unsorted: # could be assets or transactions
-                if f.is_alpha(): # text metrics like ticker and class
-                    item_state = item.get(f.metric())
+                if f.is_alpha() and f.metric() != 'date': # text metrics like ticker and class
+                    item_state = item.get_raw(f.metric())
                     if  item_state != f.state():
                         blacklist.add(item)
                 else: # numeric metrics
                     # When sorting by price/quantity/value for transactions, the data is stored weird, so we need to access it specially.
                     # These metrics are not present when in the Grand Ledger view
-                    if self.rendered.isAsset() and f.metric() in ['price','quantity','value']:
+                    if f.metric() == 'date':
+                        item_state = item.get_raw('date')
+                    elif self.rendered.isAsset():
                         match f.metric():
                             case 'price':   item_state = item.price(self.rendered.getAsset())
                             case 'quantity':   item_state = item.quantity(self.rendered.getAsset())
                             case 'value':   item_state = item.value(self.rendered.getAsset())
                     else:
-                        item_state = item.precise(f.metric())
+                        item_state = item.get_metric(f.metric())
+
                     match f.relation():
                         case '<':   
                             if item_state >= f.state(): blacklist.add(item)
@@ -811,20 +821,24 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #########################
         # SORTING
         #########################
-        # Default base-sort for assets/transactions
+        # DEFAULT SORT pre-sorting for assets/transactions
         if self.rendered.isPortfolio():    
             def tickerclasskey(e):  return e.tickerclass()
             filtered_unsorted.sort(key=tickerclasskey)     # Assets base sort is by tickerclass
-        elif self.rendered.isAsset():       filtered_unsorted.sort(reverse=not reverse)    # Transactions base sort is by date mostly, but other minor conditional cases (integrated into sort function)
-        elif self.rendered.isGrandLedger(): filtered_unsorted.sort(reverse=not reverse)    # Same as for asset view
+        elif self.rendered.isAsset() or self.rendered.isGrandLedger():       
+            filtered_unsorted.sort(reverse=not reverse)    # Transactions base sort is by date mostly, but other minor conditional cases (integrated into sort function)
+        
         # Sorting based on the column we've selected to sort by
-        def alphaKey(e):    return e.get(info).lower()
+        def alphaKey(e):    
+            toReturn = e.get_metric(info)
+            if toReturn is None:    return ''
+            else:                   return e.get_metric(info).lower()
         def numericKey(e):
-            n = e.get(info)
-            try: return float(n)
-            except: return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
+            toReturn = e.get_metric(info)
+            if toReturn is None:    return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
+            else:                   return toReturn
         def value_quantity_price(e):
-            return e.get(info, self.rendered.getAsset())
+            return e.get_metric(info, self.rendered.getAsset())
 
         if   info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
         elif metric_formatting_lib[info]['format'] == 'alpha':                  filtered_unsorted.sort(reverse=reverse,     key=alphaKey)
@@ -834,21 +848,15 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # Applies the sorted & filtered results, to be used in the rendering pipeline
         self.sorted = filtered_unsorted  
 
-    def set_page(self, page:int=None):
-        if page==None: page=self.page # If no page is specified, we reload the current page
-        if self.rendered.isPortfolio():     # Max page for the portfolio view ((# assets / page length), rounded up, minus 1). -1 when no items.
-            maxpage = math.ceil(len(MAIN_PORTFOLIO.assets())/setting('itemsPerPage'))-1
-        elif self.rendered.isAsset():       # Max page for the asset view ((# transactions / page length), rounded up, minus 1). -1 when no items.
-            maxpage = math.ceil(len(MAIN_PORTFOLIO.asset(self.rendered.getAsset())._ledger)/setting('itemsPerPage'))-1
-        elif self.rendered.isGrandLedger(): # Max page for the grand ledger view ((# transactions / page length), rounded up, minus 1). -1 when no items.
-            maxpage = math.ceil(len(MAIN_PORTFOLIO.transactions())/setting('itemsPerPage'))-1
+    def set_page(self, new_page:int=None):
+        if new_page==None: new_page=self.page # If no page is specified, we reload the current page
+        maxpage = math.ceil(len(self.sorted)/setting('itemsPerPage'))-1
 
+        if new_page > maxpage:  new_page = maxpage
+        if new_page < 0:      new_page = 0
 
-        if page > maxpage:  page = maxpage
-        if page < 0:      page = 0
-
-        if page != self.page: # Only re-renders if we actually change the page
-            self.page = page
+        if new_page != self.page: # Only re-renders if we actually change the page
+            self.page = new_page
             self.GUI['GRID'].set_selection() #Clears GRID selection
             self.render()
     def page_next(self):   self.set_page(self.page + 1)
@@ -878,12 +886,12 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # USD PER WALLET
         toDisplay += '• Total USD by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(MAIN_PORTFOLIO.get('value'), 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
-        wallets = list(MAIN_PORTFOLIO.get('wallets'))
-        def sortByUSD(w):   return MAIN_PORTFOLIO.get('wallets')[w]  #Wallets are sorted by their total USD value
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(MAIN_PORTFOLIO.get_metric('value'), 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
+        wallets = list(MAIN_PORTFOLIO.get_metric('wallets'))
+        def sortByUSD(w):   return MAIN_PORTFOLIO.get_metric('wallets')[w]  #Wallets are sorted by their total USD value
         wallets.sort(reverse=True, key=sortByUSD)
         for w in wallets:    #Wallets, a list of wallets by name, and their respective net valuations
-            quantity = MAIN_PORTFOLIO.get('wallets')[w]
+            quantity = MAIN_PORTFOLIO.get_metric('wallets')[w]
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
@@ -892,16 +900,16 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # MASS INFORMATION
         for data in ('cash_flow', 'day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
             info_format = metric_formatting_lib[data]['format']
-            if MAIN_PORTFOLIO.style(data) == '':    S = DEF_INFO_STYLE
-            else:                   S = MAIN_PORTFOLIO.style(data)+style('info')
+            if MAIN_PORTFOLIO.get_metric_style(data) == '':    S = DEF_INFO_STYLE
+            else:                   S = MAIN_PORTFOLIO.get_metric_style(data)+style('info')
             label = '• '+metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
             if width > maxWidth: maxWidth = width
             label += '\t\t'
             if info_format == 'percent':
-                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get(data)*100, 'alpha', 20), S) + ' %<br>'
+                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get_metric(data)*100, 'alpha', 20), S) + ' %<br>'
             else:
-                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get(data), 'alpha', 20), S) + ' USD<br>'
+                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get_metric(data), 'alpha', 20), S) + ' USD<br>'
         
         Message(self, 'Overall Stats and Information', toDisplay, big=True, scrollable=True, tabStopWidth=maxWidth)
     
@@ -916,17 +924,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # NUMBER OF TRANSACTIONS
         toDisplay += '• ' + HTMLify(str(len(MAIN_PORTFOLIO.asset(a)._ledger)), DEF_INFO_STYLE) + ' transactions loaded under ' + HTMLify(asset.ticker(), DEF_INFO_STYLE) + '<br>'
         # ASSET CLASS
-        toDisplay += '• Asset Class:\t\t' + HTMLify(asset.prettyPrint('class'), DEF_INFO_STYLE) + '<br>'
+        toDisplay += '• Asset Class:\t\t' + HTMLify(asset.metric_to_str('class'), DEF_INFO_STYLE) + '<br>'
 
         # UNITS PER WALLET
         toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
-        wallets = list(MAIN_PORTFOLIO.asset(a).get('wallets'))  
-        def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get('wallets')[w]    #Wallets are sorted by their total # of units
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get_raw('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get_raw('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
+        wallets = list(MAIN_PORTFOLIO.asset(a).get_raw('wallets'))  
+        def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get_raw('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)
-        value = MAIN_PORTFOLIO.asset(a).precise('price') # gets asset price for this asset
+        value = MAIN_PORTFOLIO.asset(a).get_metric('price') # gets asset price for this asset
         for w in wallets:
-            quantity = MAIN_PORTFOLIO.asset(a).get('wallets')[w] # gets quantity of tokens for this asset
+            quantity = MAIN_PORTFOLIO.asset(a).get_raw('wallets')[w] # gets quantity of tokens for this asset
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
@@ -935,19 +943,19 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # MASS INFORMATION
         for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             info_format = metric_formatting_lib[data]['format']
-            if asset.style(data) == '':     S = DEF_INFO_STYLE
-            else:                           S = asset.style(data)+style('info')
+            if asset.get_metric_style(data) == '':     S = DEF_INFO_STYLE
+            else:                           S = asset.get_metric_style(data)+style('info')
             label = '• '+ metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
             if width > maxWidth: maxWidth = width
             label += '\t\t'
             if data == 'price':
-                toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD/'+asset.ticker() + '<br>'
+                toDisplay += label + HTMLify(format_general(asset.get_raw(data), 'alpha', 20), S) + ' USD/'+asset.ticker() + '<br>'
             elif info_format == 'percent':
-                try:    toDisplay += label + HTMLify(format_general(asset.precise(data)*100, 'alpha', 20), S) + ' %<br>'
+                try:    toDisplay += label + HTMLify(format_general(asset.get_metric(data)*100, 'alpha', 20), S) + ' %<br>'
                 except: pass
             else:
-                toDisplay += label + HTMLify(format_general(asset.get(data), 'alpha', 20), S) + ' USD<br>'
+                toDisplay += label + HTMLify(format_general(asset.get_raw(data), 'alpha', 20), S) + ' USD<br>'
 
         Message(self, asset.name() + ' Stats and Information', toDisplay, big=True, scrollable=True, tabStopWidth=maxWidth)
 
