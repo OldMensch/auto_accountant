@@ -19,7 +19,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.setWindowTitle('Portfolio Manager')
         
         self.current_undosave_index = 0 # index of the currently loaded undosave
-        self.rendered = RenderState(self.set_state_portfolio, self.set_state_asset, self.set_state_grand_ledger, 'portfolio')
+        self.view = ViewState()
         self.page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
         self.sorted = [] # List of sorted and filtered assets
         #Sets the labels for timezone based on the timezone (So you will see Date (EST) instead of just Date)
@@ -41,8 +41,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         try: exec("""import pyi_splash\npyi_splash.close()""") # exec() is used so that VSCode ignores the "I can't find this module error"
         except: pass
 
-        self.rendered.setPortfolio() # Sets default rendering mode to "portfolio" view
-        self.render(True) # Sorts and renders portfolio for the first time
+        self.render(self.view.PORTFOLIO, sort=True) # Sorts and renders portfolio for the first time
         self.showMaximized() # Maximizes window
 
         # AUTOMATIC GRID RESIZING FUNCTION
@@ -109,7 +108,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         taskbar = self.TASKBAR['taskbar'] = QMenuBar(self)     #The big white bar across the top of the window
         self.setMenuBar(taskbar)
 
-        #'File' Tab
+        # FILE Tab
         file = self.TASKBAR['file'] = QMenu('File')
         taskbar.addMenu(file)
         file.addAction('New',               self.new)
@@ -129,14 +128,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         file.addSeparator()
         file.addAction('QUIT', self.quit)
 
-        #'Settings' Tab
+        # SETTINGS Tab
         settings = self.TASKBAR['settings'] = QMenu('Settings')
         taskbar.addMenu(settings)
 
         self.offlineMode = QAction('Offline Mode', parent=settings, triggered=self.toggle_offline_mode, checkable=True, checked=setting('offlineMode'))
         settings.addAction(self.offlineMode)
 
-
+        # submenu - TIMEZONE
         def set_timezone(tz:str, *args, **kwargs):
             set_setting('timezone', tz)                         # Change the timezone setting itself
             for transaction in MAIN_PORTFOLIO.transactions():   # Recalculate the displayed ISO time on all of the transactions
@@ -157,13 +156,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         appearancemenu.addAction('Light Mode', light_mode)
         appearancemenu.addAction('Dark Mode', dark_mode)
 
-        #'Accounting' Submenu
+        # submenu - ACCOUNTING
         accountingmenu = self.TASKBAR['accounting'] = QMenu('Accounting Method')
         settings.addMenu(accountingmenu)
         def set_accounting_method(method, *args, **kwargs):
             set_setting('accounting_method', method)
             self.metrics()
-            self.render(True)
+            self.render(sort=True)
         accountingactions = {}
         accountingActionGroup = QActionGroup(accountingmenu)
         accountingactions['fifo'] = QAction('First in First Out (FIFO)',   parent=accountingmenu, triggered=p(set_accounting_method, 'fifo'), actionGroup=accountingActionGroup, checkable=True)
@@ -173,22 +172,39 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             accountingmenu.addAction(accountingactions[method])
             if setting('accounting_method') == method: accountingactions[method].setChecked(True)
 
-        #'About' Tab
+        # ABOUT
         about = self.TASKBAR['about'] = QMenu('About')
         taskbar.addMenu(about)
         about.addAction('MIT License', self.copyright)
         
-        #'Metrics' Tab
-        metricsmenu = self.TASKBAR['metrics'] = QMenu('Metrics')
-        taskbar.addMenu(metricsmenu)
+        # METRICS
+        metrics_menu =              self.TASKBAR['metrics'] = QMenu('Metrics')
+        portfolio_metrics_menu =    self.TASKBAR['metrics_portfolio'] = QMenu('Portfolio View')
+        grand_ledger_metrics_menu = self.TASKBAR['metrics_grand_ledger'] = QMenu('Grand Ledger View')
+        asset_metrics_menu =        self.TASKBAR['metrics_asset'] = QMenu('Asset View')
+        taskbar.addMenu(metrics_menu)
+        metrics_menu.addMenu(portfolio_metrics_menu)
+        metrics_menu.addMenu(grand_ledger_metrics_menu)
+        metrics_menu.addMenu(asset_metrics_menu)
         
-        # Adds a toggleable list for all metric headers on the portfolio page
-        self.metricactions = {
-            header:QAction(metric_formatting_lib[header]['name'], parent=metricsmenu, triggered=p(self.toggle_header, header), checkable=True, checked=header in setting('header_portfolio')) for header in default_portfolio_headers
-            }
-        for action in self.metricactions.values():   metricsmenu.addAction(action)
+        # Adds a reset and toggleable list for all metrics
+        self.metricactions = {}
+        def reset_header(state, *args, **kwargs): # command to reset headers to default
+            set_setting('header_'+state, list(default_headers[state]))
+            for metric in default_headers[state]: self.metricactions[self.view.getState()][metric].setChecked(True)
+            if self.view.getState() == state: self.render() # Only re-renders if we changed the headers for the current view
+        for state in ('portfolio','grand_ledger','asset',):
+            submenu = self.TASKBAR['metrics_'+state]
+            reset = QAction('Reset to Default Metrics', parent=submenu, triggered=p(reset_header, state))
+            submenu.addAction(reset)
+            submenu.addSeparator()
+            self.metricactions[state] = {
+                header:QAction(metric_formatting_lib[header]['name'], parent=submenu, triggered=p(self.toggle_header, header), 
+                               checkable=True, checked=header in setting('header_'+state)) for header in default_headers[state]
+                }
+            for action in self.metricactions[state].values():   submenu.addAction(action)
 
-        #'Taxes' Tab
+        # TAXES
         taxes = self.TASKBAR['taxes'] = QMenu('Taxes')
         taskbar.addMenu(taxes)
         taxes.addAction('Generate data for IRS Form 8949', self.tax_Form_8949)
@@ -199,7 +215,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         taskbar.addMenu(DEBUG)
         DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
         DEBUG.addAction('DEBUG report staking interest',     self.DEBUG_report_staking_interest)
-        def return_report():    Message(self, 'Efficiency Report', ttt('average_report'), scrollable=True)
+        def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True)
         DEBUG.addAction('DEBUG ttt efficiency report', return_report)
         DEBUG.addAction('DEBUG ttt reset',     p(ttt, 'reset'))
 
@@ -251,7 +267,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if 'gain_price' in missing:   t._data['gain_price'] = getMissingPrice(DATE, t._data['gain_asset'])
             t.recalculate()
         self.metrics()
-        self.render(True)
+        self.render(sort=True)
     def DEBUG_report_staking_interest(self):
         DEBUGStakingReportDialog(self)
 
@@ -317,7 +333,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         MAIN_PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
-        self.render(True)
+        self.render(sort=True)
         if not first:   self.undo_save()
     def load(self, dir=None):
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -333,7 +349,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         set_setting('lastSaveDir', dir)
         self.metrics()
-        self.render(True)
+        self.render(sort=True)
         self.undo_save()  
     def merge(self): #Doesn't overwrite current portfolio by default.
         dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -349,8 +365,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         set_setting('lastSaveDir', '') #resets the savedir. who's to say where a merged portfolio should save to? why should it be the originally loaded file, versus any recently merged ones?
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
-        self.rendered.setPortfolio()
-        self.render(True)
+        self.render(state=self.view.PORTFOLIO, sort=True)
         self.undo_save()
 
     def quit(self, event=None):
@@ -405,14 +420,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['title'] = QLabel('Auto-Accountant', alignment=Qt.AlignCenter, styleSheet=style('title'))
         self.GUI['subtitle'] = QLabel('Overall Portfolio', alignment=Qt.AlignCenter, styleSheet=style('subtitle'))
         self.GUI['info_pane'] = QLabel(alignment=Qt.AlignHCenter, styleSheet=style('info_pane'))
-        def return_to_portfolio():
-            self.rendered.setPortfolio()
-            self.render(True)
-        self.GUI['back'] = QPushButton('Return to\nPortfolio', clicked=return_to_portfolio)
-        def open_grand_ledger():
-            self.rendered.setGrandLedger()
-            self.render(True)
-        self.GUI['grand_ledger'] = QPushButton('Open\nGrand Ledger', clicked=open_grand_ledger)
+        self.GUI['back'] = QPushButton('Return to\nPortfolio', clicked=p(self.render, self.view.PORTFOLIO, True))
+        self.GUI['grand_ledger'] = QPushButton('Open\nGrand Ledger', clicked=p(self.render, self.view.GRAND_LEDGER, True))
         self.GUI['page_number'] = QLabel('Page XXX of XXX', alignment=Qt.AlignCenter)
         self.GUI['page_next'] = QPushButton(icon=icon('arrow_down'), iconSize=icon('size'), clicked=self.page_next)
         self.GUI['page_prev'] = QPushButton(icon=icon('arrow_up'), iconSize=icon('size'),  clicked=self.page_prev)
@@ -502,6 +511,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
         self.MENU['DEBUG_staking_report'] = QPushButton('DEBUG: Report\nStaking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
+        def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
+        self.MENU['DEBUG_ttt_report'] = QPushButton('DEBUG: TTT\nReport', clicked=return_report, fixedHeight=icon('size2').height())
+        self.MENU['DEBUG_ttt_reset'] = QPushButton('DEBUG: TTT\nReset', clicked=p(ttt, 'reset'), fixedHeight=icon('size2').height())
 
         #MENU RENDERING
         #==============================
@@ -518,6 +530,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['menuLayout'].addWidget(self.MENU['filters'])
         self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
         self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_staking_report'])
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_report'])
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_reset'])
         self.GUI['menuLayout'].addStretch(1)
 
         #MENU TOOLTIPS
@@ -541,38 +555,25 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 # GRID column header functions
     def _header_menu(self, col, event=None):
-        if not self.rendered.isPortfolio():  return  #There is no menu for the transactions ledger view
-        info = setting('header_portfolio')[col]
+        header = self.view.getHeaderID()
+        info = setting(header)[col]
         m = QMenu(parent=self)
-        if col != 0:                                      
-            m.addAction('Move to Beginning',  p(self.move_header, info, 'beginning'))
-            m.addAction('Move Left',          p(self.move_header, info, 'left'))
-        if col != len(setting('header_portfolio'))-1:     
-            m.addAction('Move Right',         p(self.move_header, info, 'right'))
-            m.addAction('Move to End',        p(self.move_header, info, 'end'))
-        m.addSeparator()
-        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[info].trigger)
+        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[self.view.getState()][info].trigger)
         m.exec(event.globalPos())
-    def move_header(self, info, shift='beginning'):
-        if self.rendered.isPortfolio():     header = 'header_portfolio'
-        elif self.rendered.isAsset():       header = 'header_asset'
-        elif self.rendered.isGrandLedger(): header = 'header_grand_ledger'
-        match shift:
-            case 'beginning':   i = 0
-            case 'right':       i = setting(header).index(info) + 1
-            case 'left':        i = setting(header).index(info) - 1
-            case 'end':         i = len(setting(header))
-            case other:         i = setting(header).index(shift)    # We've dragged and dropped a header onto this one
+    def move_header(self, info, index):
+        header = self.view.getHeaderID()
         new = setting(header)
         new.remove(info)
-        new.insert(i, info)
+        new.insert(setting(header).index(index), info)
         set_setting(header, new)
         self.render()
     def toggle_header(self, info, *args, **kwargs):
-        new = setting('header_portfolio')
-        if info in setting('header_portfolio'): new.remove(info)
-        else:                                   new.insert(0, info)
-        set_setting('header_portfolio', new)
+        header = self.view.getHeaderID()
+        
+        current_headers = setting(header)
+        if info in setting(header):     current_headers.remove(info)
+        else:                           current_headers.insert(0, info)
+        set_setting(header, current_headers)
         self.render()
 
 # GRID row functions
@@ -581,9 +582,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         i = self.page*setting('itemsPerPage')+GRID_ROW
         if i + 1 > len(self.sorted):  return  #Can't select something if it doesn't exist!
         self.GUI['GRID'].set_selection()
-        if self.rendered.isPortfolio(): 
-            self.rendered.setAsset(self.sorted[i].tickerclass())
-            self.render(True)
+        if self.view.isPortfolio(): 
+            self.view.setAsset(self.sorted[i].tickerclass())
+            self.render(state=self.view.ASSET, sort=True)
         else:                               TransEditor(self, self.sorted[i])
     def _right_click_row(self, highlighted:int, selection1:int, selection2:int, event=None): # Opens up a little menu of stuff you can do to this asset/transaction
         """Opens a little menu, when you right click on a GRID row"""
@@ -597,12 +598,12 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if i + 1 > len(self.sorted): return  #Can't select something if it doesn't exist!
             item = self.sorted[i]
             # Portfolio mode: items are assets.
-            if self.rendered.isPortfolio():
+            if self.view.isPortfolio():
                 ID = item.tickerclass()
                 ticker = item.ticker()
                 def open_ledger(*args, **kwargs):
-                    self.rendered.setAsset(ID)
-                    self.render(True)
+                    self.view.setAsset(ID)
+                    self.render(state=self.view.ASSET, sort=True)
                 m.addAction('Open ' + ticker + ' Ledger', open_ledger)
                 m.addAction('Edit ' + ticker, p(AssetEditor, self, item))
                 m.addAction('Show detailed info', p(self.asset_stats_and_info, ID))
@@ -618,7 +619,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         m.exec(event.globalPos())
     def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
         """Deletes the specified items on the GRID"""
-        if self.rendered.isPortfolio(): return # Deletion CURRENTLY only applies to the transaction views
+        if self.view.isPortfolio(): return # Deletion CURRENTLY only applies to the transaction views
 
         I1 = self.page*setting('itemsPerPage')+GRID_ROW1
         if GRID_ROW2 == None:   I2 = I1
@@ -636,73 +637,70 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['GRID'].set_selection()
         self.undo_save()
         self.metrics()
-        self.render(True)
+        self.render(sort=True)
 
 
 # PORTFOLIO RENDERING
 #=============================================================
-    def set_state_portfolio(self):
-        """Prepares buttons/labels in side panel for PORTFOLIO render state"""
+    def set_state(self, state):
+        """Prepares buttons/labels in side panel for new render state"""
         self.page = 0 #We return to the first page if changing rendering states
-        
-        self.GUI['title'].setText('Portfolio View')
-        self.GUI['subtitle'].setText('All assets')
-
         self.GUI['info'].clicked.disconnect()
-        self.GUI['info'].clicked.connect(self.portfolio_stats_and_info)
-        self.GUI['info'].setToolTip('Detailed information about this portfolio')
-        self.GUI['edit'].hide()
-        self.GUI['grand_ledger'].show()
-        self.GUI['back'].hide()
-    def set_state_asset(self):
-        """Prepares buttons/labels in side panel for ASSET render state"""
-        self.page = 0 #We return to the first page if changing rendering states
-        asset_to_render = MAIN_PORTFOLIO.asset(self.rendered.getAsset())
+        self.view.state = state
         
-        self.GUI['title'].setText(asset_to_render.name())
-        self.GUI['subtitle'].setText("Transactions for "+asset_to_render.ticker())
+        if self.view.isPortfolio() or self.view.isGrandLedger():
+            if self.view.isPortfolio():
+                self.GUI['title'].setText('Portfolio View')
+                self.GUI['subtitle'].setText('All assets')
+                self.GUI['grand_ledger'].show()
+            elif self.view.isGrandLedger():
+                self.GUI['title'].setText('Grand Ledger')
+                self.GUI['subtitle'].setText('All transactions for all assets')
+                self.GUI['grand_ledger'].hide()
+            
+            # Portfolio/grand ledger have same sidepanel info
+            self.GUI['info'].clicked.connect(self.portfolio_stats_and_info)
+            self.GUI['info'].setToolTip('Detailed information about this portfolio')
+            self.GUI['edit'].hide()
+            self.GUI['back'].hide()
+        elif self.view.isAsset():
+            asset_to_render = MAIN_PORTFOLIO.asset(self.view.getAsset())
+            
+            self.GUI['title'].setText(asset_to_render.name())
+            self.GUI['subtitle'].setText("Transactions for "+asset_to_render.ticker())
+            
+            self.GUI['info'].clicked.connect(p(self.asset_stats_and_info, asset_to_render.tickerclass()))
+            self.GUI['info'].setToolTip('Detailed information about '+ asset_to_render.ticker())
+            try: self.GUI['edit'].clicked.disconnect()
+            except: pass
+            self.GUI['edit'].clicked.connect(p(AssetEditor, self, asset_to_render))
+            self.GUI['edit'].setToolTip('Edit '+ asset_to_render.ticker())
+            self.GUI['edit'].show()
+            self.GUI['grand_ledger'].hide()
+            self.GUI['back'].show()
         
-        self.GUI['info'].clicked.disconnect()
-        self.GUI['info'].clicked.connect(p(self.asset_stats_and_info, asset_to_render.tickerclass()))
-        self.GUI['info'].setToolTip('Detailed information about '+ asset_to_render.ticker())
-        try: self.GUI['edit'].clicked.disconnect()
-        except: pass
-        self.GUI['edit'].clicked.connect(p(AssetEditor, self, asset_to_render))
-        self.GUI['edit'].setToolTip('Edit '+ asset_to_render.ticker())
-        self.GUI['edit'].show()
-        self.GUI['grand_ledger'].hide()
-        self.GUI['back'].show()
-    def set_state_grand_ledger(self):
-        """Prepares buttons/labels in side panel for GRAND LEDGER render state"""
-        self.page = 0 #We return to the first page if changing rendering states
 
-        self.GUI['title'].setText('Grand Ledger')
-        self.GUI['subtitle'].setText('All transactions for all assets')
-
-        self.GUI['info'].clicked.disconnect()
-        self.GUI['info'].clicked.connect(self.portfolio_stats_and_info)
-        self.GUI['info'].setToolTip('Detailed information about this portfolio')
-        self.GUI['edit'].hide()
-        self.GUI['grand_ledger'].hide()
-        self.GUI['back'].show()
-
-    def render(self, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
-        '''Call to render the portfolio, or a ledger
+    def render(self, state:str=None, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
+        '''Re-renders: Side panel and GRID
         \nRefreshes page if called without any input.
         \nRe-sorts/filters assets/transactions when "sort" called'''
+        # Re-render misc GUI elements when state is changed
+        if state and self.view.getState() != state:
+            self.set_state(state)
+
         #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
-        if self.rendered.isAsset() and not MAIN_PORTFOLIO.hasAsset(self.rendered.getAsset()):   self.rendered.setPortfolio()
+        if self.view.isAsset() and not MAIN_PORTFOLIO.hasAsset(self.view.getAsset()):   
+            self.render(state=self.view.PORTFOLIO, sort=True)
+            return
 
-        if sort:    self.sort()     # Sorts the assets/transactions (10.4930ms for ~5300 transactions, when re-sorting in grand-ledger view).
-        self.update_info_pane()     # Updates lefthand side panel metrics
-        self.update_page_buttons()  # Enables/disables page flipping buttons (0.0428 when buttons are enabled/disabled)
+        # WORST OFFENDOR for rendering:
+        if sort:  self.sort()     # Sorts the assets/transactions (10.9900ms for ~5300 transactions, when re-sorting in grand-ledger view).
 
-        # Retrieve appropriate header names
-        if self.rendered.isPortfolio():     header = setting('header_portfolio')
-        elif self.rendered.isGrandLedger(): header = setting('header_grand_ledger')
-        elif self.rendered.isAsset():       header = setting('header_asset')
+        self.update_info_pane()     # Updates lefthand side panel metrics (basically 0)
+        self.update_page_buttons()  # Enables/disables page flipping buttons (0.04540 when buttons are enabled/disabled)
+
         # Fills in the GRID with metrics
-        self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered.getAsset()) # (1.3065ms for ~5300 transactions, switching panes (portfolio/grandledger))
+        self.GUI['GRID'].grid_render(self.view, self.sorted, self.page) # (1.4930ms for ~5300 transactions, switching panes (portfolio/grandledger))
     
     
     def update_info_pane(self): # Adds basic summary statistics on the lefthand side panel for easy viewing
@@ -711,11 +709,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         toDisplay = '<meta name="qrichtext" content="1" />'
         
         for info in ('price', 'value','cash_flow','day%','unrealized_profit_and_loss%'):
-            if self.rendered.isPortfolio() or self.rendered.isGrandLedger():
+            if self.view.isPortfolio() or self.view.isGrandLedger():
                 if info == 'price': continue # Continues on if it's the spot price: this is only relevant to asset info_panes, not the overall portfolio
                 formatted_info = list(MAIN_PORTFOLIO.pretty(info))
-            elif self.rendered.isAsset():
-                formatted_info = list(MAIN_PORTFOLIO.asset(self.rendered.getAsset()).pretty(info))    
+            elif self.view.isAsset():
+                formatted_info = list(MAIN_PORTFOLIO.asset(self.view.getAsset()).pretty(info))    
             toDisplay += metric_formatting_lib[info]['headername'].replace('\n',' ')+'<br>'
             
             info_format = metric_formatting_lib[info]['format']
@@ -745,35 +743,32 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 
     def set_sort(self, col:int): #Sets the sorting mode, then sorts and rerenders everything
-        if self.rendered.isPortfolio():
+        if self.view.isPortfolio():
             info = setting('header_portfolio')[col]
             if setting('sort_portfolio')[0] == info:    set_setting('sort_portfolio',[info, not setting('sort_portfolio')[1]])
             else:                                   set_setting('sort_portfolio',[info, False])
-        elif self.rendered.isAsset():
+        elif self.view.isAsset():
             info = setting('header_asset')[col]
             if setting('sort_asset')[0] == info:    set_setting('sort_asset',[info, not setting('sort_asset')[1]])
             else:                                   set_setting('sort_asset',[info, False])
-        elif self.rendered.isGrandLedger():
+        elif self.view.isGrandLedger():
             info = setting('header_grand_ledger')[col]
             if setting('sort_grand_ledger')[0] == info:    set_setting('sort_grand_ledger',[info, not setting('sort_grand_ledger')[1]])
             else:                                   set_setting('sort_grand_ledger',[info, False])
-        self.render(True)
+        self.render(sort=True)
     def sort(self): #Sorts the assets or transactions by the metric defined in settings #NOTE: 7ms at worst for ~900 transactions on one ledger
         '''Sorts AND FILTERS the assets or transactions by the metric defined in settings'''
         #########################
         # SETUP
         #########################
-        if self.rendered.isPortfolio():  #Assets
-            info = setting('sort_portfolio')[0]    #The info we're sorting by
-            reverse = setting('sort_portfolio')[1] #Whether or not it is in reverse order
+        viewstate = self.view.getState()
+        info = setting('sort_'+viewstate)[0]
+        reverse = setting('sort_'+viewstate)[1]
+        if self.view.isPortfolio():  #Assets
             unfiltered_unsorted = set(MAIN_PORTFOLIO.assets())
-        elif self.rendered.isAsset():   #Transactions
-            info = setting('sort_asset')[0]    #The info we're sorting by
-            reverse = setting('sort_asset')[1] #Whether or not it is in reverse order
-            unfiltered_unsorted = set(MAIN_PORTFOLIO.asset(self.rendered.getAsset())._ledger.values()) #a dict of relevant transactions, this is a list of their keys.
-        elif self.rendered.isGrandLedger(): # Grand ledger transactions
-            info = setting('sort_grand_ledger')[0]    #The info we're sorting by
-            reverse = setting('sort_grand_ledger')[1] #Whether or not it is in reverse order
+        elif self.view.isAsset():   #Transactions
+            unfiltered_unsorted = set(MAIN_PORTFOLIO.asset(self.view.getAsset())._ledger.values()) #a dict of relevant transactions, this is a list of their keys.
+        elif self.view.isGrandLedger(): # Grand ledger transactions
             unfiltered_unsorted = set(MAIN_PORTFOLIO.transactions()) #a dict of ALL transactions
 
         
@@ -783,9 +778,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         blacklist = set() # list of items that don't meet criteria
         for f in MAIN_PORTFOLIO.filters():
             # Ignore filter metrics, if the metric isn't in any column in the GRID
-            if (self.rendered.isPortfolio() and f.metric() not in setting('header_portfolio')): continue
-            if (self.rendered.isAsset() and f.metric() not in setting('header_asset')): continue
-            if (self.rendered.isGrandLedger() and f.metric() not in setting('header_grand_ledger')): continue
+            if (self.view.isPortfolio() and f.metric() not in setting('header_portfolio')): continue
+            if (self.view.isAsset() and f.metric() not in setting('header_asset')): continue
+            if (self.view.isGrandLedger() and f.metric() not in setting('header_grand_ledger')): continue
 
             for item in unfiltered_unsorted: # could be assets or transactions
                 if f.is_alpha() and f.metric() != 'date': # text metrics like ticker and class
@@ -798,7 +793,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                     if f.metric() == 'date':
                         item_state = item.get_raw('date')
                     elif f.metric() in ('price','quantity','value'):
-                        item_state = item.get_metric(f.metric(), self.rendered.getAsset())
+                        item_state = item.get_metric(f.metric(), self.view.getAsset())
                     else:
                         item_state = item.get_metric(f.metric())
 
@@ -817,10 +812,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # SORTING
         #########################
         # DEFAULT SORT pre-sorting for assets/transactions
-        if self.rendered.isPortfolio():    
+        if self.view.isPortfolio():    
             def tickerclasskey(e):  return e.tickerclass()
             filtered_unsorted.sort(key=tickerclasskey)     # Assets base sort is by tickerclass
-        elif self.rendered.isAsset() or self.rendered.isGrandLedger():       
+        elif self.view.isAsset() or self.view.isGrandLedger():       
             filtered_unsorted.sort(reverse=not reverse)    # Transactions base sort is by date mostly, but other minor conditional cases (integrated into sort function)
         
         # Sorting based on the column we've selected to sort by
@@ -833,11 +828,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if toReturn is None:    return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
             else:                   return toReturn
         def value_quantity_price(e):
-            return e.get_metric(info, self.rendered.getAsset())
+            return e.get_metric(info, self.view.getAsset())
 
         if   info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
         elif metric_formatting_lib[info]['format'] == 'alpha':                  filtered_unsorted.sort(reverse=reverse,     key=alphaKey)
-        elif self.rendered.isAsset() and info in ('value','quantity','price','balance'):  filtered_unsorted.sort(reverse=not reverse, key=value_quantity_price)
+        elif self.view.isAsset() and info in ('value','quantity','price','balance'):  filtered_unsorted.sort(reverse=not reverse, key=value_quantity_price)
         else:                                                                   filtered_unsorted.sort(reverse=not reverse, key=numericKey)
 
         # Applies the sorted & filtered results, to be used in the rendering pipeline
@@ -906,7 +901,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             else:
                 toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get_metric(data), 'alpha', 20), S) + ' USD<br>'
         
-        Message(self, 'Overall Stats and Information', toDisplay, big=True, scrollable=True, tabStopWidth=maxWidth)
+        Message(self, 'Overall Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
     
     def asset_stats_and_info(self, a:str): #A wholistic display of all relevant information to an asset 
         toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
@@ -952,7 +947,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             else:
                 toDisplay += label + HTMLify(format_general(asset.get_raw(data), 'alpha', 20), S) + ' USD<br>'
 
-        Message(self, asset.name() + ' Stats and Information', toDisplay, big=True, scrollable=True, tabStopWidth=maxWidth)
+        Message(self, asset.name() + ' Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
 
 
 #METRICS
@@ -975,21 +970,22 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 # UNIVERSAL BINDINGS
 #=============================================================
     def _mousewheel(self, event:QWheelEvent): # Controls all scrollwheel-related events.
+        scroll_up = event.angleDelta().y() > 0
+        scroll_down = event.angleDelta().y() < 0
         if app.keyboardModifiers() == Qt.ControlModifier: # Scrolling with CTRL pressed scales the page
-            if(event.angleDelta().y() > 0):     self.decrease_page_length()
-            elif(event.angleDelta().y() < 0):   self.increase_page_length()
+            if scroll_up:     self.decrease_page_length()
+            elif scroll_down:   self.increase_page_length()
         elif app.keyboardModifiers() == Qt.ShiftModifier: # Scrolling with SHIFT pressed scrolls horizontally
-            if(event.angleDelta().y() > 0):     self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() - 100)
-            elif(event.angleDelta().y() < 0):   self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() + 100)
+            if scroll_up:     self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() - 100)
+            elif scroll_down:   self.GUI['gridScrollArea'].horizontalScrollBar().setValue(self.GUI['gridScrollArea'].horizontalScrollBar().value() + 100)
         else:                                             # Scrolling alone changes the page
-            if(event.angleDelta().y() > 0):     self.page_prev()
-            elif(event.angleDelta().y() < 0):   self.page_next()
+            if scroll_up:     self.page_prev()
+            elif scroll_down:   self.page_next()
     def _esc(self):     # De-select stuff
         if self.GUI['GRID'].selection != [None, None]:  self.GUI['GRID'].set_selection()  #If anything is selected, deselect it
-        elif self.rendered.isPortfolio():  self.quit()        #If we're on the main page, exit the program
+        elif self.view.isPortfolio():  self.quit()        #If we're on the main page, exit the program
         else:                   #If we're looking at an asset, go back to the main page
-            self.rendered.setPortfolio()
-            self.render(True)  
+            self.render(state=self.view.PORTFOLIO, sort=True)
     def _del(self):     # Delete any selected items
         cur_selection = self.GUI['GRID'].selection
         if cur_selection != [None, None]:  self.delete_selection(cur_selection[0],cur_selection[1])
@@ -1013,7 +1009,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # Actually loads the save and refreshes all visual elements
         MAIN_PORTFOLIO.loadJSON(TEMP['undo'][index])
         self.metrics()
-        self.render(True)
+        self.render(sort=True)
 
         self.undo_redo_vfx() # Adds/removes star, updates undo/redo button functionality
     def _ctrl_z(self):      self.load_undo_save(self.current_undosave_index-1)    #Undo your last action

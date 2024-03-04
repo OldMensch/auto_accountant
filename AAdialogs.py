@@ -10,15 +10,15 @@ class Message(Dialog): #Simple text popup, can add text with colors to it
     \nbig - when true, window set to 75% of the user's monitor size vertically/horizontally
     \ntabStopWidth - size of tab intentation in characters
     """
-    def __init__(self, upper, title, message, closeMenuButtonTitle='Ok', scrollable=False, big=False, tabStopWidth=None, *args, **kwargs):
+    def __init__(self, upper, title, message, closeMenuButtonTitle='Ok', scrollable=False, size=None, tabStopWidth=None, wordWrap=True, *args, **kwargs):
         super().__init__(upper, title)
 
-        if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'))
-        else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=True)
+        if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
+        else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
 
-        if big:         
+        if size is not None:         
             availableSpace = QGuiApplication.primaryScreen().availableGeometry()
-            self.setFixedSize(availableSpace.width()*.75, availableSpace.height()*.75)
+            self.setFixedSize(availableSpace.width()*size, availableSpace.height()*size)
         
         if tabStopWidth: self.text.setTabStopDistance(tabStopWidth)
 
@@ -74,7 +74,7 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
         self.asset._name = NAME # Set existing asset name to saved name
         self.asset._description = DESC # Set existing asset description to saved description
 
-        self.upper.render(True)
+        self.upper.render(sort=True)
         self.upper.undo_save()
         self.close()
 
@@ -218,7 +218,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         self.upper.undo_save()          #creates a savepoint after deleting this
         self.upper.metrics()            #recalculates metrics for this asset w/o this transaction
-        self.upper.render(True)    #re-renders the main portfolio w/o this transaction
+        self.upper.render(sort=True)    #re-renders the main portfolio w/o this transaction
         self.close()
 
     def save(self):
@@ -343,7 +343,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         self.upper.undo_save()
         self.upper.metrics()
-        self.upper.render(True)
+        self.upper.render(sort=True)
         self.close()
 
 class WalletManager(Dialog): #For selecting wallets to edit
@@ -435,7 +435,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()
-            self.upper.upper.render(True)
+            self.upper.upper.render(sort=True)
 
         self.upper.refresh_wallets()
         self.upper.upper.undo_save()
@@ -472,7 +472,7 @@ class FilterEditor(Dialog): #For creating/editing filters
 
         # Metric
         self.add_label('Metric',0,0)
-        all_filterable_metrics = set(default_portfolio_headers + default_asset_headers + default_grand_ledger_headers)
+        all_filterable_metrics = set(default_headers['portfolio'] + default_headers['asset'] + default_headers['grand_ledger'])
         self.DROPDOWN_metric = self.add_dropdown_list({metric_formatting_lib[metric]['name']:metric for metric in all_filterable_metrics}, 1, 0, sortOptions=True)
         self.DROPDOWN_metric.currentTextChanged.connect(self.update_date_entry_visibility) # When metric is changed, if date, it needs a special entry box.
 
@@ -515,7 +515,7 @@ class FilterEditor(Dialog): #For creating/editing filters
         MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
         if len(MAIN_PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet(style('')) #Turn off filtering indicator
-        self.upper.upper.render(True) # Always re-render when filters are applied/removed
+        self.upper.upper.render(sort=True) # Always re-render when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
@@ -563,7 +563,7 @@ class FilterEditor(Dialog): #For creating/editing filters
         if self.filter_to_edit: MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)
         
         self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
-        self.upper.upper.render(True)  # Always re-render when filters are applied/removed
+        self.upper.upper.render(sort=True)  # Always re-render when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
@@ -642,5 +642,5 @@ class DEBUGStakingReportDialog(Dialog):
 
         self.upper.undo_save()
         self.upper.metrics()
-        self.upper.render(True)
+        self.upper.render(sort=True)
         self.close()

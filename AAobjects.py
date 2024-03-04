@@ -95,9 +95,6 @@ class Transaction():
             'loss_value':       0,
             'fee_value':        0,
             'gain_value':       0,
-            'loss_balance':       0,
-            'fee_balance':        0,
-            'gain_balance':       0,
 
             'basis_price':      0,      #The cost basis price
 
@@ -413,7 +410,7 @@ class Asset():
         """Returns formatted str for given metric"""
         if info == 'ticker':        return self._ticker
         if info == 'name':          return self._name
-        if info == 'class':         return assetclasslib[self._class]['name'] #Returns the long-form name for this class
+        if info == 'class':         return assetclasslib[self._class]['name'] #Returns the long display name for this class
 
         #This is Market Data
         return format_general(self.get_metric(info), metric_formatting_lib[info]['format'])
@@ -716,6 +713,40 @@ class gain_heap(): #Sorts the gains depending on the accounting method chosen. H
         return (quantity, gains_removed)
 
 
+
+class ViewState():
+    """Stores current visual mode, and accessory relevant information"""
+    def __init__(self):
+        self.state = 'portfolio' #default view
+        self.asset = None
+        self.PORTFOLIO = 'portfolio'
+        self.GRAND_LEDGER = 'grand_ledger'
+        self.ASSET = 'asset'
+    
+    def getState(self) -> str:
+        return self.state
+    def getDefHeader(self):
+        try:        return default_headers[self.getState()]
+        except:     raise KeyError(f'||ERROR|| getDefHeader not implemented for unknown ViewState {self.getState()}')
+    def getHeaderID(self) -> list:
+        return 'header_'+self.getState()
+    def getHeaders(self) -> list:
+        return setting('header_'+self.getState())
+    def getAsset(self) -> str:
+        return self.asset
+
+
+    def isPortfolio(self):
+        return self.state == self.PORTFOLIO
+
+    def setAsset(self, currentAsset):
+        self.asset = currentAsset
+    def isAsset(self):
+        return self.state == self.ASSET
+    
+    def isGrandLedger(self):
+        return self.state == self.GRAND_LEDGER
+
     
 class GRID_HEADER(QPushButton):
     def __init__(self, upper, lClick, rClick, *args, **kwargs):
@@ -822,14 +853,14 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
 
         # Adds the first column in the grid, with the row indices
         self.item_indices = (
-            QWidget(styleSheet=style('GRID_label')),
-            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_label'))
+            QLabel("\n", styleSheet=style('GRID_header')),
+            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_header'))
         )
         self.highlights = [GRID_ROW(row, self.set_highlight, self._click, self._double_click) for row in range(self.pagelength)]
         
-        self.fake_header = QWidget(styleSheet=style('GRID_label'))
+        self.fake_header = QWidget(styleSheet=style('GRID_header'))
         header,text = self.item_indices[0],self.item_indices[1]
-        self.addWidget(header, 0, 0)
+        self.addWidget(header, 0, 0) # Upper-left corner of the GRID
         self.addWidget(text, 1, 0, self.pagelength, 1)
         text.setAttribute(Qt.WA_TransparentForMouseEvents) # Our mouse cursor penetrates the text, goes right to the highlight layer
 
@@ -876,27 +907,27 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.columns.append(
             (
             GRID_HEADER(self, p(self.header_left_click, new_index), p(self.header_right_click, new_index), fixedHeight=(icon('size').height())),
-            QLabel(alignment=Qt.AlignCenter, styleSheet=style('GRID_column'))
+            QLabel(alignment=Qt.AlignCenter, styleSheet=style('GRID_data'))
         ))
         header,text = self.columns[new_index][0],self.columns[new_index][1]
         
 
         self.addWidget(header, 0, new_index+1)
         self.addWidget(text, 1, new_index+1, self.pagelength, 1)
-        self.addWidget(self.fake_header, 0, new_index+2) # Moves our fake label over to the final empty area
         text.setAttribute(Qt.WA_TransparentForMouseEvents) # Our mouse cursor penetrates the text, goes right to the highlight layer
     def delete_column(self):    #NOTE: Lag is 7.52ms on avg
         old = self.columns.pop()    #Remove the tuple from the columns
         old[0].deleteLater()   #Destroy the header
         old[1].deleteLater()   #Destroy the label
     def set_columns(self, n:int):
-        '''Automatically adds or removes header columns until there are \n columns'''
+        '''Automatically adds or removes header columns until there are \'n\' columns'''
         if n < 0: raise Exception('||ERROR|| Cannot set number of columns to less than 0')
         self.setColumnStretch(len(self.columns)+1, 0) # Unstretches previously stretchy column
         while len(self.columns) != n:
             if len(self.columns) > n:   self.delete_column()
             else:                       self.add_column()
         self.setColumnStretch(len(self.columns)+1, 1) #Stretches extremely distant column, so that all data columns clump as efficiently as possible
+        self.addWidget(self.fake_header, 0, len(self.columns)+1) # Moves our fake header over to the final empty area
         
         # Readjusts highlight bars to be the correct width
         for r in range(self.pagelength):
@@ -905,9 +936,9 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         
 
     def update_page_length(self, n:int):
-        if n < 1 or n > 100: return
+        if n < 25 or n > 100: return
         self.set_selection()    # De-selects everything
-        self.set_highlight()        # De-highlights everything
+        self.set_highlight()    # De-highlights everything
         # Adjusts number of highlight rows, resets highlighting
 
         if n > self.pagelength:
@@ -945,25 +976,25 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
                 fontSize += 1
             else:   break
             
-        first = style('GRID_column').split('font-size:')
+        first = style('GRID_data').split('font-size:')
         second = first[1].split('px')
         second[0] = str(fontSize)
-        styleSheetLib['GRID_column'] = first[0] + 'font-size:' + 'px'.join(second)
-        first2 = style('GRID_label').split('font-size:')
+        styleSheetLib['GRID_data'] = first[0] + 'font-size:' + 'px'.join(second)
+        first2 = style('GRID_header').split('font-size:')
         second2 = first2[1].split('px')
         second2[0] = str(fontSize)
-        styleSheetLib['GRID_label'] = first2[0] + 'font-size:' + 'px'.join(second2)
+        styleSheetLib['GRID_header'] = first2[0] + 'font-size:' + 'px'.join(second2)
 
         # Applies font size modification - only slow part of this whole thing
-        self.item_indices[1].setStyleSheet(style('GRID_label'))
+        self.item_indices[1].setStyleSheet(style('GRID_header'))
         for c in range(len(self.columns)):
-            self.columns[c][1].setStyleSheet(style('GRID_column'))
+            self.columns[c][1].setStyleSheet(style('GRID_data'))
         self.upper.set_page()
 
     # Loads all of the text and formatting for the GRID,
     # Depending on the view (assets or transactions), the columns we want to see, and the page we're on
-    def grid_render(self, headers:list, sorted_items:list, page:int, specialinfo=None):
-        self.set_columns(len(headers))  # NOTE: 10-20% of portfolio page lag, 50% of asset page lag
+    def grid_render(self, view:ViewState, sorted_items:list, page:int):
+        self.set_columns(len(view.getHeaders()))  # NOTE: 10-20% of portfolio page lag, 50% of asset page lag
 
         first_item = self.pagelength*page
         last_item = self.pagelength*(page+1)
@@ -982,13 +1013,13 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         stop = len(sorted_items)-1 #last index in self.sorted
         for c in range(len(self.columns)):
             # Column header
-            header_title = headers[c]
-            self.columns[c][0].setText(metric_formatting_lib[header_title]['headername']) # Sets text to proper header name
-            self.columns[c][0].info = header_title # Sets info quick-access variable, to current header's variable
-            if self.upper.rendered.isPortfolio(): # Sets header tooltip
-                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['asset'][header_title], 40)))
-            elif self.upper.rendered.isAsset() or self.upper.rendered.isGrandLedger():
-                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['transaction'][header_title], 40)))
+            header_ID = view.getHeaders()[c]
+            self.columns[c][0].setText(metric_formatting_lib[header_ID]['headername']) # Sets text to proper header name
+            self.columns[c][0].info = header_ID # Sets info quick-access variable, to current header's variable
+            if self.upper.view.isPortfolio(): # Sets header tooltip
+                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['asset'][header_ID], 40)))
+            elif self.upper.view.isAsset() or self.upper.view.isGrandLedger():
+                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['transaction'][header_ID], 40)))
 
 
             # Column rows' text
@@ -998,48 +1029,13 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
                 if r > stop: toDisplay += '<br>' #Inserts empty lines where there is nothing to display
                 else:
                     item = sorted_items[r]
-                    formatted_text = item.metric_to_str(header_title, specialinfo) # Retrieves formatted version of text itself
-                    HTML_formatting = item.get_metric_style(header_title, specialinfo) # Retrieves HTML formatting for text
+                    formatted_text = item.metric_to_str(header_ID, view.getAsset()) # Retrieves formatted version of text itself
+                    HTML_formatting = item.get_metric_style(header_ID, view.getAsset()) # Retrieves HTML formatting for text
                     if item.ERROR:   self.highlights[r%self.pagelength].error(True) # if transaction/asset has an error, highlights it in red
                     if len(formatted_text) > longest_text_length: longest_text_length = len(formatted_text) # Records longest text, to set column width
                     toDisplay += HTMLify(formatted_text, HTML_formatting)+'<br>' # adds this row of text to toDisplay
             self.columns[c][1].setText(toDisplay.removesuffix('<br>')) # Sets column text to toDisplay
             
-
-class RenderState():
-    def __init__(self, func_portfolio, func_asset, func_grand_ledger, currentState, currentAsset=None):
-        self.func_asset = func_asset
-        self.func_portfolio = func_portfolio
-        self.func_grand_ledger = func_grand_ledger
-
-        self.state = currentState
-        self.asset = currentAsset
-    
-    def getState(self) -> str:
-        return self.state
-    def getAsset(self) -> str:
-        return self.asset
-    
-    def setPortfolio(self):
-        self.state = 'portfolio'
-        self.asset = None
-        self.func_portfolio()
-    def isPortfolio(self):
-        return self.state == 'portfolio'
-
-    def setAsset(self, currentAsset):
-        self.state = 'asset'
-        self.asset = currentAsset
-        self.func_asset()
-    def isAsset(self):
-        return self.state == 'asset'
-    
-    def setGrandLedger(self):
-        self.state = 'grand_ledger'
-        self.asset = None
-        self.func_grand_ledger()
-    def isGrandLedger(self):
-        return self.state == 'grand_ledger'
 
 
 

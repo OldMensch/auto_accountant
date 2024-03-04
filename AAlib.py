@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushBu
     QApplication, QMainWindow, QDialog, QMessageBox, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
     QComboBox, QListView, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea, QScrollBar, QStyle)
 from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QCursor, QDoubleValidator, QDrag, 
-    QDropEvent, QDragEnterEvent, QImage, QPainter, QActionGroup, QAction, QShortcut, QGuiApplication)
+    QDropEvent, QDragEnterEvent, QImage, QPainter, QActionGroup, QAction, QShortcut, QGuiApplication, QTextOption)
 from PySide6.QtCore import (Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QPoint) 
 
 import decimal
@@ -54,7 +54,7 @@ timestamp = 0
 time_sum = 0
 time_avg_windows = 0
 
-def ttt(string:str='reset'):
+def ttt(string:str='reset', *args, **kwargs):
     '''A timer for measuring program performance.\n
     \n\'reset\' prints the current time then sets to 0, 
     \n\'start\' subtracts a startpoint, 
@@ -62,7 +62,7 @@ def ttt(string:str='reset'):
     \n\'terminate\' is end + reset,
     \n\'avg_save\' adds a start/end delta to a sum, and logs the number of saves,
     \n\'avg_end\' is end + avg_save,
-    \n\'average_report\' reports the average delta length, and number of cycles.
+    \n\'report\' reports the average delta length, and number of cycles.
     '''
     global timestamp
     global time_sum
@@ -87,8 +87,9 @@ def ttt(string:str='reset'):
         case 'avg_end':
             ttt('end')
             ttt('avg_save')
-        case 'average_report':
-            return f'{time_sum/time_avg_windows} ms, on average.\nSample size = {time_avg_windows}.\nTotal time = {time_sum}'
+        case 'report':
+            if time_avg_windows ==  0: return 'No cycles to report'
+            return f'{time_sum/time_avg_windows} ms, on average. \nSample size = {time_avg_windows}.\nTotal time = {time_sum}'
 
 class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows any thread to tell the main thread to run something
     def __init__(self, method):
@@ -199,8 +200,8 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'universal':            "font-family: 'Calibri';",
 
     'GRID':                 "border: 0; border-radius: 0;",
-    'GRID_column':          "background: transparent; border-color: transparent; border-width: -2px 2px -2px 2px; font-size: px; font-family: \'Inconsolata Medium\';",
-    'GRID_label':           "background: "+UNI_PALETTE.B3+"; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_data':          "background: transparent; border-color: transparent; border-width: -2px 2px -2px 2px; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_header':           "background: "+UNI_PALETTE.B3+"; font-size: px; font-family: \'Inconsolata Medium\';",
     'GRID_error_hover':     "background: #ff0000;",
     'GRID_error_selection': "background: #cc0000;",
     'GRID_error_none':      "background: #880000;",
@@ -283,23 +284,23 @@ def loadIcons(): # loads the icons for the GUI
 def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI
 
 
-# Contains all kinds of display info for various parts of the program
-default_portfolio_headers = (
-    'ticker','name','class',
-    'balance','price','marketcap',
-    'value','volume24h','day_change',
-    'day%','week%','month%',
-    'portfolio%','cash_flow','net_cash_flow',
-    'realized_profit_and_loss','tax_capital_gains','tax_income','unrealized_profit_and_loss',
-    'unrealized_profit_and_loss%','average_buy_price'
-)
-
-default_asset_headers = ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price')
-
-default_grand_ledger_headers = ('date','type','wallet',
-                                'loss_asset','loss_quantity','loss_price',
-                                'fee_asset','fee_quantity','fee_price',
-                                'gain_asset','gain_quantity','gain_price')
+# These are all of the available metrics to be displayed in the GRID for each display mode
+default_headers = {
+    'portfolio' : (
+        "name","balance","ticker","price","average_buy_price",
+        "portfolio%","marketcap","volume24h","day%","week%","month%",
+        "cash_flow","value","net_cash_flow",
+        "unrealized_profit_and_loss%","realized_profit_and_loss",
+        # Ones I will want to hide
+        'class','day_change','tax_capital_gains','tax_income','unrealized_profit_and_loss',
+        ),
+    'asset': ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price'),
+    'grand_ledger': ('date','type','wallet',
+        'loss_asset','loss_quantity','loss_price',
+        'fee_asset','fee_quantity','fee_price',
+        'gain_asset','gain_quantity','gain_price'
+        ),
+}
 
 
 metric_formatting_lib = { # Includes formatting information for every metric in the program
@@ -361,10 +362,6 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'fee_value':{       'format':'',           'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
     'gain_value':{      'format':'',           'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
 
-    'loss_balance':{   'format':'',           'color':None,         'name':'Loss Balance', 'headername':'Loss\nBalance'       },
-    'fee_balance':{    'format':'',           'color':None,         'name':'Fee Balance',  'headername':'Fee\nBalance'       },
-    'gain_balance':{   'format':'',           'color':None,         'name':'Gain Balance', 'headername':'Gain\nBalance'       },
-
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 }
 
@@ -422,15 +419,12 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'loss_asset': "The asset lost from this transaction.",
         'loss_quantity': "The quantity lost of the loss asset.",
         'loss_price': "The USD market value of the loss asset at the time of the transaction.",
-        'loss_balance': "The total quantity held of the loss asset after this transaction.",
         'fee_asset': "The asset used to pay the fee.",
         'fee_quantity': "The quantity lost of the fee asset.",
         'fee_price': "The USD market value of the fee asset at the time of the transaction.",
-        'fee_balance': "The total quantity held of the fee asset after this transaction.",
         'gain_asset': "The asset gained from this transaction.",
         'gain_quantity': "The quantity gained of the gain asset.",
         'gain_price': "The USD market value of the gain asset at the time of the transaction.",
-        'gain_balance': "The total quantity held of the gain asset after this transaction.",
     
         'balance': "The total quantity held prior to this transaction.",
         'quantity': "The quantity gained/lost for this asset in this transaction.",
@@ -561,9 +555,9 @@ settingslib = { # A library containing all of the default settings
     'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
     'lastSaveDir': '',                          # Our last opened portfolio's filepath
     'offlineMode': True,                        # Whether or not to start in offline/online mode
-    'header_portfolio': list(default_portfolio_headers),        # List of headers displayed when showing a portfolio
-    'header_asset': list(default_asset_headers),                # List of headers displayed when showing an asset
-    'header_grand_ledger': list(default_grand_ledger_headers),  # List of headers displayed when showing a portfolio
+    'header_portfolio': list(default_headers['portfolio']),        # List of headers currently displayed when showing the portfolio
+    'header_asset': list(default_headers['asset']),                # List of headers currently displayed when showing an asset
+    'header_grand_ledger': list(default_headers['grand_ledger']),  # List of headers currently displayed when showing the grand ledger
     'sort_portfolio': ['ticker', False],        # Which column to sort our portfolio by, and whether this ought to be in reverse order
     'sort_asset': ['date', False],              # Which column to sort our asset by, and whether this ought to be in reverse order
     'sort_grand_ledger': ['date', False],       # Which column to sort our grand ledger by, and whether this ought to be in reverse order

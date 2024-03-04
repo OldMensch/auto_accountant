@@ -201,9 +201,11 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'].addWidget(label, row, column, rowspan, columnspan)
         return label
     
-    def add_scrollable_text(self, text, column, row, columnspan=1, rowspan=1, *args, **kwargs) -> QTextEdit:
+    def add_scrollable_text(self, text, column, row, columnspan=1, rowspan=1, wordWrap=True, *args, **kwargs) -> QTextEdit:
         '''Adds an uneditable, but scrollable textbox widget'''
-        label = QTextEdit(text, readOnly=True, *args, **kwargs)
+        label = QTextEdit('', readOnly=True, *args, **kwargs)
+        label.setText(text)
+        if not wordWrap: label.setWordWrapMode(QTextOption.NoWrap)
         self.GUI['primaryLayout'].addWidget(label, row, column, rowspan, columnspan)
         return label
 

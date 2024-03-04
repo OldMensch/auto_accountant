@@ -167,7 +167,6 @@ class metrics:
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
             COST_BASIS_PRICE = t.get_metric('basis_price')
             
-            ttt('start')
             # BALANCE CALCULATION - 10.0029ms for 5300 transactions
             # Sets account balance for these assets at time of transaction
             if LA: 
@@ -184,7 +183,6 @@ class metrics:
                 t._metrics['balance'][GA] = a._metrics['balance']
             for asset,quantity in t._metrics['balance'].items():
                 t._formatted['balance'][asset] = format_general(quantity, metric_formatting_lib['balance']['format']) 
-            ttt('avg_end')
 
             # COST BASIS CALCULATION    #NOTE: Lag ~7.9941ms for ~5300 transactions. 
 
