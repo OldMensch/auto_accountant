@@ -5,13 +5,12 @@
 
 * INFO/STATS INTEGRATION: Integrate info/stats panels into the main window where the GRID is currently
 
-* GRAND LEDGER: mode for displaying ALL transactions, ever. This will make it super easy to see, say, all transactions for one year or another.
-	- requires transaction inference calculations to be performed.
-
 * EXCHANGE API INTEGRATION: Integrate APIs into my program so that I can instantly and effortlessly import new transactions without having to download stupid files first
 	- Coinbase API
 	- Gemini API
 
+* GRAND LEDGER:
+	- fix tickerclass names (remove tickerclasses altogether)
 * NO MORE "TICKERCLASS": This brings the program towards 3rd Normal Form
 	- remove the "tickerclass" item altogether when working with assets
 	- requires reworking of the transaction editor code - no longer just "loss_asset", now it will be "loss_ticker" and "loss_class"

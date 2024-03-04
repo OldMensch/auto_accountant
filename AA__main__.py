@@ -198,7 +198,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         DEBUG = self.TASKBAR['DEBUG'] = QMenu('DEBUG')
         taskbar.addMenu(DEBUG)
         DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
-        DEBUG.addAction('DEBUG delete all transactions from wallet',     self.DEBUG_delete_all_from_wallet)
         DEBUG.addAction('DEBUG report staking interest',     self.DEBUG_report_staking_interest)
         def return_report():    Message(self, 'Efficiency Report', ttt('average_report'), scrollable=True)
         DEBUG.addAction('DEBUG ttt efficiency report', return_report)
@@ -251,12 +250,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if 'fee_price' in missing:    t._data['fee_price'] =  getMissingPrice(DATE, t._data['fee_asset'])
             if 'gain_price' in missing:   t._data['gain_price'] = getMissingPrice(DATE, t._data['gain_asset'])
             t.recalculate()
-        self.metrics()
-        self.render(True)
-    def DEBUG_delete_all_from_wallet(self):
-        for transaction in list(MAIN_PORTFOLIO.transactions()):
-            if transaction.wallet() == 'Binance':
-                MAIN_PORTFOLIO.delete_transaction(transaction.get_hash())
         self.metrics()
         self.render(True)
     def DEBUG_report_staking_interest(self):
@@ -508,6 +501,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
+        self.MENU['DEBUG_staking_report'] = QPushButton('DEBUG: Report\nStaking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
+
         #MENU RENDERING
         #==============================
         self.GUI['menuLayout'].addWidget(self.MENU['new'])
@@ -521,6 +516,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['menuLayout'].addWidget(self.MENU['new_transaction'])
         self.GUI['menuLayout'].addWidget(self.MENU['wallets'])
         self.GUI['menuLayout'].addWidget(self.MENU['filters'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_staking_report'])
         self.GUI['menuLayout'].addStretch(1)
 
         #MENU TOOLTIPS
@@ -537,6 +534,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             'new_transaction':  'Create a new transaction',
             'wallets':          'Manage wallets',
             'filters':          'Manage filters',
+            
+            'DEBUG_staking_report':  'Report current total "staking rewards":\ntrue earnings since last report are\ncalculated, and saved as an income transaction',
         }
         for widget in tooltips:     self.MENU[widget].setToolTip(tooltips[widget])
 
@@ -619,18 +618,19 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         m.exec(event.globalPos())
     def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
         """Deletes the specified items on the GRID"""
+        if self.rendered.isPortfolio(): return # Deletion CURRENTLY only applies to the transaction views
+
         I1 = self.page*setting('itemsPerPage')+GRID_ROW1
         if GRID_ROW2 == None:   I2 = I1
         else:                   I2 = self.page*setting('itemsPerPage')+GRID_ROW2
         if I1 > len(self.sorted)-1: return
         if I2 > len(self.sorted)-1: I2 = len(self.sorted)-1
         for item in range(I1,I2+1):
-            if self.rendered.isAsset():     MAIN_PORTFOLIO.delete_transaction(self.sorted[item].get_hash())
+            MAIN_PORTFOLIO.delete_transaction(self.sorted[item].get_hash())
 
         # Remove assets that no longer have transactions
         for a in list(MAIN_PORTFOLIO.assets()):
             if len(a._ledger) == 0:
-                print("deleted asset",a)
                 MAIN_PORTFOLIO.delete_asset(a)
 
         self.GUI['GRID'].set_selection()
@@ -702,9 +702,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         elif self.rendered.isGrandLedger(): header = setting('header_grand_ledger')
         elif self.rendered.isAsset():       header = setting('header_asset')
         # Fills in the GRID with metrics
-        ttt('start')
-        self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered.getAsset())
-        ttt('avg_end')
+        self.GUI['GRID'].grid_render(header, self.sorted, self.page, self.rendered.getAsset()) # (1.3065ms for ~5300 transactions, switching panes (portfolio/grandledger))
     
     
     def update_info_pane(self): # Adds basic summary statistics on the lefthand side panel for easy viewing
@@ -799,11 +797,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                     # These metrics are not present when in the Grand Ledger view
                     if f.metric() == 'date':
                         item_state = item.get_raw('date')
-                    elif self.rendered.isAsset():
-                        match f.metric():
-                            case 'price':   item_state = item.price(self.rendered.getAsset())
-                            case 'quantity':   item_state = item.quantity(self.rendered.getAsset())
-                            case 'value':   item_state = item.value(self.rendered.getAsset())
+                    elif f.metric() in ('price','quantity','value'):
+                        item_state = item.get_metric(f.metric(), self.rendered.getAsset())
                     else:
                         item_state = item.get_metric(f.metric())
 
@@ -842,7 +837,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         if   info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
         elif metric_formatting_lib[info]['format'] == 'alpha':                  filtered_unsorted.sort(reverse=reverse,     key=alphaKey)
-        elif self.rendered.isAsset() and info in ('value','quantity','price'):  filtered_unsorted.sort(reverse=not reverse, key=value_quantity_price)
+        elif self.rendered.isAsset() and info in ('value','quantity','price','balance'):  filtered_unsorted.sort(reverse=not reverse, key=value_quantity_price)
         else:                                                                   filtered_unsorted.sort(reverse=not reverse, key=numericKey)
 
         # Applies the sorted & filtered results, to be used in the rendering pipeline
@@ -928,7 +923,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # UNITS PER WALLET
         toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get_raw('holdings'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get_raw('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get_raw('balance'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get_raw('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
         wallets = list(MAIN_PORTFOLIO.asset(a).get_raw('wallets'))  
         def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get_raw('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)

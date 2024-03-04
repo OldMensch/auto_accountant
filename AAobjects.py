@@ -95,12 +95,17 @@ class Transaction():
             'loss_value':       0,
             'fee_value':        0,
             'gain_value':       0,
+            'loss_balance':       0,
+            'fee_balance':        0,
+            'gain_balance':       0,
 
             'basis_price':      0,      #The cost basis price
 
             'price':    {},     #Price, value, quantity by asset, for displaying
             'value':    {},
             'quantity': {},
+            'balance': {},
+            'all_assets':[],
 
             'hash':             None,
             'missing':          [],
@@ -262,7 +267,7 @@ class Transaction():
                 case 'basis_price' | 'hash' | 'all_assets' | 'missing' | 'date': 
                     continue # Unnecessary, or already calculated elsewhere
                 case 'type':    formatted_metric = pretty_trans[self._data['type']]
-                case 'value' | 'quantity' | 'price': 
+                case 'value' | 'quantity' | 'price' | 'balance': 
                     self._formatted[metric] = {}
                     for a in self._metrics['all_assets']:
                         try:    self._formatted[metric][a] = format_general(self._metrics[metric][a], metric_formatting_lib[metric]['format']) 
@@ -313,7 +318,7 @@ class Transaction():
         return self._data[info]
     def get_metric(self, info:str, asset:str=None):
         """Returns this metric in its native datatype"""
-        if info in ['value','quantity','price']:    
+        if info in ['value','quantity','price','balance']:    
             try:    return self._metrics[info][asset]
             except: return None
         try:    return self._metrics[info]
@@ -322,7 +327,7 @@ class Transaction():
     def metric_to_str(self, info:str, asset:str=None) -> str:
         """Returns formatted str for given metric"""
         try:
-            if info in ('value','quantity','price'):   
+            if info in ('value','quantity','price','balance'):   
                 return self._formatted[info][asset]
             else:       return self._formatted[info]
         except: 
@@ -333,7 +338,7 @@ class Transaction():
         if self.ERROR: return ''
         color_format = metric_formatting_lib[info]['color']
         if color_format == 'type':                                          return style(self._data['type'])
-        elif color_format == 'accounting' and asset and self.get_metric(info, asset) < 0:    return style('loss')
+        elif color_format == 'accounting' and self.get_metric(info, asset) and self.get_metric(info, asset) < 0:    return style('loss')
         return ''
 
     #JSON Functions

@@ -588,7 +588,7 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
 
 class DEBUGStakingReportDialog(Dialog):
     '''Opens dialog for reporting my current interest quantity of AMP/ALCX without having to do math'''
-    def __init__(self, upper):
+    def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Import to Wallet')
         self.add_label('Crypto Ticker',0,0)
         self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24)

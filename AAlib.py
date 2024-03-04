@@ -88,7 +88,7 @@ def ttt(string:str='reset'):
             ttt('end')
             ttt('avg_save')
         case 'average_report':
-            return str(time_sum/time_avg_windows) + ' ms, on average. Sample size = '+str(time_avg_windows)
+            return f'{time_sum/time_avg_windows} ms, on average.\nSample size = {time_avg_windows}.\nTotal time = {time_sum}'
 
 class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows any thread to tell the main thread to run something
     def __init__(self, method):
@@ -286,7 +286,7 @@ def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon 
 # Contains all kinds of display info for various parts of the program
 default_portfolio_headers = (
     'ticker','name','class',
-    'holdings','price','marketcap',
+    'balance','price','marketcap',
     'value','volume24h','day_change',
     'day%','week%','month%',
     'portfolio%','cash_flow','net_cash_flow',
@@ -294,7 +294,7 @@ default_portfolio_headers = (
     'unrealized_profit_and_loss%','average_buy_price'
 )
 
-default_asset_headers = ('date', 'type', 'wallet', 'quantity', 'value', 'price')
+default_asset_headers = ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price')
 
 default_grand_ledger_headers = ('date','type','wallet',
                                 'loss_asset','loss_quantity','loss_price',
@@ -330,10 +330,12 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
     'price':{                       'format': '',           'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
     'marketcap':{                   'format': '',           'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
-    'holdings':{                    'format': '',           'color' : None,             'name':'Holdings',          'headername':'Holdings'},
     'volume24h':{                   'format': '',           'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
     'portfolio%':{                  'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
     'average_buy_price':{           'format': '',           'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
+
+    # Shared by assets and transactions
+    'balance':{                    'format': '',           'color' : None,             'name':'Balance',          'headername':'Balance'},
 
     #Unique to transactions
     'date':{            'format':'alpha',      'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
@@ -358,6 +360,10 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'loss_value':{      'format':'',           'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
     'fee_value':{       'format':'',           'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
     'gain_value':{      'format':'',           'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
+
+    'loss_balance':{   'format':'',           'color':None,         'name':'Loss Balance', 'headername':'Loss\nBalance'       },
+    'fee_balance':{    'format':'',           'color':None,         'name':'Fee Balance',  'headername':'Fee\nBalance'       },
+    'gain_balance':{   'format':'',           'color':None,         'name':'Gain Balance', 'headername':'Gain\nBalance'       },
 
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 }
@@ -401,9 +407,9 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'ticker': "The ticker for this asset. BTC, ETH, etc.",
         'name': "The longer name of the asset. Bitcoin, Ethereum, etc.",
         'class': "The asset class: a stock, cryptocurrency, or fiat currency.",
-        'price': "The current market value of this asset",
+        'price': "The current market value of this asset, per unit",
         'marketcap': "The total USD invested into this asset.",
-        'holdings': "The total units owned of this asset (tokens, stocks, etc.)",
+        'balance': "The total units owned of this asset (tokens, stocks, etc.)",
         'volume24h': "The USD which has gone into/out of the asset in the past day.",
         'portfolio%': "The percentage of USD which this asset makes up in your overall portfolio.",
         'average_buy_price': "The average market price of all your assets at the time of their purchase.",
@@ -416,13 +422,17 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'loss_asset': "The asset lost from this transaction.",
         'loss_quantity': "The quantity lost of the loss asset.",
         'loss_price': "The USD market value of the loss asset at the time of the transaction.",
+        'loss_balance': "The total quantity held of the loss asset after this transaction.",
         'fee_asset': "The asset used to pay the fee.",
         'fee_quantity': "The quantity lost of the fee asset.",
         'fee_price': "The USD market value of the fee asset at the time of the transaction.",
+        'fee_balance': "The total quantity held of the fee asset after this transaction.",
         'gain_asset': "The asset gained from this transaction.",
         'gain_quantity': "The quantity gained of the gain asset.",
         'gain_price': "The USD market value of the gain asset at the time of the transaction.",
+        'gain_balance': "The total quantity held of the gain asset after this transaction.",
     
+        'balance': "The total quantity held prior to this transaction.",
         'quantity': "The quantity gained/lost for this asset in this transaction.",
         'value': "The USD value of the tokens involved in this transaction, for this asset.",
         'price': "The USD value per token in this transaction.",

@@ -103,17 +103,17 @@ class metrics:
         # INFO VARIABLES - data we collect as we account for every transaction #NOTE: Lag is 0ms for ~12000 transactions
         metrics = { asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in self.PORTFOLIO.all_asset_tickerclasses() }
         
-        # HOLDINGS - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
+        # LEDGER - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
         accounting_method = setting('accounting_method')
-        # Holdings is a dict of all assets, under which is a dict of all wallets, and each wallet is a priority heap which stores our transactions
+        # Ledger is a dict of all assets, under which is a dict of all wallets, and each wallet is a priority heap (depending on HIFO/LIFO/FIFO) which stores our transactions
         # We use a min/max heap to decide which transactions are "sold" when assets are sold, to determine what the capital gains actually is
-        holdings = {asset:{wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()} for asset in self.PORTFOLIO.all_asset_tickerclasses()}
+        ledger = {asset:{wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()} for asset in self.PORTFOLIO.all_asset_tickerclasses()}
 
         # STORE and DISBURSE QUANTITY - functions which add, or remove a 'gain', to the HOLDINGS data structure.
         def disburse_quantity(t:Transaction, quantity:Decimal, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
-            result = holdings[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
+            result = ledger[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
             if not zeroish_prec(result[0]):  #NOTE: Lag is ~0ms
                 t.ERROR,t.ERR_MSG = True,'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
 
@@ -122,7 +122,7 @@ class metrics:
             for gain in result[1]: #Result[1] is a list of gain objects that were just disbursed
                 cost_basis += gain._price*gain._quantity
                 if tax_report == '8949': tax_8949(t, gain, quantity)
-                if w2: holdings[a][w2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
+                if w2: ledger[a][w2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
             return cost_basis
             
         def tax_8949(t:Transaction, gain:gain_obj, total_disburse:Decimal):
@@ -147,34 +147,57 @@ class metrics:
                 }
             self.TEMPDATA['taxes']['8949'] = self.TEMPDATA['taxes']['8949'].append(form8949, ignore_index=True)
 
+        for asset in self.PORTFOLIO.assets(): #TODO: Lag unknown
+            asset._metrics['cost_basis'] =  Decimal(0)
+            asset._metrics['balance'] =    Decimal(0)
+            asset._metrics['wallets'] =     {}
+
         progBarIndex = 0
         for t in transactions:  # Lag is ~135ms for ~12000 transactions
             progBarIndex+=1
             self.MAIN_APP_REF.set_progress(progBarIndex)
             if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
 
-            #NOTE: Lag ~35ms for ~12000 transactions
+            #NOTE: 10.4140ms for ~5300 transactions
             HASH,TYPE,WALLET = t.get_hash(),t.type(),t.wallet()
             WALLET2 = t.get_metric('dest_wallet')
-            LA,FA,GA = t.get_raw('loss_asset'),         t.get_raw('fee_asset'),         t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
+            LA,FA,GA = t.get_raw('loss_asset'),        t.get_raw('fee_asset'),        t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
             LQ,FQ,GQ = t.get_metric('loss_quantity'),  t.get_metric('fee_quantity'),  t.get_metric('gain_quantity')
             LV,FV,GV = t.get_metric('loss_value'),     t.get_metric('fee_value'),     t.get_metric('gain_value')
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
             COST_BASIS_PRICE = t.get_metric('basis_price')
             
+            ttt('start')
+            # BALANCE CALCULATION - 10.0029ms for 5300 transactions
+            # Sets account balance for these assets at time of transaction
+            if LA: 
+                a = self.PORTFOLIO.asset(LA)
+                a._metrics['balance'] -= LQ
+                t._metrics['balance'][LA] = a._metrics['balance']
+            if FA: 
+                a = self.PORTFOLIO.asset(FA)
+                a._metrics['balance'] -= FQ
+                t._metrics['balance'][FA] = a._metrics['balance']
+            if GA: 
+                a = self.PORTFOLIO.asset(GA)
+                a._metrics['balance'] += GQ
+                t._metrics['balance'][GA] = a._metrics['balance']
+            for asset,quantity in t._metrics['balance'].items():
+                t._formatted['balance'][asset] = format_general(quantity, metric_formatting_lib['balance']['format']) 
+            ttt('avg_end')
 
-            # COST BASIS CALCULATION    #NOTE: Lag ~250ms for ~12000 transactions. 
+            # COST BASIS CALCULATION    #NOTE: Lag ~7.9941ms for ~5300 transactions. 
 
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
-            # GAINS - We gain assets one way or another     #NOTE: Lag ~180ms, on average
-            if COST_BASIS_PRICE:    holdings[GA][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
-            # FEE LOSS - We lose assets because of a fee     #NOTE: Lag ~70ms, on average
+            # GAINS - We gain assets one way or another     #NOTE: Lag ~xxx, on average
+            if COST_BASIS_PRICE:    ledger[GA][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
+            # FEE LOSS - We lose assets because of a fee     #NOTE: Lag ~xxx, on average
             if FA:                  FEE_COST_BASIS =  disburse_quantity(t, FQ, FA, WALLET)
             # LOSS - We lose assets one way or another.
             if LA:                  LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET, WALLET2)
 
 
-            # METRIC CALCULATION    #NOTE: Lag is ~44ms for ~12000 transactions
+            # METRIC CALCULATION    #NOTE: Lag is ~2.0002ms for ~12000 transactions
             
             # CASH FLOW - Only transactions involving USD can affect cash flow.
             # HOWEVER... when you "swap" one crypto for another, then the gain asset technically has "0 cash flow", which from an investing perspective, makes no sense
@@ -212,6 +235,7 @@ class metrics:
                     self.TEMPDATA['taxes']['1099-MISC'] = self.TEMPDATA['taxes']['1099-MISC'].append( {'Date acquired':t.iso_date(), 'Value of assets':str(GV)}, ignore_index=True)
 
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
+        
 
         #ERRORS - applies error state to any asset with an erroneous transaction on its ledger.
         # We initially assume that no asset has any errors
@@ -229,34 +253,30 @@ class metrics:
             asset._metrics.update(metrics[a])
 
             total_cost_basis = 0    #The overall cost basis of what you currently own
-            total_holdings = 0      #The total # units you hold of this asset
-            wallet_holdings = {}    #A dictionary indicating your total units held, by wallet
-            for w in holdings[a]:
-                wallet_holdings[w] = 0 # Initializes total wallet holdings for wallet to be 0$
-                for gain in holdings[a][w]._heap:
+            wallet_balance = {}    #A dictionary indicating the balance by wallet
+            for w in ledger[a]:
+                wallet_balance[w] = 0 # Initializes wallet balance at 0$
+                for gain in ledger[a][w]._heap:
                     total_cost_basis        += gain._price*gain._quantity   #cost basis of this gain
-                    total_holdings          += gain._quantity               #Single number for the total number of tokens
-                    wallet_holdings[w]      += gain._quantity               #Number of tokens within each wallet
-
+                    wallet_balance[w]      += gain._quantity               #Number of tokens within each wallet
             asset._metrics['cost_basis'] =  total_cost_basis
-            asset._metrics['holdings'] =    total_holdings
-            asset._metrics['wallets'] =     wallet_holdings
+            asset._metrics['wallets'] =     wallet_balance
             
     # METRICS FOR INDIVIDUAL ASSETS
     # Market-independent
     def calculate_average_buy_price(self, asset:Asset):
-        try:    asset._metrics['average_buy_price'] = asset.get_metric('cost_basis') / asset.get_metric('holdings')
+        try:    asset._metrics['average_buy_price'] = asset.get_metric('cost_basis') / asset.get_metric('balance')
         except: asset._metrics['average_buy_price'] = 0
     # Market-dependent
     def calculate_value(self, asset:Asset):   #Calculates the overall value of this asset
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['value'] = asset.get_metric('holdings') * asset.get_metric('price')
+        try:    asset._metrics['value'] = asset.get_metric('balance') * asset.get_metric('price')
         except: asset._metrics['value'] = None
     def calculate_unrealized_profit_and_loss(self, asset:Asset):
         #You need current market data for these bad boys
         average_buy_price = asset.get_metric('average_buy_price')
         try:        
-            asset._metrics['unrealized_profit_and_loss'] =      asset.get_metric('value') - ( average_buy_price * asset.get_metric('holdings') )
+            asset._metrics['unrealized_profit_and_loss'] =      asset.get_metric('value') - ( average_buy_price * asset.get_metric('balance') )
             asset._metrics['unrealized_profit_and_loss%'] =   ( asset.get_metric('price') /  average_buy_price )-1
         except:     asset._metrics['unrealized_profit_and_loss%'] = asset._metrics['unrealized_profit_and_loss'] = 0
     def calculate_changes(self, asset:Asset): #Calculates the unrealized USD lost or gained in the last 24 hours, week, and month for this asset
