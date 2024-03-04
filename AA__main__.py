@@ -333,7 +333,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         MAIN_PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
-        self.render(sort=True)
+        self.render(state=self.view.PORTFOLIO, sort=True)
         if not first:   self.undo_save()
     def load(self, dir=None):
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -349,7 +349,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         set_setting('lastSaveDir', dir)
         self.metrics()
-        self.render(sort=True)
+        self.render(state=self.view.PORTFOLIO, sort=True)
         self.undo_save()  
     def merge(self): #Doesn't overwrite current portfolio by default.
         dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -653,16 +653,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 self.GUI['title'].setText('Portfolio View')
                 self.GUI['subtitle'].setText('All assets')
                 self.GUI['grand_ledger'].show()
+                self.GUI['back'].hide()
             elif self.view.isGrandLedger():
                 self.GUI['title'].setText('Grand Ledger')
                 self.GUI['subtitle'].setText('All transactions for all assets')
                 self.GUI['grand_ledger'].hide()
+                self.GUI['back'].show()
             
             # Portfolio/grand ledger have same sidepanel info
             self.GUI['info'].clicked.connect(self.portfolio_stats_and_info)
             self.GUI['info'].setToolTip('Detailed information about this portfolio')
             self.GUI['edit'].hide()
-            self.GUI['back'].hide()
         elif self.view.isAsset():
             asset_to_render = MAIN_PORTFOLIO.asset(self.view.getAsset())
             

@@ -717,7 +717,7 @@ class gain_heap(): #Sorts the gains depending on the accounting method chosen. H
 class ViewState():
     """Stores current visual mode, and accessory relevant information"""
     def __init__(self):
-        self.state = 'portfolio' #default view
+        self.state = None
         self.asset = None
         self.PORTFOLIO = 'portfolio'
         self.GRAND_LEDGER = 'grand_ledger'
