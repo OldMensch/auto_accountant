@@ -15,7 +15,9 @@
 	- remove the "tickerclass" item altogether when working with assets
 	- requires reworking of the transaction editor code - no longer just "loss_asset", now it will be "loss_ticker" and "loss_class"
 	- Requires reworking what data saves to files, primarily for transaction data
+	- Requires pulling my hair out
 	
+
 * Pythonic tricks:
 	- See if f-strings can shorten code anywhere
 		* NOTE: variables in f-strings CAN BE FORMATTED! like so: f'this is normal text, this isn\'t: {my_float_var:.2f}'
@@ -28,23 +30,25 @@
 	This allows us to create, say dict['key']['subkey'] even if 'key' doesn't currently exist
 	(Generally I avoid having nested dictionaries though - now instead I use object-oriented programming)
 	
+	* IMPORTANT NOTE ABOUT STRINGS
+		- It is entirely unneccessary to replace all of the strings in the program with a universal library the strings are pulled from
+		- I tried this; it had 0 impact on performance
+		- Python probably creates a universal library for strings like I did when it compiles the program, to vastly boost efficiency
+	
 * IMPROVE ERROR HANDLING:
-	- Add a button that lets you see all the erroneous transactions together
-      	I ought to improve "Bad Transaction" detection. There exists some code already, but its a bit messy. That ought to be fixed.
-		Stuff to check (The STUPID check!):
-		- No integer overflow
-		- Maximum string length, cut off by defined maximum length in AAlib (since all Decimal objects are permanently stored as strings)
-		- Various constraints on data entry (positive-only, size constraints, etc
-	- All of this ought to be in a single method, contained under the Transaction class. 
-	- Consider modifying the transaction editor, so that I can enter almost whatever I please into the different boxes
-		To combat errors, every time a character is entered into any of the entry boxes, a command is trun to check for errors
-		If errors are found, the erroneous boxes will be colored red or something, and a little error message will appear below
-		
-		This will allow for more efficient and robust editing of transactions
+	- Transactions/Assets need to have new functions:
+		- .add_error(type, msg)
+		- .clear_error(type)
 
-* ISSUE: Some kind of way to prevent transactions with missing data from re-importing	
+* THE IMPORT DUPLICATION ISSUE: Some kind of way to prevent transactions with missing data from re-importing	
 	- If an imported transaction was missing data, then we fill out that data, the transaction's hash code changes. Then, if we import the same transaction list again, a duplicate of this transaction is added to our porfolio. This is a bad issue!
-		SOLUTION 1: the first time a transaction is loaded, it is hashed (as I do it now), and given a PERMANENT unique ID, that always refers to that exact transaction
+		SOLUTION 2: if a newly imported transaction has an error, it is permanently saved to the JSON in a new category "import_errors"
+			This is good since we only really care about transactions we fixed
+		SOLUTION 3: all transactions have "origin" variable,
+			Origin tag denotes: when they were imported (and to what wallet), or that the user made it
+			EX:		origin: imported12-12-2024 12:13:23binance
+			problem: user might totally change transaction when editing, and it should not preserve the ID after that
+
 
 * MULTI-THREADING:
 	- AAmetrics: perform_automatic_accounting
@@ -58,14 +62,8 @@
 	- Loading JSON data
 		Thought: Divide instantiation of transactions into multiple threads. For each transaction in the JSON, throw that transaction into the instantiation stack of another thread. Threads do hard work of creating Transaction objects, then pass these objects back to the main thread's execution stack, to be added to the MAIN_PORTFOLIO object
 
-* REFACTORING: CODE ORGANIZATION:
-	- Separate large methods into multiple smaller parts for better organization. 
-	- Consider separating methods inside of AA__main__ into a separate class
-	- Consider segregating the GUI from the algorithmic code: moving the algorithmic code into its own class as much as possible
-		This is difficult for dialogue boxes, which have tons of GUI-algorithmic interaction. 
-
 * TAXES
-	- Fix the code for calculating tax information so that it actually works
+	- Rewrite tax code
 	- Create a variable, using user-defined tax rate(s), to calculate how much they owe in taxes since january 1 this year. Maybe let the user pull up a chart which shows their
 
 * GRAPHS

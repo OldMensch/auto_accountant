@@ -208,7 +208,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
                 self.ENTRIES['fee_class'].set('c')
 
     def delete(self):
-        MAIN_PORTFOLIO.delete_transaction(self.t.get_hash())  #deletes the transaction
+        MAIN_PORTFOLIO.delete_transaction(self.t)  #deletes the transaction
 
         # Remove assets that no longer have transactions
         for a in list(MAIN_PORTFOLIO.assets()):
@@ -241,24 +241,24 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         for entry in self.ENTRIES:
             data = self.ENTRIES[entry].entry()
             if entry[-6:] == '_asset':  # Asset and class are one variable: we merge them here
-                try:    TO_SAVE[entry] = data.upper() + 'z' + self.ENTRIES[entry[:-6]+'_class'].entry()
+                try:    TO_SAVE[entry] = Asset.calc_join_tickerclass(None, data.upper(), self.ENTRIES[entry[:-6]+'_class'].entry())
                 except: TO_SAVE[entry] = None
             elif entry == 'wallet':     TO_SAVE['wallet'] = data.name() # wallet is an actual wallet object here, we only save the name
             else:                       TO_SAVE[entry] = data
 
-        #If 'no fee' was selected, cull all other fee data.
+        # Cull unneccessary data according to valid_transaction_data_lib
+        TYPE = TO_SAVE['type']
+        for data in list(TO_SAVE.keys()):
+            if data not in valid_transaction_data_lib[TYPE]:
+                TO_SAVE[data] = None # Invalid data is set to None
+
+        # Cull fee data if 'no fee' was selected
         if self.ENTRIES['fee_class'].entry() == None:
             TO_SAVE['fee_asset'] =    None
             TO_SAVE['fee_quantity'] = None
             TO_SAVE['fee_price'] =    None
-        
-        #For now, USD Fiat is the default currency, and is just converted to "None", as well as its corresponding price
-        for category in ('loss','fee','gain'):
-            if TO_SAVE[category+'_asset'] == 'USDzf':  TO_SAVE[category+'_asset'] = None
-            if TO_SAVE[category+'_asset'] == None:     TO_SAVE[category+'_price'] = None
 
         # Short quick-access variables
-        TYPE = TO_SAVE['type']
         LA,LQ,LP = TO_SAVE['loss_asset'],TO_SAVE['loss_quantity'],TO_SAVE['loss_price']
         FA,FQ,FP = TO_SAVE['fee_asset'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
         GA,GQ,GP = TO_SAVE['gain_asset'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
@@ -304,11 +304,11 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
             self.display_error('[ERROR] ' + error)
             return
 
+
         # TRANSACTION SAVING AND OVERWRITING
         #==============================
         #Creates the new transaction or overwrites the old one
-        new_trans = trans_from_dict(TO_SAVE)
-        NEWHASH = new_trans.get_hash()
+        NEWHASH = Transaction.calc_hash(None, TO_SAVE)
         if self.t:      OLDHASH = self.t.get_hash()
         else:           OLDHASH = None
 
@@ -320,20 +320,10 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
             self.display_error('[ERROR] This is too similar to an existing transaction!')
             return
 
-        # ASSET CREATION/LOSS - Because asset creation is automated
-        # Create new assets that now have a transaction
-        possible_new_assets = set()
-        for asset_tc in ('loss_asset','fee_asset','gain_asset'):
-            asset = new_trans.get_raw(asset_tc) # raw data from the json
-            if asset:   possible_new_assets.add(asset)
-        for a in possible_new_assets:
-            if not MAIN_PORTFOLIO.hasAsset(a):
-                MAIN_PORTFOLIO.add_asset(Asset(a))
-
         # ACTUALLY SAVING THE TRANSACTION
-        MAIN_PORTFOLIO.add_transaction(new_trans)           # Add the new transaction, or overwrite the old
+        MAIN_PORTFOLIO.add_transaction(Transaction(MAIN_PORTFOLIO, TO_SAVE))           # Add the new transaction, or overwrite the old
         if OLDHASH != None and NEWHASH != OLDHASH:
-            MAIN_PORTFOLIO.delete_transaction(OLDHASH)      # Delete the old transaction if it's hash will have changed
+            MAIN_PORTFOLIO.delete_transaction(self.t)      # Delete the old transaction if it's hash will have changed
         
         # Remove assets that no longer have transactions
         for a in list(MAIN_PORTFOLIO.assets()):
@@ -350,8 +340,8 @@ class WalletManager(Dialog): #For selecting wallets to edit
     '''Opens dialog with list of current wallets to edit, and a button for creating new wallets'''
     def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Manage Wallets')
-        self.wallet_list = self.add_list_entry(None, 0, 0, selectCommand=self.edit_wallet)
-        self.add_menu_button('Cancel', self.close)
+        self.wallet_list = self.add_list_entry(None, 0, 0, selectCommand=self.edit_wallet, sortOptions=True)
+        self.add_menu_button('Ok', self.close)
         self.add_menu_button('+ Wallet', self.new_wallet, styleSheet=style('new'))
         self.refresh_wallets()
         self.show()
@@ -411,7 +401,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         # CHECKS
         #==============================
         #new ticker will be unique?
-        if MAIN_PORTFOLIO.hasWallet(new_wallet.get_hash()) and NAME != self.wallet_to_edit.name():
+        if MAIN_PORTFOLIO.hasWallet(new_wallet.name()) and NAME != self.wallet_to_edit.name():
             self.display_error('[ERROR] A wallet already exists with this name!')
             return
         #Name isn't an empty string?
@@ -429,9 +419,9 @@ class WalletEditor(Dialog): #For creating/editing Wallets
             for t in list(MAIN_PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
                 if t.wallet() == self.wallet_to_edit.name():      
                     new_trans = t.toJSON()
-                    MAIN_PORTFOLIO.delete_transaction(t.get_hash()) #Changing the wallet name changes the transactions HASH, so we have to remove and re-add it
+                    MAIN_PORTFOLIO.delete_transaction(t) #Changing the wallet name changes the transactions HASH, so we HAVE to remove and re-add it
                     new_trans['wallet'] = NAME 
-                    MAIN_PORTFOLIO.add_transaction(trans_from_dict(new_trans))
+                    MAIN_PORTFOLIO.add_transaction(Transaction(MAIN_PORTFOLIO, new_trans))
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()
@@ -446,8 +436,8 @@ class FilterManager(Dialog): #For selecting filter rules to edit
     '''Opens dialog with list of current filters to edit, and a button for creating new filters'''
     def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Manage Filters')
-        self.filterlist = self.add_list_entry(None, 0, 0, selectCommand=self.edit_filter)
-        self.add_menu_button('Cancel', self.close)
+        self.filterlist = self.add_list_entry(None, 0, 0, selectCommand=self.edit_filter, sortOptions=True)
+        self.add_menu_button('Ok', self.close)
         self.add_menu_button('+ Rule', self.new_filter, styleSheet=style('new'))
         self.refresh_filters()
         self.show()
@@ -473,8 +463,9 @@ class FilterEditor(Dialog): #For creating/editing filters
         # Metric
         self.add_label('Metric',0,0)
         all_filterable_metrics = set(default_headers['portfolio'] + default_headers['asset'] + default_headers['grand_ledger'])
+        all_filterable_metrics.add('ERROR')
         self.DROPDOWN_metric = self.add_dropdown_list({metric_formatting_lib[metric]['name']:metric for metric in all_filterable_metrics}, 1, 0, sortOptions=True)
-        self.DROPDOWN_metric.currentTextChanged.connect(self.update_date_entry_visibility) # When metric is changed, if date, it needs a special entry box.
+        self.DROPDOWN_metric.currentTextChanged.connect(self.change_metric_effect) # When metric is changed, if date, it needs a special entry box.
 
         # Relation
         self.add_label('Relation',0,1)
@@ -495,20 +486,29 @@ class FilterEditor(Dialog): #For creating/editing filters
             else:
                 self.ENTRY_state.set(str(filter_to_edit.state()))
 
-        self.update_date_entry_visibility()
+        self.change_metric_effect()
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
         if filter_to_edit:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
         self.show()
 
-    def update_date_entry_visibility(self):
-        """Enables date entry box when date is selected, false otherwise"""
-        if self.DROPDOWN_metric.entry() == 'date':
-            self.ENTRY_state.hide()
-            self.ENTRY_date.show()
+    def change_metric_effect(self):
+        """Enables date entry box when date is selected, disables other boxes when ERROR selected"""
+        metric = self.DROPDOWN_metric.entry()
+        isDate = metric == 'date'
+        isERROR = metric == 'ERROR'
+
+        self.ENTRY_state.setHidden(isDate)
+        self.ENTRY_date.setHidden(not isDate)
+        self.ENTRY_state.setDisabled(isERROR)
+        self.DROPDOWN_relation.setDisabled(isERROR)
+        if isERROR:
+            self.ENTRY_state.setStyleSheet(style('disabledEntry'))
+            self.DROPDOWN_relation.setStyleSheet(style('disabledEntry'))
         else:
-            self.ENTRY_state.show()
-            self.ENTRY_date.hide()
+            self.ENTRY_state.setStyleSheet(style('entry'))
+            self.DROPDOWN_relation.setStyleSheet(style('entry'))
+
 
     def delete(self):
         # Only possible when editing an existing filter
@@ -527,31 +527,34 @@ class FilterEditor(Dialog): #For creating/editing filters
 
         # CHECKS
         #==============================
-        # CONVERT DATE TO VALID UNIX CODE, SET STATE TO DATE IF RELEVANT
-        # If relevant, valid datetime format? - NOTE: This also converts the date to unix time
-        if METRIC == 'date':
-            try:        STATE = timezone_to_unix(DATE)
-            except:     
-                self.display_error('[ERROR] Invalid date!')
+        if METRIC == 'ERROR':
+            new_filter = Filter('ERROR', '=', 'True')
+        else: #Only do these checks when not ERROR
+            # CONVERT DATE TO VALID UNIX CODE, SET STATE TO DATE IF RELEVANT
+            # If relevant, valid datetime format? - NOTE: This also converts the date to unix time
+            if METRIC == 'date':
+                try:        STATE = timezone_to_unix(DATE)
+                except:     
+                    self.display_error('[ERROR] Invalid date!')
+                    return
+            #State isn't an empty string?
+            if STATE == '':
+                self.display_error('[ERROR] Must enter a state for this filter')
                 return
-        #State isn't an empty string?
-        if STATE == '':
-            self.display_error('[ERROR] Must enter a state for this filter')
-            return
-        #State is a valid float, if metric is numeric?
-        metric_is_numeric = metric_formatting_lib[METRIC]['format'] != 'alpha'
-        if metric_is_numeric:
-            try: 
-                new_filter = Filter(METRIC, RELATION, float(STATE)) # try to parse the state as float
-            except:
-                self.display_error('[ERROR] State must be a parsable float')
+            #State is a valid float, if metric is numeric?
+            metric_is_numeric = metric_formatting_lib[METRIC]['format'] != 'alpha'
+            if metric_is_numeric:
+                try: 
+                    new_filter = Filter(METRIC, RELATION, float(STATE)) # try to parse the state as float
+                except:
+                    self.display_error('[ERROR] State must be a parsable float')
+                    return
+            else:
+                new_filter = Filter(METRIC, RELATION, STATE)
+            # Not using a non-equals, if metric is alpha?
+            if not metric_is_numeric and RELATION != '=' and METRIC != 'date':
+                self.display_error('[ERROR] Relation must be \'=\' for text metrics')
                 return
-        else:
-            new_filter = Filter(METRIC, RELATION, STATE)
-        # Not using a non-equals, if metric is alpha?
-        if not metric_is_numeric and RELATION != '=' and METRIC != 'date':
-            self.display_error('[ERROR] Relation must be \'=\' for text metrics')
-            return
         # Identical filter doesn't already exist?
         if new_filter is not self.filter_to_edit and new_filter in MAIN_PORTFOLIO.filters():
             self.display_error('[ERROR] Identical filter already exists')
@@ -563,7 +566,7 @@ class FilterEditor(Dialog): #For creating/editing filters
         if self.filter_to_edit: MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)
         
         self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
-        self.upper.upper.render(sort=True)  # Always re-render when filters are applied/removed
+        self.upper.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
@@ -578,7 +581,7 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
         self.add_menu_button('Import', p(self.complete, continue_command, wallet_name), styleSheet=style('new'))
         self.show()
     
-    def complete(self, continue_command, wallet_name):
+    def complete(self, continue_command, wallet_name, *args, **kwargs):
         result = self.wallet_to_edit_dropdown.entry()
         if result == None:   
             self.display_error('[ERROR] Must select a '+wallet_name+'.')
@@ -636,8 +639,15 @@ class DEBUGStakingReportDialog(Dialog):
         if QUANTITY < total_staking_income_thus_far:   
             self.display_error(f'[ERROR] Staking quantity ({QUANTITY}) less than current total staking income earned ({total_staking_income_thus_far}).')
             return
-        new_transaction = Transaction(timezone_to_unix(str(datetime.now()).split('.')[0]), 'income', WALLET.name(), 
-                                      gain=(TICKER+'zc', str(QUANTITY-total_staking_income_thus_far), str(this_asset.get_metric('price'))) )
+        new_transaction = Transaction(MAIN_PORTFOLIO, {
+                                      'date':timezone_to_unix(str(datetime.now()).split('.')[0]), 
+                                      'type':'income', 
+                                      'wallet':WALLET.name(), 
+                                      'gain_asset': TICKER+'zc', 
+                                      'gain_quantity':str(QUANTITY-total_staking_income_thus_far), 
+                                      'gain_price':str(this_asset.get_metric('price')) 
+                                      }
+                                      )
         MAIN_PORTFOLIO.add_transaction(new_transaction)
 
         self.upper.undo_save()

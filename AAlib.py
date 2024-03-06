@@ -3,11 +3,10 @@
 import json
 import time
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 import sys, os
 import textwrap
-
 import AAstylesheet
 from AAstylesheet import UNI_PALETTE
 
@@ -30,6 +29,7 @@ def zeroish(x):     return abs(Decimal(x)) < absolute_precision
 
 def appxEqPrec(x:Decimal,y:Decimal): return abs(x-y) < absolute_precision
 def zeroish_prec(x:Decimal):     return abs(x) < absolute_precision 
+
 
 
 
@@ -57,8 +57,8 @@ time_avg_windows = 0
 def ttt(string:str='reset', *args, **kwargs):
     '''A timer for measuring program performance.\n
     \n\'reset\' prints the current time then sets to 0, 
-    \n\'start\' subtracts a startpoint, 
-    \n\'end\' adds an endpoint,
+    \n\'start\' sets a startpoint, 
+    \n\'end\' sets an endpoint,
     \n\'terminate\' is end + reset,
     \n\'avg_save\' adds a start/end delta to a sum, and logs the number of saves,
     \n\'avg_end\' is end + avg_save,
@@ -283,13 +283,48 @@ def loadIcons(): # loads the icons for the GUI
     }
 def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI
 
+# Copy of default values for Transaction object stored to improve efficiency
+default_trans_data = {
+    'date' :            None,
+    'type' :            None,
+    'wallet' :          None,
+    'description' :     '',
+
+    'loss_asset' :      None,
+    'loss_quantity' :   None,
+    'loss_price' :      None,
+    'fee_asset' :       None,
+    'fee_quantity' :    None,
+    'fee_price' :       None,
+    'gain_asset' :      None,
+    'gain_quantity' :   None,
+    'gain_price' :      None,
+}
+default_trans_metrics = dict(default_trans_data)
+default_trans_metrics.update({
+    'loss_value':       0,
+    'fee_value':        0,
+    'gain_value':       0,
+
+    'basis_price':      0,      #The cost basis price
+
+    'price':    {},     #Price, value, quantity by asset, for displaying
+    'value':    {},
+    'quantity': {},
+    'balance': {},
+    'all_assets':[],
+
+    'hash':             None,
+    'missing':          [],
+    'dest_wallet':      None, # Re-calculated for transfers on metric calculation
+})
 
 # These are all of the available metrics to be displayed in the GRID for each display mode
 default_headers = {
     'portfolio' : (
         "name","balance","ticker","price","average_buy_price",
         "portfolio%","marketcap","volume24h","day%","week%","month%",
-        "cash_flow","value","net_cash_flow",
+        "cash_flow","value","projected_cash_flow",
         "unrealized_profit_and_loss%","realized_profit_and_loss",
         # Ones I will want to hide
         'class','day_change','tax_capital_gains','tax_income','unrealized_profit_and_loss',
@@ -314,7 +349,7 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'week%':{                       'format': 'percent',    'color' : 'profitloss',     'name':'7-Day %',           'headername':'7-Day %'},
     'month%':{                      'format': 'percent',    'color' : 'profitloss',     'name':'30-Day %',          'headername':'30-Day %'},
     'cash_flow':{                   'format': 'penny',      'color' : 'profitloss',     'name':'Cash Flow',         'headername':'Cash\nFlow'},
-    'net_cash_flow':{               'format': 'penny',      'color' : 'profitloss',     'name':'Net Cash Flow',     'headername':'Net Cash\nFlow'},
+    'projected_cash_flow':{         'format': 'penny',      'color' : 'profitloss',     'name':'Projected Cash Flow',     'headername':'Projected\nCash Flow'},
     'realized_profit_and_loss':{    'format': 'penny',      'color' : 'profitloss',     'name':'Realized P&L',      'headername':'Real\nP&L'},
     'tax_capital_gains':{           'format': 'penny',      'color' : 'profitloss',     'name':'Capital Gains',     'headername':'Capital\nGains'},
     'tax_income':{                  'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
@@ -363,6 +398,8 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'gain_value':{      'format':'',           'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
 
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
+
+    'ERROR':{           'format':'alpha',      'color':None,         'name':'ERROR',         'headername':'ERROR'       },
 }
 
 metric_desc_lib = { # Includes descriptions for all metrics: this depends on whether you are looking at the portfolio overall, individual assets, or individual transactions
@@ -378,7 +415,7 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'week%': "The relative change in value over the past week.",
         'month%': "The relative change in value over the past month.",
         'cash_flow': "The total USD which has gone in/out of all assets. 0$ is breakeven.",
-        'net_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
+        'projected_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
         'tax_capital_gains': "The total value taxable as capital gains.",
         'tax_income': "The total value taxable as income.",
         'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
@@ -393,7 +430,7 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'week%': "The relative change in value over the past week.",
         'month%': "The relative change in value over the past month.",
         'cash_flow': "The total USD which has gone in/out of this asset. 0$ is breakeven.",
-        'net_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
+        'projected_cash_flow': "Cash Flow + Value = Proj. Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
         'tax_capital_gains': "The total value taxable as capital gains.",
         'tax_income': "The total value taxable as income.",
         'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
@@ -426,7 +463,7 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'gain_quantity': "The quantity gained of the gain asset.",
         'gain_price': "The USD market value of the gain asset at the time of the transaction.",
     
-        'balance': "The total quantity held prior to this transaction.",
+        'balance': "The total quantity held AFTER this transaction.",
         'quantity': "The quantity gained/lost for this asset in this transaction.",
         'value': "The USD value of the tokens involved in this transaction, for this asset.",
         'price': "The USD value per token in this transaction.",
@@ -540,12 +577,12 @@ timezones = {
 def unix_to_local_timezone(unix:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
     if tz_override: tz = timezones[tz_override]
     else:           tz = timezones[setting('timezone')]
-    return str(datetime(1970, 1, 1) + timedelta(hours=tz[1], minutes=tz[2]) + timedelta(seconds=unix))
+    return str(datetime(1970, 1, 1) + timedelta(hours=tz[1], minutes=tz[2], seconds=unix))
 def timezone_to_unix(iso:str, tz_override:str=None) -> int:
+    iso = iso[0:19].replace('T',' ').replace('Z','') # remove poor formatting where relevant
     if tz_override: tz = timezones[tz_override]
     else:           tz = timezones[setting('timezone')]
     return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
-
 
 # SETTINGS
 settingslib = { # A library containing all of the default settings

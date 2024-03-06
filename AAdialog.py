@@ -89,9 +89,10 @@ class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a Li
 
 
 class ListEntry(QListWidget): # Single- or multi-item selection list
-    def __init__(self, dictionary:dict=None, current:list=None, mode='single', selectCommand=None, *args, **kwargs):
+    def __init__(self, dictionary:dict=None, current:list=None, mode='single', selectCommand=None, sortOptions=False, *args, **kwargs):
         super().__init__(uniformItemSizes=True, *args, **kwargs)
         self.mode = mode
+        self.sortOptions = sortOptions
 
         self.lookup_dict = {} # A dictionary allowing us to look up the objects by their display name
 
@@ -128,14 +129,18 @@ class ListEntry(QListWidget): # Single- or multi-item selection list
     
     def update_dict(self, dictionary:dict=None) -> None: 
         '''Deletes all previous items, adds in new items\n
-        Dict keys must be display names, values are the actual objects which the .entry() command returns'''
+        Dict keys must be display names, values are what the the .entry() command returns for that key'''
 
         if dictionary == None: self.lookup_dict = {} # If we specify None, we clear the dictionary
         else: self.lookup_dict = dictionary # Otherwise, set our dict to the new one
 
         self.clear() # Remove previous items
 
-        for key, value in dictionary.items(): # Add new items: keys are the display names, values unused here 
+        to_display = list(dictionary.keys())
+        def sortKey(e): return e.lower()
+        if self.sortOptions:  to_display.sort(key=sortKey)
+
+        for key in to_display: # Add new items 
             self.addItem(QListWidgetItem(key))
          
 
@@ -231,9 +236,9 @@ class Dialog(QDialog):
         '''
         self.GUI['menuLayout'].addWidget(QPushButton(spacer+text+spacer, clicked=command, fixedHeight=icon('size').height(), *args, **kwargs))
     
-    def add_list_entry(self, dictionary:dict, column, row, current=None, rowspan=1,columnspan=1, mode='single', selectCommand=None, *args, **kwargs) -> ListEntry:
+    def add_list_entry(self, dictionary:dict, column, row, current=None, rowspan=1,columnspan=1, mode='single', selectCommand=None, sortOptions=True, *args, **kwargs) -> ListEntry:
         '''Adds a scrollable list, from which you can select a singular, or multiple items\n
         Except, it requires a dictionary mapping display text to actual values. .entry() returns the actual values. '''
-        selection = ListEntry(dictionary, current, mode, selectCommand, *args, **kwargs)
+        selection = ListEntry(dictionary, current, mode, selectCommand, sortOptions, *args, **kwargs)
         self.GUI['primaryLayout'].addWidget(selection, row, column, rowspan, columnspan)
         return selection

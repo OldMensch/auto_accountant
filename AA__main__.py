@@ -214,10 +214,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         DEBUG = self.TASKBAR['DEBUG'] = QMenu('DEBUG')
         taskbar.addMenu(DEBUG)
         DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
-        DEBUG.addAction('DEBUG report staking interest',     self.DEBUG_report_staking_interest)
-        def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True)
-        DEBUG.addAction('DEBUG ttt efficiency report', return_report)
-        DEBUG.addAction('DEBUG ttt reset',     p(ttt, 'reset'))
 
     def toggle_offline_mode(self):
         """Toggles if state is unspecified, sets to state if specified"""
@@ -276,19 +272,19 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Binance Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            AAimport.binance(self, dir, wallet)
+            AAimport.binance(self, dir, wallet.name())
     def import_coinbase(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_coinbase, 'Coinbase Wallet') 
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            AAimport.coinbase(self, dir, wallet)
+            AAimport.coinbase(self, dir, wallet.name())
     def import_coinbase_pro(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_coinbase_pro, 'Coinbase Pro Wallet') 
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Pro Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            AAimport.coinbase_pro(self, dir, wallet)
+            AAimport.coinbase_pro(self, dir, wallet.name())
     def import_etherscan(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_etherscan, 'Ethereum Wallet') 
         else:
@@ -296,27 +292,27 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if ETHdir == '':   return
             ERC20dir = QFileDialog.getOpenFileName(self, 'Import Etherscan ERC-20 Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if ERC20dir == '':   return
-            AAimport.etherscan(self, ETHdir, ERC20dir, wallet)
+            AAimport.etherscan(self, ETHdir, ERC20dir, wallet.name())
     def import_gemini(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_gemini, 'Gemini Wallet') 
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Gemini Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
             if dir == '':   return
-            AAimport.gemini(self, dir, wallet)
+            AAimport.gemini(self, dir, wallet.name())
     def import_gemini_earn(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_gemini_earn, 'Gemini Earn Wallet') 
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Gemini Earn Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
             if dir == '':   return
-            AAimport.gemini_earn(self, dir, wallet)
+            AAimport.gemini_earn(self, dir, wallet.name())
     def import_yoroi(self, wallet=None):
         if wallet == None:    ImportationDialog(self, self.import_yoroi, 'Yoroi Wallet') 
         else:
             dir = QFileDialog.getOpenFileName(self, 'Import Yoroi Wallet Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
             if dir == '':   return
-            AAimport.yoroi(self, dir, wallet)
+            AAimport.yoroi(self, dir, wallet.name())
 
-    def save(self, saveAs=False):
+    def save(self, saveAs=False, *args, **kwargs):
         if saveAs or not os.path.isfile(setting('lastSaveDir')):
             dir = QFileDialog.getSaveFileName(self, 'Save Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         else:
@@ -328,14 +324,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         with open(dir, 'w') as file:
             json.dump(MAIN_PORTFOLIO.toJSON(), file, sort_keys=True)
         if saveAs:      set_setting('lastSaveDir', dir)
-    def new(self, first=False):
+    def new(self, first=False, *args, **kwargs):
         set_setting('lastSaveDir', '')
         MAIN_PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
         self.render(state=self.view.PORTFOLIO, sort=True)
         if not first:   self.undo_save()
-    def load(self, dir=None):
+    def load(self, dir=None, *args, **kwargs):
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':   return
         try:    
@@ -437,7 +433,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['bottomFrame'] = QFrame(layout=self.GUI['bottomLayout'])
         self.GUI['copyright'] = QPushButton('Copyright © 2024 Shane Evanson', clicked=self.copyright)
         self.GUI['timestamp_indicator'] = QLabel(' OFFLINE MODE ')
-        self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=style('progressBar'))
+        self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=style('progressBar'), hidden=True)
 
         #GUI PLACEMENT
         #==============================
@@ -498,9 +494,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #==============================
         self.MENU = {}
 
-        self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.new)
-        self.MENU['load'] = QPushButton(icon=icon('load'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.load)
-        self.MENU['save'] = QPushButton(icon=icon('save'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.save)
+        self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.new, False))
+        self.MENU['load'] = QPushButton(icon=icon('load'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load, None))
+        self.MENU['save'] = QPushButton(icon=icon('save'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.save, False))
         self.MENU['settings'] = QPushButton(icon=icon('settings'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
 
         self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self._ctrl_z)
@@ -510,10 +506,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
-        self.MENU['DEBUG_staking_report'] = QPushButton('DEBUG: Report\nStaking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
+        self.MENU['DEBUG_staking_report'] = QPushButton(':DEBUG:\nReport Staking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
         def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
-        self.MENU['DEBUG_ttt_report'] = QPushButton('DEBUG: TTT\nReport', clicked=return_report, fixedHeight=icon('size2').height())
-        self.MENU['DEBUG_ttt_reset'] = QPushButton('DEBUG: TTT\nReset', clicked=p(ttt, 'reset'), fixedHeight=icon('size2').height())
+        self.MENU['DEBUG_ttt_report'] = QPushButton(':DEBUG:\nTTT Report', clicked=return_report, fixedHeight=icon('size2').height())
+        self.MENU['DEBUG_ttt_reset'] = QPushButton(':DEBUG:\nTTT Reset', clicked=p(ttt, 'reset'), fixedHeight=icon('size2').height())
 
         #MENU RENDERING
         #==============================
@@ -627,7 +623,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if I1 > len(self.sorted)-1: return
         if I2 > len(self.sorted)-1: I2 = len(self.sorted)-1
         for item in range(I1,I2+1):
-            MAIN_PORTFOLIO.delete_transaction(self.sorted[item].get_hash())
+            MAIN_PORTFOLIO.delete_transaction(self.sorted[item])
 
         # Remove assets that no longer have transactions
         for a in list(MAIN_PORTFOLIO.assets()):
@@ -757,7 +753,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if setting('sort_grand_ledger')[0] == info:    set_setting('sort_grand_ledger',[info, not setting('sort_grand_ledger')[1]])
             else:                                   set_setting('sort_grand_ledger',[info, False])
         self.render(sort=True)
-    def sort(self): #Sorts the assets or transactions by the metric defined in settings #NOTE: 7ms at worst for ~900 transactions on one ledger
+    def sort(self): #Sorts the assets or transactions by the metric defined in settings
         '''Sorts AND FILTERS the assets or transactions by the metric defined in settings'''
         #########################
         # SETUP
@@ -778,33 +774,31 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #########################
         blacklist = set() # list of items that don't meet criteria
         for f in MAIN_PORTFOLIO.filters():
+            METRIC, RELATION, STATE = f.metric(),f.relation(),f.state()
             # Ignore filter metrics, if the metric isn't in any column in the GRID
-            if (self.view.isPortfolio() and f.metric() not in setting('header_portfolio')): continue
-            if (self.view.isAsset() and f.metric() not in setting('header_asset')): continue
-            if (self.view.isGrandLedger() and f.metric() not in setting('header_grand_ledger')): continue
+            if METRIC not in setting('header_'+self.view.getState()) and METRIC != 'ERROR': 
+                continue
 
             for item in unfiltered_unsorted: # could be assets or transactions
-                if f.is_alpha() and f.metric() != 'date': # text metrics like ticker and class
-                    item_state = item.get_raw(f.metric())
-                    if  item_state != f.state():
-                        blacklist.add(item)
-                else: # numeric metrics
-                    # When sorting by price/quantity/value for transactions, the data is stored weird, so we need to access it specially.
-                    # These metrics are not present when in the Grand Ledger view
-                    if f.metric() == 'date':
-                        item_state = item.get_raw('date')
-                    elif f.metric() in ('price','quantity','value'):
-                        item_state = item.get_metric(f.metric(), self.view.getAsset())
-                    else:
-                        item_state = item.get_metric(f.metric())
+                if METRIC == 'ERROR':    
+                    if not item.ERROR: blacklist.add(item)
+                    continue
+                elif METRIC == 'date':
+                    item_state = item.get_raw('date')
+                elif METRIC in ('price','quantity','value'):
+                    item_state = item.get_metric(METRIC, self.view.getAsset())
+                elif f.is_alpha(): # alpha metrics - equals only
+                    item_state = item.get_raw(METRIC)
+                else: # numeric metrics 
+                    item_state = item.get_metric(METRIC) 
 
-                    match f.relation():
-                        case '<':   
-                            if item_state >= f.state(): blacklist.add(item)
-                        case '=':   
-                            if item_state != f.state(): blacklist.add(item)
-                        case '>':   
-                            if item_state <= f.state(): blacklist.add(item)
+                match RELATION:
+                    case '<':   
+                        if item_state >= STATE: blacklist.add(item)
+                    case '=':   
+                        if item_state != STATE: blacklist.add(item)
+                    case '>':   
+                        if item_state <= STATE: blacklist.add(item)
                     
         # items marked for removal removed from list
         filtered_unsorted = list(unfiltered_unsorted - blacklist)
@@ -821,20 +815,23 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         
         # Sorting based on the column we've selected to sort by
         def alphaKey(e):    
-            toReturn = e.get_metric(info)
-            if toReturn is None:    return ''
-            else:                   return e.get_metric(info).lower()
+            toReturn = e.get_raw(info)
+            if toReturn == None:    return ''
+            else:                   return e.get_raw(info).lower()
+        def assetKey(e):
+            return e.metric_to_str(info)
         def numericKey(e):
             toReturn = e.get_metric(info)
             if toReturn is None:    return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
             else:                   return toReturn
-        def value_quantity_price(e):
+        def asset_view_datapoint(e):
             return e.get_metric(info, self.view.getAsset())
 
         if   info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
-        elif metric_formatting_lib[info]['format'] == 'alpha':                  filtered_unsorted.sort(reverse=reverse,     key=alphaKey)
-        elif self.view.isAsset() and info in ('value','quantity','price','balance'):  filtered_unsorted.sort(reverse=not reverse, key=value_quantity_price)
-        else:                                                                   filtered_unsorted.sort(reverse=not reverse, key=numericKey)
+        elif info in ('loss_asset','fee_asset','gain_asset'):                           filtered_unsorted.sort(reverse=reverse,     key=assetKey)
+        elif metric_formatting_lib[info]['format'] == 'alpha':                          filtered_unsorted.sort(reverse=reverse,     key=alphaKey)
+        elif self.view.isAsset() and info in ('value','quantity','price','balance'):    filtered_unsorted.sort(reverse=not reverse, key=asset_view_datapoint)
+        else:                                                                           filtered_unsorted.sort(reverse=not reverse, key=numericKey)
 
         # Applies the sorted & filtered results, to be used in the rendering pipeline
         self.sorted = filtered_unsorted  
@@ -962,8 +959,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 #PROGRESS BAR - a bunch of small useful functions for controlling the progress bar
 #=============================================================
-    def hide_progress_bar(self):            self.GUI['progressBar'].hide()
-    def show_progress_bar(self):            self.GUI['progressBar'].show()
+    def hide_progress(self):            self.GUI['progressBar'].hide()
+    def show_progress(self):            self.GUI['progressBar'].show()
     def set_progress_range(self, min, max): self.GUI['progressBar'].setRange(min, max)
     def set_progress(self, value):          self.GUI['progressBar'].setValue(value)
         

@@ -2,7 +2,7 @@
 from AAobjects import *
 
 class metrics:
-    # We initialize the metrics object with a reference to our Portfolio, TEMP data, and the progress bar
+    # We initialize the metrics object with a reference to our Portfolio, and TEMP data
     def __init__(self, portfolio, temp, main_app):
         self.PORTFOLIO = portfolio
         self.TEMPDATA = temp
@@ -11,8 +11,6 @@ class metrics:
 
     def calculate_all(self, tax_report:str=''): # Recalculates ALL metrics
         '''Calculates and renders all static metrics for all assets, and the overall portfolio'''
-        self.MAIN_APP_REF.show_progress_bar()
-        self.MAIN_APP_REF.set_progress_range(0, len(self.PORTFOLIO.transactions()))
         if tax_report:
             self.TEMPDATA['taxes'] = { 
                 '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
@@ -23,7 +21,6 @@ class metrics:
 
         self.recalculate_market_independent() # Recalculates all metrics that only need historical transaction data to calculate
         self.recalculate_market_dependent() # Recalculates all metrics that depend on current market information
-        self.MAIN_APP_REF.hide_progress_bar()
 
     # We separate all metrics into different categories, because depending on user action, we increase performance by only calculating only what is absolutely needed.
 
@@ -43,7 +40,7 @@ class metrics:
             self.calculate_value(asset)
             self.calculate_unrealized_profit_and_loss(asset)
             self.calculate_changes(asset)
-            self.calculate_net_cash_flow(asset)
+            self.calculate_projected_cash_flow(asset)
         self.recalculate_portfolio_market_dependent()
 
     def recalculate_portfolio_market_dependent(self): #Recalculates all market-dependent portfolio metrics
@@ -64,6 +61,11 @@ class metrics:
         #Creates a list of all transactions, sorted chronologically #NOTE: Lag is ~18ms for ~12000 transactions
         transactions = list(self.PORTFOLIO.transactions()) #0ms
         transactions.sort()
+
+        # ERROR CLEARING - clear ERROR if it's unrelated to data
+        for t in transactions:
+            if t.ERROR and t.ERROR_TYPE != 'data':
+                t.ERROR,t.ERROR_TYPE = False,''
 
         ###################################
         # TRANSFER LINKING - #NOTE: Lag is ~16ms for 159 transfer pairs under ~12000 transactions
@@ -89,7 +91,7 @@ class metrics:
         
         # We have tried to find a partner for all transfers: any remaining transfers are erroneous
         for t in transfer_IN + transfer_OUT:
-            t.ERROR = True
+            t.ERROR,t.ERROR_TYPE = True,'transfer'
             if t.type() == 'transfer_in':
                 t.ERR_MSG = 'Failed to automatically find a \'Transfer Out\' transaction under '+t.get_raw('gain_asset')[:-2]+' that pairs with this \'Transfer In\'.'
             else:
@@ -104,18 +106,20 @@ class metrics:
         metrics = { asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in self.PORTFOLIO.all_asset_tickerclasses() }
         
         # LEDGER - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
-        accounting_method = setting('accounting_method')
         # Ledger is a dict of all assets, under which is a dict of all wallets, and each wallet is a priority heap (depending on HIFO/LIFO/FIFO) which stores our transactions
         # We use a min/max heap to decide which transactions are "sold" when assets are sold, to determine what the capital gains actually is
+        accounting_method = setting('accounting_method')
         ledger = {asset:{wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()} for asset in self.PORTFOLIO.all_asset_tickerclasses()}
 
-        # STORE and DISBURSE QUANTITY - functions which add, or remove a 'gain', to the HOLDINGS data structure.
+        # DISBURSE QUANTITY - removes a 'gain', from the LEDGER data structure.
         def disburse_quantity(t:Transaction, quantity:Decimal, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
             result = ledger[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
             if not zeroish_prec(result[0]):  #NOTE: Lag is ~0ms
-                t.ERROR,t.ERR_MSG = True,'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
+                t.ERROR,t.ERROR_TYPE = True,'over_disbursed'
+                t.ERR_MSG = 'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
+                
 
             #NOTE - Lag is ~27ms including store_quantity, 11ms excluding
             cost_basis = 0
@@ -152,40 +156,38 @@ class metrics:
             asset._metrics['balance'] =    Decimal(0)
             asset._metrics['wallets'] =     {}
 
-        progBarIndex = 0
-        for t in transactions:  # Lag is ~135ms for ~12000 transactions
-            progBarIndex+=1
-            self.MAIN_APP_REF.set_progress(progBarIndex)
-            if t.ERROR: continue    #If there is an ERROR with this transaction, ignore it to prevent crashing. User expected to fix this immediately.
+        for t in transactions:  # 24.5693ms for 5300 transactions
+            # Ignore: missing data, transfer failures,
+            # Other errors are OK: over-disbursal, 
+            if t.ERROR and t.ERROR_TYPE in ('data','transfer'): continue    
 
-            #NOTE: 10.4140ms for ~5300 transactions
-            HASH,TYPE,WALLET = t.get_hash(),t.type(),t.wallet()
-            WALLET2 = t.get_metric('dest_wallet')
-            LA,FA,GA = t.get_raw('loss_asset'),        t.get_raw('fee_asset'),        t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
-            LQ,FQ,GQ = t.get_metric('loss_quantity'),  t.get_metric('fee_quantity'),  t.get_metric('gain_quantity')
-            LV,FV,GV = t.get_metric('loss_value'),     t.get_metric('fee_value'),     t.get_metric('gain_value')
+            #NOTE: 6.9029ms for ~5300 transactions
+            HASH,TYPE,WALLET = t.get_metric('hash'),     t.get_raw('type'),              t.get_raw('wallet') # 2.3034 ms
+            WALLET2 = t.get_metric('dest_wallet') # only exists for TRANSFER_OUTs
+            LA,FA,GA = t.get_raw('loss_asset'),         t.get_raw('fee_asset'),         t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
+            LQ,FQ,GQ = t.get_metric('loss_quantity'),   t.get_metric('fee_quantity'),   t.get_metric('gain_quantity')
+            LV,FV,GV = t.get_metric('loss_value'),      t.get_metric('fee_value'),      t.get_metric('gain_value')
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
             COST_BASIS_PRICE = t.get_metric('basis_price')
             
-            # BALANCE CALCULATION - 10.0029ms for 5300 transactions
+            # BALANCE CALCULATION - 10.0648 ms for 5300 transactions - to improve efficiency, make it so parent assets saved to transaction's _metrics dict for direct access
             # Sets account balance for these assets at time of transaction
             if LA: 
-                a = self.PORTFOLIO.asset(LA)
-                a._metrics['balance'] -= LQ
-                t._metrics['balance'][LA] = a._metrics['balance']
+                LAA = self.PORTFOLIO.asset(LA)
+                LAA._metrics['balance'] -= LQ
+                t._metrics['balance'][LA] = LAA._metrics['balance']
             if FA: 
-                a = self.PORTFOLIO.asset(FA)
-                a._metrics['balance'] -= FQ
-                t._metrics['balance'][FA] = a._metrics['balance']
+                FAA = self.PORTFOLIO.asset(FA)
+                FAA._metrics['balance'] -= FQ
+                t._metrics['balance'][FA] = FAA._metrics['balance']
             if GA: 
-                a = self.PORTFOLIO.asset(GA)
-                a._metrics['balance'] += GQ
-                t._metrics['balance'][GA] = a._metrics['balance']
+                GAA = self.PORTFOLIO.asset(GA)
+                GAA._metrics['balance'] += GQ
+                t._metrics['balance'][GA] = GAA._metrics['balance']
             for asset,quantity in t._metrics['balance'].items():
                 t._formatted['balance'][asset] = format_general(quantity, metric_formatting_lib['balance']['format']) 
 
-            # COST BASIS CALCULATION    #NOTE: Lag ~7.9941ms for ~5300 transactions. 
-
+            # COST BASIS CALCULATION    #NOTE: Lag ~7.0662ms for ~5300 transactions. 
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
             # GAINS - We gain assets one way or another     #NOTE: Lag ~xxx, on average
             if COST_BASIS_PRICE:    ledger[GA][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
@@ -194,8 +196,7 @@ class metrics:
             # LOSS - We lose assets one way or another.
             if LA:                  LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET, WALLET2)
 
-
-            # METRIC CALCULATION    #NOTE: Lag is ~2.0002ms for ~12000 transactions
+            # METRIC CALCULATION    #NOTE: Lag is ~3.0454ms for ~5300 transactions (all metrics below)
             
             # CASH FLOW - Only transactions involving USD can affect cash flow.
             # HOWEVER... when you "swap" one crypto for another, then the gain asset technically has "0 cash flow", which from an investing perspective, makes no sense
@@ -236,14 +237,14 @@ class metrics:
         
 
         #ERRORS - applies error state to any asset with an erroneous transaction on its ledger.
-        # We initially assume that no asset has any errors
+        # Initially assume all assets are error free (asset errors can only result from )
         for a in self.PORTFOLIO.assets():   a.ERROR = False
         # Then we check all transactions for an ERROR state, and apply that to its parent asset(s)
         for t in transactions:
             if t.ERROR:
-                if t.get_raw('loss_asset'): self.PORTFOLIO.asset(t.get_raw('loss_asset')).ERROR = True
-                if t.get_raw('fee_asset'):  self.PORTFOLIO.asset(t.get_raw('fee_asset')).ERROR =  True
-                if t.get_raw('gain_asset'): self.PORTFOLIO.asset(t.get_raw('gain_asset')).ERROR = True
+                if t.get_raw('loss_asset'):     self.PORTFOLIO.asset(t.get_raw('loss_asset')).ERROR = True
+                if t.get_raw('fee_asset'):      self.PORTFOLIO.asset(t.get_raw('fee_asset')).ERROR =  True
+                if t.get_raw('gain_asset'):     self.PORTFOLIO.asset(t.get_raw('gain_asset')).ERROR = True
 
         for asset in self.PORTFOLIO.assets(): #TODO: Lag is like 30ms for ~4000 transactions
             #Update this asset's metrics dictionary with our newly calculated information
@@ -286,10 +287,10 @@ class metrics:
         except: asset._metrics['week_change'] =  0
         try:    asset._metrics['month_change'] = value-(value / (1 + asset.get_metric('month%')))
         except: asset._metrics['month_change'] = 0
-    def calculate_net_cash_flow(self, asset:Asset): #Calculates what the cash flow would become if you sold everything right now
+    def calculate_projected_cash_flow(self, asset:Asset): #Calculates what the cash flow would become if you sold everything right now
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['net_cash_flow'] = asset.get_metric('cash_flow') + asset.get_metric('value') 
-        except: asset._metrics['net_cash_flow'] = 0
+        try:    asset._metrics['projected_cash_flow'] = asset.get_metric('cash_flow') + asset.get_metric('value') 
+        except: asset._metrics['projected_cash_flow'] = 0
     def calculate_percentage_of_portfolio(self, asset:str): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
         try:    asset._metrics['portfolio%'] = asset.get_raw('value')  / self.PORTFOLIO.get_metric('value')
         except: asset._metrics['portfolio%'] = 0
