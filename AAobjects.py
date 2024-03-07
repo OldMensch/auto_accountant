@@ -70,16 +70,16 @@ class Transaction():
         self._metrics = dict(default_trans_metrics)
         self._formatted = {} # Contains pre-formatted copy of all metrics to improve performance
         self.recalculate()
-        self.calc_formatting()      # 88.8317ms for ~5300 transactions # worst offender, mostly from format_general
 
     #Pre-calculates useful information to GREATLY increase performance
     def recalculate(self):          # 50.3061ms for ~5300 transactions
         """Recalculates all metrics and formatting based on current raw data"""
         self._metrics['hash'] = self.calc_hash(self._data) # 3.0735ms for ~5300 transactions
         self.calc_missing()         # 7.2830ms for ~5300 transactions
-        self.calc_iso_date()        # 15.1019ms for ~5300 transactions
         self.calc_metrics()         # 24.3175ms for ~5300 transactions
         self.calc_inference()       # 2.0903ms for ~5300 transactions
+        self.calc_formatting()      # 88.8317ms for ~5300 transactions # worst offender, mostly from format_general
+        self.calc_bad_asset_tickers()
         #self.calc_quick_refs()      # 6.8355ms for ~5300 transactions 
     
     def calc_hash(self, raw_data:dict): #Hash Function - A transaction is unique insofar as its date, type, wallet, and three asset types are unique from any other transaction.
@@ -102,13 +102,11 @@ class Transaction():
         self._metrics['missing'] = list(missing) # list of missing data
         self.ERROR = len(missing)>0
         self.ERROR_TYPE = 'data'
-        missingMessage = 'Transaction is missing data: '
-        for m in missing:   missingMessage += '\'' + metric_formatting_lib[m]['name'] + '\', '
-        self.ERR_MSG = missingMessage[:-2]
-        if self.ERROR: print(f'||WARNING|| New {missingMessage}')
+        self.ERR_MSG = f'Transaction is missing data: \'{'\', \''.join(metric_formatting_lib[m]['name'] for m in missing)}\''
+        if self.ERROR: print(f'||WARNING|| Newly created t{self.ERR_MSG[1:]}')
     def calc_metrics(self):
         MISSING = self._metrics['missing']
-        # COPIED FROM RAW DATA
+        # DATATYPE CONVERSION - MASSIVE performance gains saved by converting raw strings to objects here
         # ==================
         # INTEGERS - Datatype preserved by JSON
         if 'date' not in MISSING: self._metrics['date'] = int(self._data['date'])
@@ -121,9 +119,9 @@ class Transaction():
                 d = self._data[data]
                 if d:   self._metrics[data] = Decimal(d)
 
+        if self.ERROR: return # DONT CALCULATE if there is any errors: this stuff can wait for now
         # NEW CALCULATED STUFF
         # ==================
-        if self.ERROR: return # DONT CALCULATE if there is any errors: this stuff can wait for now
         # VALUES - the USD value of the quantity of the loss, fee, and gain at time of transaction
         TYPE = self._data['type']
         LQ,FQ,GQ = self._metrics['loss_quantity'],self._metrics['fee_quantity'],self._metrics['gain_quantity']
@@ -218,34 +216,41 @@ class Transaction():
             except: pass
 
         # QUANTITIES - always stored or irrelevant
-    def calc_iso_date(self):
-        """Converts the transaction's unix timestamp to ISO format, in your specified timezone
-        \nThis is separate from calc_metrics to reduce performance cost when changing timezone setting"""
-        if self._data['date'] is None:  self._formatted['date'] = MISSINGDATA
-        else:                           self._formatted['date'] = unix_to_local_timezone(self._data['date'])
     def calc_formatting(self):
-        """Pre-calculates formatted metric strings to greatly increase performance"""
+        """Pre-calculates formatted versions of all metrics in _metrics"""
         for metric in default_trans_metrics.keys():
             formatted_metric = ''
             if metric in self._metrics['missing']: 
-                formatted_metric = MISSINGDATA
+                self._formatted[metric] = MISSINGDATA
+                continue
+            if metric not in metric_formatting_lib: 
+                self._formatted[metric] = '!NO_FORMAT'
                 continue
             match metric:
-                case 'basis_price' | 'hash' | 'all_assets' | 'missing' | 'date': 
-                    continue # Unnecessary, or already calculated elsewhere
-                case 'type':    
-                    formatted_metric = pretty_trans[self._data['type']]
+                # asset-dependent variables
                 case 'value' | 'quantity' | 'price' | 'balance': 
+                    textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
                     self._formatted[metric] = {}
                     for a in self._metrics['all_assets']:
                         # if self._metrics[metric][a] doesn't exist, this causes a crash
-                        try:    self._formatted[metric][a] = format_general(self._metrics[metric][a], metric_formatting_lib[metric]['format']) 
+                        try:    self._formatted[metric][a] = format_metric(self._metrics[metric][a], textFormat, colorFormat) 
                         except: self._formatted[metric][a] = MISSINGDATA
                     continue
-                case other:     
+                case other:    
+                    textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
                     metric_value = self._metrics[metric]
-                    if metric_value != None:    formatted_metric = format_general(metric_value, metric_formatting_lib[metric]['format'])
+                    if metric_value:    formatted_metric = format_metric(metric_value, textFormat, colorFormat)
             self._formatted[metric] = formatted_metric
+    def calc_bad_asset_tickers(self):
+        for a in ('loss_asset','fee_asset','gain_asset'):
+            tc = self._data[a]
+            if tc in forks_and_duplicate_tickers_lib:
+                self._data[a] = forks_and_duplicate_tickers_lib[tc][0]
+                break
+        else: return # no assets replace
+        self.recalculate()
+        self.calc_formatting()
+        
 
     def calc_quick_refs(self):
         """Sets WALLET, LOSS_ASSET, FEE_ASSET, and GAIN_ASSET to object references from the portfolio, in the _metrics dict"""
@@ -315,14 +320,6 @@ class Transaction():
             else:       return self._formatted[info]
         except: 
             return MISSINGDATA
-
-    def get_metric_style(self, info:str, asset:str=None) -> tuple:
-        """Returns StyleSheet HTML formatting for color, font, whatever."""
-        if self.ERROR: return ''
-        color_format = metric_formatting_lib[info]['color']
-        if color_format == 'type':                                          return style(self._data['type'])
-        elif color_format == 'accounting' and self.get_metric(info, asset) and self.get_metric(info, asset) < 0:    return style('loss')
-        return ''
 
     #JSON Functions
     def toJSON(self) -> dict: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
@@ -409,22 +406,8 @@ class Asset():
         if info == 'class':         return assetclasslib[self._class]['name'] #Returns the long display name for this class
 
         #This is Market Data
-        return format_general(self.get_metric(info), metric_formatting_lib[info]['format'])
+        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'])
     
-    def get_metric_style(self, info:str, *args, **kwargs) -> str: # Returns styleSheet with proper formatting
-        color_format = metric_formatting_lib[info]['color']
-        if color_format == 'profitloss':    
-            try:    
-                data = self.get_metric(info)
-                if   data > 0:  return style('profit')
-                elif data < 0:  return style('loss')
-                else:           return style('neutral')
-            except: return ''
-        return ''
-
-    def pretty(self, info:str, *args, **kwargs) -> tuple: #Returns a tuple of pretty info, foreground color, and background color
-        return (self.metric_to_str(info), self.get_metric_style(info))
-
     #JSON functions
     def toJSON(self) -> dict:
         toReturn = {
@@ -556,6 +539,7 @@ class Portfolio():
                         print('||ERROR|| An asset\'s name/decription failed to load.')
                         continue
                     if self.hasAsset(new_asset_data[0]): # If asset already in portfolio, import name/description
+                        if merge and not overwrite: continue #Don't overwrite identical assets, when specified
                         self.asset(new_asset_data[0])._name = new_asset_data[1] # Set existing asset name to saved name
                         self.asset(new_asset_data[0])._description = new_asset_data[2] # Set existing asset description to saved description
         
@@ -572,26 +556,11 @@ class Portfolio():
                     except:  
                         print('||WARNING|| Wallet failed to load.')
                         continue
-                    if self.hasWallet(NAME):    self.wallet(NAME)._description = DESC
+                    if self.hasWallet(NAME):    
+                        if merge and not overwrite: continue #Don't overwrite identical wallets, when specified
+                        self.wallet(NAME)._description = DESC
                     else:                       self.add_wallet(Wallet(NAME, DESC))
-
-
-        self.fixBadAssetTickers()
-    
-    def fixBadAssetTickers(self): 
-        """Fixes tickers that have changed over time, like LUNA to LUNC, or ones that have multiple names like CELO also being CGLD
-        \nAlso deletes assets that have no transactions under them"""
-        for asset in forks_and_duplicate_tickers_lib:
-            if asset in list(self._assets):
-                new_ticker = forks_and_duplicate_tickers_lib[asset][0]
-                for transaction in list(self.asset(asset)._ledger.values()):
-                    if transaction.iso_date() < forks_and_duplicate_tickers_lib[asset][1]:  #Change relevant transaction tickers, IF they occur before a certain "fork" or "renaming" date
-                        newTrans = transaction.toJSON()
-                        self.delete_transaction(transaction) #Delete the old erroneous transaction
-                        for data in ['loss_asset','fee_asset','gain_asset']:    #Update all relevant tickers to the new ticker name
-                            if data in newTrans and newTrans[data] == asset:    newTrans[data] = new_ticker
-                        self.add_transaction(Transaction(self, newTrans)) #add the fixed transaction back in
-                if len(asset._ledger) == 0:  self.delete_asset(asset)
+  
 
     def toJSON(self) -> dict:
         # Up to this point we store information as dictionaries
@@ -643,24 +612,10 @@ class Portfolio():
         try:    return self._metrics[info]
         except: return MISSINGDATA
 
-    def metric_to_str(self, info:str, *args, **kwargs) -> str:
+    def metric_to_str(self, info:str, charlimit=0, *args, **kwargs) -> str:
         """Returns formatted str for given metric"""
-        try:    return format_general(self.get_metric(info), metric_formatting_lib[info]['format'])
-        except: return MISSINGDATA
+        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit)
     
-    def get_metric_style(self, info:str, *args, **kwargs) -> tuple: #returns a tuple of foreground, background color
-        color_format = metric_formatting_lib[info]['color']
-        if color_format == 'profitloss':    
-            try:    
-                data = self.get_metric(info)
-                if   data > 0: return style('profit')
-                elif data < 0: return style('loss')
-                else:          return style('neutral')
-            except: return ''
-        return ''
-
-    def pretty(self, info:str, *args, **kwargs) -> tuple: #Returns a tuple of pretty info, foreground color, and background color
-        return (self.metric_to_str(info), self.get_metric_style(info))
 
 MAIN_PORTFOLIO = Portfolio()
  
@@ -748,6 +703,9 @@ class ViewState():
         return setting('header_'+self.getState())
     def getAsset(self) -> str:
         return self.asset
+    def getHeaderTooltip(self, header:str):
+        if self.state == self.PORTFOLIO:    return metric_desc_lib['asset'][header]
+        else:                               return metric_desc_lib['transaction'][header]
 
 
     def isPortfolio(self):
@@ -921,7 +879,7 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.columns.append(
             (
             GRID_HEADER(self, p(self.header_left_click, new_index), p(self.header_right_click, new_index), fixedHeight=(icon('size').height())),
-            QLabel(alignment=Qt.AlignCenter, styleSheet=style('GRID_data'))
+            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_data'))
         ))
         header,text = self.columns[new_index][0],self.columns[new_index][1]
         
@@ -1030,24 +988,17 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
             header_ID = view.getHeaders()[c]
             self.columns[c][0].setText(metric_formatting_lib[header_ID]['headername']) # Sets text to proper header name
             self.columns[c][0].info = header_ID # Sets info quick-access variable, to current header's variable
-            if self.upper.view.isPortfolio(): # Sets header tooltip
-                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['asset'][header_ID], 40)))
-            elif self.upper.view.isAsset() or self.upper.view.isGrandLedger():
-                self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(metric_desc_lib['transaction'][header_ID], 40)))
-
+            self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(view.getHeaderTooltip(header_ID), 40))) # Sets header tooltip
 
             # Column rows' text
-            longest_text_length = 0 # Records longest word/number: we use this to set the width of the column
             toDisplay = '' # This will be the string of text for this column
             for r in rowrange:
                 if r > stop: toDisplay += '<br>' #Inserts empty lines where there is nothing to display
                 else:
                     item = sorted_items[r]
-                    formatted_text = item.metric_to_str(header_ID, view.getAsset()) # Retrieves formatted version of text itself
-                    HTML_formatting = item.get_metric_style(header_ID, view.getAsset()) # Retrieves HTML formatting for text
                     if item.ERROR:   self.highlights[r%self.pagelength].error(True) # if transaction/asset has an error, highlights it in red
-                    if len(formatted_text) > longest_text_length: longest_text_length = len(formatted_text) # Records longest text, to set column width
-                    toDisplay += HTMLify(formatted_text, HTML_formatting)+'<br>' # adds this row of text to toDisplay
+                    # adds this row of text to the display
+                    toDisplay += f'{item.metric_to_str(header_ID, view.getAsset())}<br>'
             self.columns[c][1].setText(toDisplay.removesuffix('<br>')) # Sets column text to toDisplay
             
 

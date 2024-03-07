@@ -9,6 +9,7 @@ import sys, os
 import textwrap
 import AAstylesheet
 from AAstylesheet import UNI_PALETTE
+import math
 
 
 from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QWidgetAction, QButtonGroup,
@@ -113,9 +114,10 @@ class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows
 
 
 def HTMLify(text, styleSheet:str=''): # Uses a styleSheet to format HTML text
+    '''Given text and style sheet, returns string with HTML formatting. QT automatically applies HTML formatting.'''
     if text == '': return ''
     if styleSheet == '': return text
-    return f'<font style="{styleSheet}">{text}</font>' # Uses an 'f-String', a new Python 3.6 type of string formatting. Nifty!
+    return f'<font style="{styleSheet}">{text}</font>'
 
 
 def acceptableTimeDiff(unix_date1:int, unix_date2:int, second_gap:int) -> bool:
@@ -128,63 +130,96 @@ def acceptableDifference(v1:Decimal, v2:Decimal, percent_gap:float) -> bool:
     p = Decimal(1+percent_gap/100)
     return v1 < v2 * p and v1 > v2 / p #If value1 is within percent_gap of value2, then it is acceptable
 
-def format_general(data:str, style:str=None, charlimit:int=0) -> str:
-    toReturn = MISSINGDATA
-    match style:
-        case 'alpha':       toReturn = str(data)
+def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, styleSheet:str='') -> str:
+    """Formats given metric, according to defined styling, with defined maximum charlimit
+    \ndata - raw data for metric. must be valid raw datatype
+    \ntextFormat - formatting code for text
+    \ncolorFormat - formatting code for color
+    \ncharlimit - maximum number of characters
+    \nstyleSheet - OVERRIDES all HTML formatting when specified (this includes colors)
+    """
+    # ~450ms across 230000 cycles
+    if data==None: return ''
+    ttt('start')
+    match textFormat:
+        # Input should be int
+        case 'date':        toReturn = unix_to_local_timezone(data) # data is an int
+        # Input should be str
+        case 'type':        toReturn = pretty_trans[data]
+        case 'alpha':       
+            if charlimit and charlimit < len(data): toReturn = f'{data[0:charlimit-3]}...'
+            else: toReturn = data
+        # Input should be Decimal/float/int
         case 'integer':      
-            try:            toReturn = str(int(data))
-            except: pass
+            toReturn = data
         case 'percent':      
-            try:            toReturn = format_number(float(data)*100, '.2f') + '%'
-            except: pass
-        case 'penny':      toReturn = format_number(data, '.2f')
+            toReturn = format_number(data, '2%', charLimit=charlimit)
+        case 'penny':       toReturn = format_number(data, '2f', charLimit=charlimit)
         case 'accounting':   
-            try:
-                if float(data) < 0: toReturn = '('+format_number(abs(data), '.5f')+')'
-                else:               toReturn = format_number(data, '.5f')
-            except: pass
-        case '':           toReturn = format_number(data)
+            if data < 0:    toReturn = f'({format_number(abs(data))})'
+            else:           toReturn = f'{format_number(data)} '
+        case 'currency':        toReturn = format_number(data, charLimit=charlimit)
+        case other:         raise Exception(f'||ERROR|| Unknown metric text formatting style {textFormat}')
+         
+    # Like 20ms out of 450ms for 230000 cycles
+    if styleSheet is '' and colorFormat is not None: # Only calculate color formatting if colorFormat specified and no stylesheet
+        match colorFormat:
+            case 'type':        styleSheet = style(data)
+            case 'profitloss':
+                if   data > 0:  styleSheet = style('profit')
+                elif data < 0:  styleSheet = style('loss')
+                else:           styleSheet = style('neutral')
+            case 'accounting':
+                if data < 0:    styleSheet = style('loss')
+            case other:         raise Exception(f'||ERROR|| Unknown metric color formatting style {colorFormat}')
+              
+    return HTMLify(toReturn, styleSheet)
 
-    # Shortens/lengthens the returned string, if there is a character limit
-    if charlimit > 0 and len(toReturn) > charlimit:
-        if '.' in toReturn and toReturn.index('.') > charlimit: return toReturn.split('.')[0] #Returns the number as an integer, if it is longer than the charlimit
-        return toReturn[0:charlimit].removesuffix('.') #Removes the decimal, if its the very last character
-    elif charlimit > 0 and len(toReturn) < charlimit:
-        if '.' not in toReturn or 'e' in toReturn.lower():  return toReturn + '.' + ('0' * (charlimit - len(toReturn) - 1)) # If there's no decimal, add a decimal, then add 0's until we're at the charlimit
-        else:                                               return toReturn + ('0' * (charlimit - len(toReturn))) # If there is a decimal, just add 0's until we're at the charlimit
-    return toReturn
 
-def format_number(number:float, standard:str=None) -> str:
+scales = (
+        # Scale, rescaling, ending word, formatting code
+        (.0001,     1,      '',     '3E'),
+        (.01,       1,      '',     '4f'),
+        (10**6,     1,      '',     '2f'),
+        (10**9,     10**6,  ' M',   '1f'),
+        (10**12,    10**9,  ' B',   '1f'),
+        (10**15,    10**12, ' T',   '1f'),
+        (10**18,    10**15, '',     '3E'),
+    )
+
+# Currently only used by format_general
+def format_number(number, formatting_code:str=None, charLimit:int=0) -> str:
     '''Returns a string for the formatted version of a number. Mainly to shorten needlessly long numbers.
-    \nnumber - the number to be formatted
-    \nstandard - a bit of code 
+    \nnumber - the number to be formatted. must be an integer/float/decimal
+    \formatting_code - specifies formatting
     \n'''
-    #If the number isn't a number, it might be missing market data
-    try: number = float(number)
-    except: return MISSINGDATA
 
-    #If we set a certain formatting standard, then its this
-    if standard: return f"{float(number):,{standard}}"
+    # if formatting_code specified, do this
+    if formatting_code is not None and charLimit==0: 
+        return f"{number:{charLimit},.{formatting_code}}"
+    
+    if formatting_code and formatting_code[1]=='%': # Specifically for percents, when charLimit specified
+         number *= 100
+    
+    # if charLimit specified, do this
+    if charLimit > 0:
+        num_str = f'{number}'
+        is_neg = num_str[0]=='-'
+        if charLimit > len(num_str.split('.')[0]):     
+            return f'{num_str[0:charLimit]:0<{charLimit}}' # integer shorter than charLimit: just cutoff number
+        if charLimit > len(num_str):     
+            return f'{number:0<{charLimit}}' # 
+        min_scientific_notation_length = 3 + is_neg + len(f'{number:E}'.split('E')[1])
+        if charLimit > min_scientific_notation_length: # (first digit + decimal) + negative sign + scientific notation (E, +/-, power)
+            return f'{number:.{min_scientific_notation_length}E}'
+        else: raise Exception(f'||ERROR|| Formatting charLimit {charLimit} too short for scientific notation')
 
     #Otherwise, we have fancy formatting
-    # Probably a clearner way to write this code?
-    scales = (
-        # Scale, rescaling, ending word, formatting code
-        (10**15,    10**15, 'QD',   '.1f'),
-        (10**12,    10**12, 'T',    '.1f'),
-        (10**9,     10**9,  'B',    '.1f'),
-        (10**6,     10**6,  'M',    '.1f'),
-        (1,         1,      '',     '.2f'),
-        (.0001,     1,      '',     '.4f'),
-        (0,         1,      '',     '.3E'),
-    )
+    if number == 0: return f'{0:{charLimit}f}'
+    ABS_NUM = abs(number) #1/3rd of lag here
     for size in scales:
-        if abs(number) > size[0]:
-            return f"{number/size[1]:,{size[3]}} {size[2]}"
-    else:
-        return '0.00'
-
+        if ABS_NUM < size[0]:
+            return f"{number/size[1]:,.{size[3]}}{size[2]}"
 
 
 ### LIBRARIES
@@ -251,7 +286,7 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 }
 def style(styleSheet:str): # returns the formatting for a given part of the GUI
     try:    return styleSheetLib[styleSheet]
-    except: return ''
+    except: raise Exception(f'||ERROR|| Unknown style, \'{styleSheet}\'')
 
 # ICONS
 def loadIcons(): # loads the icons for the GUI
@@ -364,18 +399,18 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'ticker': {                     'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
     'name':{                        'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
     'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
-    'price':{                       'format': '',           'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
-    'marketcap':{                   'format': '',           'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
-    'volume24h':{                   'format': '',           'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
+    'price':{                       'format': 'currency',   'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
+    'marketcap':{                   'format': 'currency',   'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
+    'volume24h':{                   'format': 'currency',   'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
     'portfolio%':{                  'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
-    'average_buy_price':{           'format': '',           'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
+    'average_buy_price':{           'format': 'currency',   'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
 
     # Shared by assets and transactions
-    'balance':{                    'format': '',           'color' : None,             'name':'Balance',          'headername':'Balance'},
+    'balance':{         'format': 'currency',  'color' : None,             'name':'Balance',          'headername':'Balance'},
 
     #Unique to transactions
-    'date':{            'format':'alpha',      'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
-    'type':{            'format':'alpha',      'color':'type',       'name':'Type',          'headername':'Type'           },
+    'date':{            'format':'date',       'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
+    'type':{            'format':'type',       'color':'type',       'name':'Type',          'headername':'Type'           },
     'wallet':{          'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
     'loss_asset':{      'format':'alpha',      'color':None,         'name':'Loss Asset',    'headername':'Loss\nAsset'    },
     'fee_asset':{       'format':'alpha',      'color':None,         'name':'Fee Asset',     'headername':'Fee\nAsset'     },
@@ -389,13 +424,13 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'loss_quantity':{   'format':'accounting', 'color':None,         'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
     'fee_quantity':{    'format':'accounting', 'color':None,         'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
     'gain_quantity':{   'format':'accounting', 'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
-    'loss_price':{      'format':'',           'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
-    'fee_price':{       'format':'',           'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
-    'gain_price':{      'format':'',           'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
+    'loss_price':{      'format':'currency',   'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
+    'fee_price':{       'format':'currency',   'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
+    'gain_price':{      'format':'currency',   'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
 
-    'loss_value':{      'format':'',           'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
-    'fee_value':{       'format':'',           'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
-    'gain_value':{      'format':'',           'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
+    'loss_value':{      'format':'currency',   'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
+    'fee_value':{       'format':'currency',   'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
+    'gain_value':{      'format':'currency',   'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
 
     'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 

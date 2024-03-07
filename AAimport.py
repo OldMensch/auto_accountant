@@ -361,6 +361,9 @@ def gemini_earn(mainAppREF, fileDir, wallet):   #Imports Gemini Earn transaction
         if trans_type == 'Deposit':             trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, '', gain=[asset, quantity, None])
         elif trans_type == 'Redeem':            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_out', wallet, '', loss=[asset, quantity, None])
         elif trans_type == 'Interest Credit':   trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'income', wallet, '', gain=[asset, quantity, price])
+        elif trans_type == 'Administrative Debit': # MUST RE-IMPLEMENT once assets are transferred back to Gemini proper
+            print("||WARNING|| Gemini Earn transaction \'Administrative Debit\' currently not supported until Genesis bankruptcy case is over")
+            continue
         
         else:
             Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Gemini (Earn) history due to unimplemented transaction type, \'' + trans_type + '\'')

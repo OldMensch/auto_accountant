@@ -556,11 +556,12 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         m = QMenu(parent=self)
         m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[self.view.getState()][info].trigger)
         m.exec(event.globalPos())
-    def move_header(self, info, index):
+    def move_header(self, info, other_header):
         header = self.view.getHeaderID()
         new = setting(header)
+        index_to_insert_at = setting(header).index(other_header) # must calculate this BEFORE length of setting(header) is changed
         new.remove(info)
-        new.insert(setting(header).index(index), info)
+        new.insert(index_to_insert_at, info)
         set_setting(header, new)
         self.render()
     def toggle_header(self, info, *args, **kwargs):
@@ -705,20 +706,21 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         textbox = self.GUI['info_pane']
         toDisplay = '<meta name="qrichtext" content="1" />'
         
-        for info in ('price', 'value','cash_flow','day%','unrealized_profit_and_loss%'):
+        for metric in ('price', 'value','cash_flow','projected_cash_flow','unrealized_profit_and_loss%','day%'):
+            colorFormat = metric_formatting_lib[metric]['color']
             if self.view.isPortfolio() or self.view.isGrandLedger():
-                if info == 'price': continue # Continues on if it's the spot price: this is only relevant to asset info_panes, not the overall portfolio
-                formatted_info = list(MAIN_PORTFOLIO.pretty(info))
+                if metric == 'price': continue # price doesnt exist for portfolio
+                formatted_info = MAIN_PORTFOLIO.metric_to_str(metric)
             elif self.view.isAsset():
-                formatted_info = list(MAIN_PORTFOLIO.asset(self.view.getAsset()).pretty(info))    
-            toDisplay += metric_formatting_lib[info]['headername'].replace('\n',' ')+'<br>'
+                formatted_info = MAIN_PORTFOLIO.asset(self.view.getAsset()).metric_to_str(metric)
+            toDisplay += metric_formatting_lib[metric]['headername'].replace('\n',' ')+'<br>'
             
-            info_format = metric_formatting_lib[info]['format']
-            if formatted_info[1] == '':     S = style('neutral')+style('info')
-            else:                           S = formatted_info[1]+style('info')
+            info_format = metric_formatting_lib[metric]['format']
+            if colorFormat is None:         S = style('neutral')+style('info')
+            else:                           S = style('info')
             if info_format == 'percent':    ending = ' %'
             else:                           ending = ' USD'
-            toDisplay += HTMLify(formatted_info[0].replace('%',''), S)+ending+'<br><br>'
+            toDisplay += HTMLify(formatted_info.replace('%',''), S)+ending+'<br><br>'
         textbox.setText(toDisplay.removesuffix('<br><br>'))
     def update_page_buttons(self):
         """Turns page next/prev buttons on/off depending on current page"""
@@ -867,14 +869,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         testfont.setPixelSize(20)
 
         # NUMBER OF TRANSACTIONS, NUMBER OF ASSETS
-        to_insert = MAIN_PORTFOLIO.pretty('number_of_transactions')
-        toDisplay += '• ' + HTMLify(to_insert[0], DEF_INFO_STYLE)
-        to_insert = MAIN_PORTFOLIO.pretty('number_of_assets')
-        toDisplay += ' transactions loaded under ' + HTMLify(to_insert[0], DEF_INFO_STYLE) + ' assets<br>'
+        to_insert = MAIN_PORTFOLIO.metric_to_str('number_of_transactions')
+        toDisplay += '• ' + HTMLify(to_insert, DEF_INFO_STYLE)
+        to_insert = MAIN_PORTFOLIO.metric_to_str('number_of_assets')
+        toDisplay += ' transactions loaded under ' + HTMLify(to_insert, DEF_INFO_STYLE) + ' assets<br>'
 
         # USD PER WALLET
         toDisplay += '• Total USD by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(MAIN_PORTFOLIO.get_metric('value'), 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(MAIN_PORTFOLIO.metric_to_str('value', charlimit=20), DEF_INFO_STYLE) + ' USD<br>'
         wallets = list(MAIN_PORTFOLIO.get_metric('wallets'))
         def sortByUSD(w):   return MAIN_PORTFOLIO.get_metric('wallets')[w]  #Wallets are sorted by their total USD value
         wallets.sort(reverse=True, key=sortByUSD)
@@ -883,21 +885,21 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
-                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' USD<br>'
+                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEF_INFO_STYLE)+ ' USD<br>'
 
         # MASS INFORMATION
         for data in ('cash_flow', 'day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
-            info_format = metric_formatting_lib[data]['format']
-            if MAIN_PORTFOLIO.get_metric_style(data) == '':    S = DEF_INFO_STYLE
-            else:                   S = MAIN_PORTFOLIO.get_metric_style(data)+style('info')
+            textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['format']
+            if colorFormat == None: S = DEF_INFO_STYLE
+            else:                   S = style('info')
             label = '• '+metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
             if width > maxWidth: maxWidth = width
-            label += '\t\t'
-            if info_format == 'percent':
-                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get_metric(data)*100, 'alpha', 20), S) + ' %<br>'
+            toDisplay += label + '\t\t' + HTMLify(MAIN_PORTFOLIO.metric_to_str(data, charlimit=20), S)
+            if textFormat == 'percent':
+                toDisplay += ' %<br>'
             else:
-                toDisplay += label + HTMLify(format_general(MAIN_PORTFOLIO.get_metric(data), 'alpha', 20), S) + ' USD<br>'
+                toDisplay += ' USD<br>'
         
         Message(self, 'Overall Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
     
@@ -916,7 +918,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # UNITS PER WALLET
         toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(format_general(asset.get_raw('balance'), 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(asset.get_raw('value'), 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
+        toDisplay += '\t*TOTAL*:\t' + format_metric(asset.get_raw('balance'), 'currency', charlimit=20, styleSheet=DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + format_metric(asset.get_raw('value'), 'currency', charlimit=20, styleSheet=DEF_INFO_STYLE) + 'USD<br>'
         wallets = list(MAIN_PORTFOLIO.asset(a).get_raw('wallets'))  
         def sortByUnits(w):   return MAIN_PORTFOLIO.asset(a).get_raw('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)
@@ -926,24 +928,24 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
-                toDisplay += '\t' + w + ':\t' + HTMLify(format_general(quantity, 'alpha', 20), DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + HTMLify(format_general(quantity*value, 'alpha', 20), DEF_INFO_STYLE) + 'USD<br>'
+                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEF_INFO_STYLE) + ' '+asset.ticker() + '\t' + format_metric(quantity*value, 'currency', charlimit=20, styleSheet=DEF_INFO_STYLE) + 'USD<br>'
 
         # MASS INFORMATION
         for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
-            info_format = metric_formatting_lib[data]['format']
-            if asset.get_metric_style(data) == '':     S = DEF_INFO_STYLE
-            else:                           S = asset.get_metric_style(data)+style('info')
+            textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['format']
+            if colorFormat == None: S = DEF_INFO_STYLE
+            else:                   S = style('info')
             label = '• '+ metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
             if width > maxWidth: maxWidth = width
             label += '\t\t'
             if data == 'price':
-                toDisplay += label + HTMLify(format_general(asset.get_raw(data), 'alpha', 20), S) + ' USD/'+asset.ticker() + '<br>'
-            elif info_format == 'percent':
-                try:    toDisplay += label + HTMLify(format_general(asset.get_metric(data)*100, 'alpha', 20), S) + ' %<br>'
+                toDisplay += label + HTMLify(format_metric(Decimal(asset.get_raw(data)), 'currency', charlimit=20), S) + ' USD/'+asset.ticker() + '<br>'
+            elif textFormat == 'percent':
+                try:    toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'percent', 'profitloss', charlimit=20), S) + ' %<br>'
                 except: pass
             else:
-                toDisplay += label + HTMLify(format_general(asset.get_raw(data), 'alpha', 20), S) + ' USD<br>'
+                toDisplay += label + HTMLify(format_metric(asset.get_raw(data), 'currency', charlimit=20), S) + ' USD<br>'
 
         Message(self, asset.name() + ' Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
 

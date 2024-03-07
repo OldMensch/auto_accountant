@@ -43,12 +43,13 @@ class metrics:
             self.calculate_projected_cash_flow(asset)
         self.recalculate_portfolio_market_dependent()
 
+    # PORTFOLIO
     def recalculate_portfolio_market_dependent(self): #Recalculates all market-dependent portfolio metrics
 
         self.calculate_portfolio_value()
         for asset in self.PORTFOLIO.assets():
             self.calculate_percentage_of_portfolio(asset)
-        self.calculate_portfolio_value()
+        self.calculate_portfolio_projected_cash_flow()
         self.calculate_portfolio_changes()
         self.calculate_portfolio_percents()
         self.calculate_portfolio_value_by_wallet()
@@ -185,7 +186,8 @@ class metrics:
                 GAA._metrics['balance'] += GQ
                 t._metrics['balance'][GA] = GAA._metrics['balance']
             for asset,quantity in t._metrics['balance'].items():
-                t._formatted['balance'][asset] = format_general(quantity, metric_formatting_lib['balance']['format']) 
+                formatting = metric_formatting_lib['balance']
+                t._formatted['balance'][asset] = format_metric(quantity, formatting['format'], colorFormat=formatting['color']) 
 
             # COST BASIS CALCULATION    #NOTE: Lag ~7.0662ms for ~5300 transactions. 
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
@@ -310,6 +312,10 @@ class metrics:
             try: value += a.get_raw('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
             except: continue
         self.PORTFOLIO._metrics['value'] = value
+    def calculate_portfolio_projected_cash_flow(self): #Calculates what the cash flow would become if you sold everything right now
+        #Must be a try statement because it relies on market data
+        try:    self.PORTFOLIO._metrics['projected_cash_flow'] = self.PORTFOLIO._metrics['cash_flow'] + self.PORTFOLIO._metrics['value']
+        except: self.PORTFOLIO._metrics['projected_cash_flow'] = 0
     def calculate_portfolio_changes(self): # Calculates absolute change over the past day, week, and month
         self.PORTFOLIO._metrics.update({'day_change':0,'week_change':0,'month_change':0})
         for a in self.PORTFOLIO.assets():
