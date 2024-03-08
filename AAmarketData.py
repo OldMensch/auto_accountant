@@ -1,21 +1,19 @@
-
-from AAdialogs import Message
-from AAlib import *
-
 import time
 import json
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 import time
-from functools import partial as p
 
 from threading import Thread
 
 import yahoofinancials as yf2
+import threading
 
+from AAdialogs import Message
+from AAlib import *
 
 class market_data:
-    def __init__(self, main_app, portfolio, online_flag):
+    def __init__(self, main_app, portfolio, online_flag:threading.Event):
         self.MAIN_APP = main_app
         self.PORTFOLIO = portfolio
         self.online_event = online_flag
@@ -36,7 +34,7 @@ class market_data:
             #Ok, we're online. Process immediately, then wait for 5 minutes and do it all again.
 
             # creates a list of 'tickers' or 'symbols' or whatever you want to call them
-            stockList = [asset.ticker() for asset in self.PORTFOLIO.assets() if asset.assetClass() == 's']
+            stockList = [asset.ticker() for asset in self.PORTFOLIO.assets() if asset.class_code() == 's']
 
             if len(stockList) == 0:    #No reason to update nothing! Restarts the wait timer.
                 time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
@@ -79,7 +77,7 @@ class market_data:
                         export['week%'] =  export['price'] / dataref[i]['close'] - 1
                         break
                 
-                marketdatalib[stock + 'zs'] = export    #update the library which gets called to by the main portfolio
+                marketdatalib['s'][stock] = export    #update the library which gets called to by the main portfolio
 
             InvokeMethod(self.MAIN_APP.market_metrics)
             InvokeMethod(p(self.MAIN_APP.render, sort=True))
@@ -103,7 +101,7 @@ class market_data:
             #Ok, we're online. Process immediately, then wait for 5 minutes. Then we do this check again, and so on.
 
             #creates a comma-separated list of crypto tickers to be fed into CoinMarketCap
-            cryptoString = ','.join(asset.ticker() for asset in self.PORTFOLIO.assets() if asset.assetClass() == 'c')
+            cryptoString = ','.join(asset.ticker() for asset in self.PORTFOLIO.assets() if asset.class_code() == 'c')
 
             if cryptoString == '':    #No reason to update nothing!
                 time.sleep(120)        #Waits for 2 minutes, on an infinite waiting loop until the user adds this asset class to the portfolio
@@ -159,7 +157,7 @@ class market_data:
             if data != None:
                 for crypto in data['data']:
                     try:
-                        marketdatalib[crypto + 'zc'] =  {
+                        marketdatalib['c'][crypto] =  {
                             'marketcap' :   str(data['data'][crypto]['quote']['USD']['market_cap']),
                             'day%' :        str(data['data'][crypto]['quote']['USD']['percent_change_24h']/100),
                             'week%' :       str(data['data'][crypto]['quote']['USD']['percent_change_7d']/100),
@@ -168,7 +166,7 @@ class market_data:
                             'volume24h' :   str(data['data'][crypto]['quote']['USD']['volume_24h']),
                         }
                     except:
-                        marketdatalib[crypto + 'zc'] =  {   #Basically this is just for LUNA which is no longer tracked on CoinMarketCap
+                        marketdatalib['c'][crypto] =  {   #Basically this is just for LUNA which is no longer tracked on CoinMarketCap
                             'marketcap' :   '0',
                             'day%' :        '0',
                             'week%' :       '0',
@@ -189,15 +187,14 @@ class market_data:
             time.sleep(300)
 
 
-def getMissingPrice(date, tickerclass):
+def getMissingPrice(date, TICKER, CLASS):
     '''Uses the date's OPEN price to fill in missing price data, when data is imported with missing information.\n
         While it works, it's kinda slow. And innacurate, though so is Etherscan's price data.'''   
-    TICKER = tickerclass.split('z')[0]
-    CLASS = tickerclass.split('z')[1]
     match CLASS:
         case 'c':  TO_FIND = TICKER+'-USD' #This is a crypto
         case 's':  TO_FIND = TICKER        #This is a stock
         case 'f':  TO_FIND = TICKER+'USD' #This is a fiat
+        case other: raise Exception(f'||Error|| Unknown asset class code \'{CLASS}\'')
 
     date = str(datetime.date(datetime( int(date[:4]), int(date[5:7]), int(date[8:10]) )))
     raw_data = yf2.YahooFinancials([TO_FIND])  #0ms

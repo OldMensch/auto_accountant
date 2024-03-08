@@ -47,7 +47,7 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
 
         # FAKE entry box for displaying the asset class
         self.add_label('Class',0,2)
-        self.ENTRY_class =     self.add_entry(assetclasslib[self.asset.assetClass()]['name'],1,2,maxLength=24,)
+        self.ENTRY_class =     self.add_entry(class_lib[self.asset.class_code()]['name'],1,2,maxLength=24,)
         self.ENTRY_class.setReadOnly(True)
 
         # Entry box to write a description
@@ -98,16 +98,16 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.add_label('Type',3,0)
         self.ENTRIES['type'] =  self.add_dropdown_list({pretty_trans[id]:id for id in pretty_trans}, 3, 1, default=' -TYPE- ', selectCommand=self.update_entry_interactability)
         self.add_label('Wallet',4,0)
-        self.ENTRIES['wallet']= self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 4, 1, default=' -WALLET- ')
+        self.ENTRIES['wallet']= self.add_dropdown_list({w.name():w.name() for w in self.upper.PORTFOLIO.wallets()}, 4, 1, default=' -WALLET- ')
         self.add_label('Asset Class',1,2)
-        all_classes_dict = {assetclasslib[c]['name']:c for c in assetclasslib}
+        all_classes_dict = {class_lib[c]['name']:c for c in class_lib}
         self.ENTRIES['loss_class'] = self.add_dropdown_list(all_classes_dict, 1, 3, current='f')
         self.ENTRIES['fee_class'] =  self.add_dropdown_list(all_classes_dict, 1, 4, default='-NO FEE-')
         self.ENTRIES['gain_class'] = self.add_dropdown_list(all_classes_dict, 1, 5, current='f')
         self.add_label('Ticker',2,2)
-        self.ENTRIES['loss_asset'] = self.add_entry('USD', 2, 3, maxLength=24)
-        self.ENTRIES['fee_asset'] =  self.add_entry('USD', 2, 4, maxLength=24)
-        self.ENTRIES['gain_asset'] = self.add_entry('USD', 2, 5, maxLength=24)
+        self.ENTRIES['loss_ticker'] = self.add_entry('USD', 2, 3, maxLength=24)
+        self.ENTRIES['fee_ticker'] =  self.add_entry('USD', 2, 4, maxLength=24)
+        self.ENTRIES['gain_ticker'] = self.add_entry('USD', 2, 5, maxLength=24)
         self.add_label('Quantity',3,2)
         self.ENTRIES['loss_quantity'] = self.add_entry('', 3, 3, format='pos_float')
         self.ENTRIES['fee_quantity'] =  self.add_entry('', 3, 4, format='pos_float')
@@ -124,21 +124,11 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         # ENTRY BOX DATA - When editing, puts existing data in entry boxes
         if transaction:
-            for data in valid_transaction_data_lib[transaction.type()]:
-                tdata = transaction.get_raw(data) # raw data from the JSON
-                if tdata == None:    continue       #Ignores missing data. Usually data is omitted to save space in memory, but not always
-                
+            raw_data = {metric:data for metric,data in transaction._data.items() if metric in minimal_metric_set_for_transaction_type[transaction.type()] and data is not None}
+            for metric,data in raw_data:
                 #Update entry box with known data.
-                if data == 'date':
-                    self.ENTRIES[data].set(unix_to_local_timezone(tdata))
-                elif data[-6:] == '_asset': # the asset, which for transactions, is stored as the tickerclass combo variable: gotta separate that
-                    a = MAIN_PORTFOLIO.asset(tdata)
-                    self.ENTRIES[data].set(a.ticker())                      #Set asset ticker entry to ticker
-                    self.ENTRIES[data[:-6]+'_class'].set(a.assetClass())    #Set asset class dropdown to class
-                elif data == 'wallet':
-                    self.ENTRIES[data].set(MAIN_PORTFOLIO.wallet(tdata))
-                else:
-                    self.ENTRIES[data].set(str(tdata))
+                if data == 'date':  self.ENTRIES[data].set(unix_to_local_timezone(data))
+                else:               self.ENTRIES[data].set(data)
 
         # Traced, automatically fill in gain/loss price, for purchases, sales, and trades
         self.ENTRIES['loss_quantity'].textChanged.connect(self.auto_purchase_sale_price)
@@ -178,7 +168,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         '''Appropriately sets the color and functionality of all entry boxes/labels, based on transaction type'''
         #COLOR CHANGES
         if TYPE == None:    self.ENTRIES['type'].setStyleSheet(style('entry'))
-        else:               self.ENTRIES['type'].setStyleSheet(style('entry')+style(TYPE+'text'))
+        else:               self.ENTRIES['type'].setStyleSheet(style('entry')+style(TYPE+'_dark'))
         
         #ENABLING AND DISABLING
         if TYPE == None: # No type is selected: disable all other entry boxes
@@ -187,34 +177,31 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         else: # Set functionality based on whether entry box is warranted for transaction type
             for entry in self.ENTRIES:
                 if entry == 'type': continue
-                elif entry[-6:] == '_class':   
-                    if entry[:-6]+'_asset' in valid_transaction_data_lib[TYPE]: self.ENTRIES[entry].setReadOnly(False) #Enable class selection only if asset selection possible
-                    else: self.ENTRIES[entry].setReadOnly(True)
-                elif entry in valid_transaction_data_lib[TYPE]:   self.ENTRIES[entry].setReadOnly(False)
+                elif entry in minimal_metric_set_for_transaction_type[TYPE]:   self.ENTRIES[entry].setReadOnly(False)
                 else:                                           self.ENTRIES[entry].setReadOnly(True)
             if TYPE == 'purchase':  
                 self.ENTRIES['loss_class'].set('f')
                 self.ENTRIES['fee_class'].set('f')
 
-                self.ENTRIES['loss_asset'].set('USD')
-                self.ENTRIES['fee_asset'].set('USD')
+                self.ENTRIES['loss_ticker'].set('USD')
+                self.ENTRIES['fee_ticker'].set('USD')
             elif TYPE == 'sale':    
                 self.ENTRIES['gain_class'].set('f')
                 self.ENTRIES['fee_class'].set('f')
 
-                self.ENTRIES['gain_asset'].set('USD')
-                self.ENTRIES['fee_asset'].set('USD')
+                self.ENTRIES['gain_ticker'].set('USD')
+                self.ENTRIES['fee_ticker'].set('USD')
             elif TYPE == 'purchase_crypto_fee':    
                 self.ENTRIES['fee_class'].set('c')
 
     def delete(self):
-        MAIN_PORTFOLIO.delete_transaction(self.t)  #deletes the transaction
+        self.upper.PORTFOLIO.delete_transaction(self.t)  #deletes the transaction
 
         # Remove assets that no longer have transactions
-        for a in list(MAIN_PORTFOLIO.assets()):
+        for a in list(self.upper.PORTFOLIO.assets()):
             if len(a._ledger) == 0:
                 print("deleted asset",a)
-                MAIN_PORTFOLIO.delete_asset(a)
+                self.upper.PORTFOLIO.delete_asset(a)
 
         self.upper.undo_save()          #creates a savepoint after deleting this
         self.upper.metrics()            #recalculates metrics for this asset w/o this transaction
@@ -226,78 +213,71 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         # CHECKS 1
         ################################
         # Asset type selected
-        if not self.ENTRIES['type'].entry():
+        TYPE = self.ENTRIES['type'].entry()
+        if not TYPE:
             self.display_error('[ERROR] Must select transaction type!')
             return
         # Wallet selected
-        if not self.ENTRIES['wallet'].entry():
+        WALLET = self.ENTRIES['wallet'].entry()
+        if not WALLET:
             self.display_error('[ERROR] Must select wallet!')
+            return
+        # CONVERT DATE TO VALID UNIX CODE
+        #valid datetime format? - NOTE: This also converts the date to unix time
+        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
+        except:     error = 'Invalid date!'
+        # MUST HAVE BOTH TICKER AND CLASS
+        if (LT and not LC) or (not LT and LC):  
+            self.display_error('[ERROR] Must have loss ticker AND class if one is specified')
+            return
+        if (FT and not FC) or (not FT and FC):  
+            self.display_error('[ERROR] Must have fee ticker AND class if one is specified')
+            return
+        if (GT and not GC) or (not GT and GC):  
+            self.display_error('[ERROR] Must have gain ticker AND class if one is specified')
             return
 
         ################################
         #DATA CULLING AND CONVERSION
         ################################
-        TO_SAVE = {}
-        for entry in self.ENTRIES:
-            data = self.ENTRIES[entry].entry()
-            if entry[-6:] == '_asset':  # Asset and class are one variable: we merge them here
-                try:    TO_SAVE[entry] = Asset.calc_join_tickerclass(None, data.upper(), self.ENTRIES[entry[:-6]+'_class'].entry())
-                except: TO_SAVE[entry] = None
-            elif entry == 'wallet':     TO_SAVE['wallet'] = data.name() # wallet is an actual wallet object here, we only save the name
-            else:                       TO_SAVE[entry] = data
-
-        # Cull unneccessary data according to valid_transaction_data_lib
-        TYPE = TO_SAVE['type']
-        for data in list(TO_SAVE.keys()):
-            if data not in valid_transaction_data_lib[TYPE]:
-                TO_SAVE[data] = None # Invalid data is set to None
+        # Creates dictionary of all data, and removes any data not in the minimal dataset for this transaction type
+        TO_SAVE = {entry.entry() for metric,entry in self.ENTRIES.items() if metric in minimal_metric_set_for_transaction_type[self.ENTRIES['type'].entry()]}
 
         # Cull fee data if 'no fee' was selected
         if self.ENTRIES['fee_class'].entry() == None:
-            TO_SAVE['fee_asset'] =    None
+            TO_SAVE['fee_ticker'] =    None
             TO_SAVE['fee_quantity'] = None
             TO_SAVE['fee_price'] =    None
 
         # Short quick-access variables
-        LA,LQ,LP = TO_SAVE['loss_asset'],TO_SAVE['loss_quantity'],TO_SAVE['loss_price']
-        FA,FQ,FP = TO_SAVE['fee_asset'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
-        GA,GQ,GP = TO_SAVE['gain_asset'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
+        LT,LC,LQ,LP = TO_SAVE['loss_ticker'],TO_SAVE['loss_class'],TO_SAVE['loss_quantity'],TO_SAVE['loss_price']
+        FT,FC,FQ,FP = TO_SAVE['fee_ticker'], TO_SAVE['fee_class'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
+        GT,GC,GQ,GP = TO_SAVE['gain_ticker'],TO_SAVE['gain_class'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
 
         ################################
         # CHECKS 2
         ################################
         error = None
-
-        # CONVERT DATE TO VALID UNIX CODE
-        #valid datetime format? - NOTE: This also converts the date to unix time
-        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
-        except:     error = 'Invalid date!'
-
-        valids = valid_transaction_data_lib[TYPE]
-
-        ######################################################
-        # NOTE: Currently, checking for missing price input is ignored
-        # We allow the user to automatically get price data from YahooFinance, if they don't know it
-        ######################################################
+        valids = minimal_metric_set_for_transaction_type[TYPE]
 
         # Valid loss?
         if 'loss_quantity' in valids and zeroish(LQ):                     error = 'Loss quantity must be non-zero.'
-        #if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.' # NOTE: See above
+        if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.' # NOTE: See above
         # Valid fee?
-        if FA: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
-            if        'fee_asset' in valids  and   not MAIN_PORTFOLIO.hasAsset(FA): error = 'Fee asset does not exist in portfolio.'
+        if FT: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
+            if        'fee_ticker' in valids  and   not self.upper.PORTFOLIO.hasAsset(f'{FT}z{FC}'): error = 'Fee asset does not exist in portfolio.'
             if FQ and 'fee_quantity' in valids and zeroish(FQ):                     error = 'Fee quantity must be non-zero.'
             #if FP and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
         # Valid gain?
         if 'gain_quantity' in valids and zeroish(GQ):                     error = 'Gain quantity must be non-zero.'
-        #if 'gain_price' in valids and    zeroish(GP):                     error = 'Gain price must be non-zero.' # NOTE: See above
+        if 'gain_price' in valids and    zeroish(GP):                     error = 'Gain price must be non-zero.' # NOTE: See above
 
         # If loss/fee asset identical, or fee/gain asset identical, then the loss/fee or fee/gain price MUST be identical
-        if 'loss_price' in valids and FA and LA==FA and not appxEq(LP,FP): error = 'If the loss and fee assets are the same, their price must be the same.'
-        if 'gain_price' in valids and FA and GA==FA and not appxEq(GP,FP): error = 'If the fee and gain assets are the same, their price must be the same.'
+        if 'loss_price' in valids and FT and LT==FT and not appxEq(LP,FP): error = 'If the loss and fee assets are the same, their price must be the same.'
+        if 'gain_price' in valids and FT and GT==FT and not appxEq(GP,FP): error = 'If the fee and gain assets are the same, their price must be the same.'
 
         # The loss and gain assets can't be identical, that's retarted. That means you would have sold something to buy itself... huh?
-        if 'loss_asset' in valids and 'gain_asset' in valids and LA==GA:    error = 'Loss and Gain asset cannot be the same... right?'
+        if 'loss_ticker' in valids and 'gain_ticker' in valids and LT==GT:    error = 'Loss and Gain asset cannot be the same... right?'
 
 
         if error:
@@ -315,20 +295,21 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         # FINAL CHECK - transaction will be unique?
         #transaction already exists if: 
         #   hash already in transactions - and we're not just saving an unmodified transaction over itself!
-        has_hash = MAIN_PORTFOLIO.hasTransaction(NEWHASH)
+        has_hash = self.upper.PORTFOLIO.hasTransaction(NEWHASH)
         if has_hash and not (self.t and NEWHASH == OLDHASH):
             self.display_error('[ERROR] This is too similar to an existing transaction!')
             return
 
         # ACTUALLY SAVING THE TRANSACTION
-        MAIN_PORTFOLIO.add_transaction(Transaction(MAIN_PORTFOLIO, TO_SAVE))           # Add the new transaction, or overwrite the old
+        TO_SAVE = {metric:TO_SAVE[metric] for metric in minimal_metric_set_for_transaction_type[TYPE]} # Clean the transaction of useless data
+        self.upper.PORTFOLIO.add_transaction(Transaction(TO_SAVE))           # Add the new transaction, or overwrite the old
         if OLDHASH != None and NEWHASH != OLDHASH:
-            MAIN_PORTFOLIO.delete_transaction(self.t)      # Delete the old transaction if it's hash will have changed
+            self.upper.PORTFOLIO.delete_transaction(self.t)      # Delete the old transaction if it's hash will have changed
         
         # Remove assets that no longer have transactions
-        for a in list(MAIN_PORTFOLIO.assets()):
+        for a in list(self.upper.PORTFOLIO.assets()):
             if len(a._ledger) == 0:
-                MAIN_PORTFOLIO.delete_asset(a)
+                self.upper.PORTFOLIO.delete_asset(a)
 
 
         self.upper.undo_save()
@@ -353,12 +334,13 @@ class WalletManager(Dialog): #For selecting wallets to edit
         WalletEditor(self, wallet_name)
 
     def refresh_wallets(self):
-        self.wallet_list.update_dict({wallet.name():wallet for wallet in MAIN_PORTFOLIO.wallets()})
+        self.wallet_list.update_dict({wallet.name():wallet for wallet in self.upper.PORTFOLIO.wallets()})
         
 class WalletEditor(Dialog): #For creating/editing Wallets
     """Opens dialog for creating/editing wallets"""
     def __init__(self, walletManager, wallet_to_edit:Wallet=None):
         self.wallet_to_edit = wallet_to_edit
+        self.walletManager = walletManager
         if wallet_to_edit == None: #New wallet
             super().__init__(walletManager, 'Create Wallet')
         else: # Edit existing wallet
@@ -381,12 +363,12 @@ class WalletEditor(Dialog): #For creating/editing Wallets
     def delete(self):
         # Only possible when editing an existing wallet
         # CHECK - Make sure this wallet has no transactions under it
-        for t in MAIN_PORTFOLIO.transactions():
+        for t in self.walletManager.upper.PORTFOLIO.transactions():
             if t.wallet() == self.wallet_to_edit.name():   #is the wallet you're deleting used anywhere in the portfolio?
                 self.display_error('[ERROR] You cannot delete this wallet, as it is used by existing transactions.') # If so, you can't delete it. 
                 return
 
-        MAIN_PORTFOLIO.delete_wallet(self.wallet_to_edit)  #destroy the old wallet
+        self.walletManager.upper.PORTFOLIO.delete_wallet(self.wallet_to_edit)  #destroy the old wallet
         #Don't need to recalculate metrics or rerender AA, since you can only delete wallets if they're not in use
         self.upper.refresh_wallets()
         self.upper.upper.undo_save()
@@ -400,28 +382,28 @@ class WalletEditor(Dialog): #For creating/editing Wallets
 
         # CHECKS
         #==============================
-        #new ticker will be unique?
-        if MAIN_PORTFOLIO.hasWallet(new_wallet.name()) and NAME != self.wallet_to_edit.name():
-            self.display_error('[ERROR] A wallet already exists with this name!')
-            return
-        #Name isn't an empty string?
+        # Name isn't an empty string?
         if NAME == '':
             self.display_error('[ERROR] Must enter a name for this wallet')
+            return
+        # Name is unique?
+        if self.walletManager.upper.PORTFOLIO.hasWallet(NAME) and NAME != self.wallet_to_edit.name():
+            self.display_error('[ERROR] A wallet already exists with this name!')
             return
 
         #WALLET SAVING AND OVERWRITING
         #==============================
-        MAIN_PORTFOLIO.add_wallet(new_wallet)   #Creates the new wallet, or overwrites the existing one's description
+        self.walletManager.upper.PORTFOLIO.add_wallet(new_wallet)   #Creates the new wallet, or overwrites the existing one's description
 
         if self.wallet_to_edit != None and self.wallet_to_edit.name() != NAME:   #WALLET RE-NAMED
             #destroy the old wallet
-            MAIN_PORTFOLIO.delete_wallet(self.wallet_to_edit) 
-            for t in list(MAIN_PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
+            self.walletManager.upper.PORTFOLIO.delete_wallet(self.wallet_to_edit) 
+            for t in list(self.walletManager.upper.PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
                 if t.wallet() == self.wallet_to_edit.name():      
                     new_trans = t.toJSON()
-                    MAIN_PORTFOLIO.delete_transaction(t) #Changing the wallet name changes the transactions HASH, so we HAVE to remove and re-add it
+                    self.walletManager.upper.PORTFOLIO.delete_transaction(t) #Changing the wallet name changes the transactions HASH, so we HAVE to remove and re-add it
                     new_trans['wallet'] = NAME 
-                    MAIN_PORTFOLIO.add_transaction(Transaction(MAIN_PORTFOLIO, new_trans))
+                    self.walletManager.upper.PORTFOLIO.add_transaction(Transaction(new_trans))
         
             #Only reload metrics and rerender, if we rename a wallet
             self.upper.upper.metrics()
@@ -449,12 +431,13 @@ class FilterManager(Dialog): #For selecting filter rules to edit
         FilterEditor(self, filter_name)
 
     def refresh_filters(self):
-        self.filterlist.update_dict({filter.get_rule_name():filter for filter in MAIN_PORTFOLIO.filters()})
+        self.filterlist.update_dict({filter.get_rule_name():filter for filter in self.upper.PORTFOLIO.filters()})
         
 class FilterEditor(Dialog): #For creating/editing filters
     """Opens dialog for creating/editing filters"""
     def __init__(self, filterManager, filter_to_edit:Filter=None):
         self.filter_to_edit = filter_to_edit
+        self.filterManager = filterManager
         if filter_to_edit == None: #New filter
             super().__init__(filterManager, 'Create Filter')
         else: # Edit existing filter
@@ -500,21 +483,15 @@ class FilterEditor(Dialog): #For creating/editing filters
 
         self.ENTRY_state.setHidden(isDate)
         self.ENTRY_date.setHidden(not isDate)
-        self.ENTRY_state.setDisabled(isERROR)
-        self.DROPDOWN_relation.setDisabled(isERROR)
-        if isERROR:
-            self.ENTRY_state.setStyleSheet(style('disabledEntry'))
-            self.DROPDOWN_relation.setStyleSheet(style('disabledEntry'))
-        else:
-            self.ENTRY_state.setStyleSheet(style('entry'))
-            self.DROPDOWN_relation.setStyleSheet(style('entry'))
+        self.ENTRY_state.setReadOnly(isERROR)
+        self.DROPDOWN_relation.setReadOnly(isERROR)
 
 
     def delete(self):
         # Only possible when editing an existing filter
-        MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
+        self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
-        if len(MAIN_PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet(style('')) #Turn off filtering indicator
+        if len(self.filterManager.upper.PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet('') #Turn off filtering indicator
         self.upper.upper.render(sort=True) # Always re-render when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
@@ -556,14 +533,14 @@ class FilterEditor(Dialog): #For creating/editing filters
                 self.display_error('[ERROR] Relation must be \'=\' for text metrics')
                 return
         # Identical filter doesn't already exist?
-        if new_filter is not self.filter_to_edit and new_filter in MAIN_PORTFOLIO.filters():
+        if new_filter is not self.filter_to_edit and new_filter in self.filterManager.upper.PORTFOLIO.filters():
             self.display_error('[ERROR] Identical filter already exists')
             return
 
         # SAVING
         #==============================
-        MAIN_PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
-        if self.filter_to_edit: MAIN_PORTFOLIO.delete_filter(self.filter_to_edit)
+        self.filterManager.upper.PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
+        if self.filter_to_edit: self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)
         
         self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
         self.upper.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
@@ -576,7 +553,7 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
     def __init__(self, upper, continue_command, wallet_name):
         super().__init__(upper, 'Import to Wallet')
         self.add_label(wallet_name,0,0)
-        self.wallet_to_edit_dropdown = self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
+        self.wallet_to_edit_dropdown = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Import', p(self.complete, continue_command, wallet_name), styleSheet=style('new'))
         self.show()
@@ -592,11 +569,11 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
 class DEBUGStakingReportDialog(Dialog):
     '''Opens dialog for reporting my current interest quantity of AMP/ALCX without having to do math'''
     def __init__(self, upper, *args, **kwargs):
-        super().__init__(upper, 'Import to Wallet')
+        super().__init__(upper, 'Report Staking Interest')
         self.add_label('Crypto Ticker',0,0)
         self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24)
         self.add_label('Staking Wallet',0,1)
-        self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in MAIN_PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
+        self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
         self.add_label('Crypto Ticker',0,2)
         self.ENTRY_quantity = self.add_entry('', 1, 2, format='pos_float')
         self.add_menu_button('Cancel', self.close)
@@ -610,7 +587,7 @@ class DEBUGStakingReportDialog(Dialog):
 
         # CHECKS
         # Asset is in portfolio?
-        if not MAIN_PORTFOLIO.hasAsset(TICKER+'zc'):
+        if not self.upper.PORTFOLIO.hasAsset(TICKER+'zc'):
             self.display_error('[ERROR] Cryptocurrency \'TICKER\' not found in portfolio.')
             return
         # Selected a wallet?
@@ -630,7 +607,7 @@ class DEBUGStakingReportDialog(Dialog):
         
         # Add up all income transactions in this wallet for this asset
         total_staking_income_thus_far = Decimal(0)
-        this_asset = MAIN_PORTFOLIO.asset(TICKER+'zc')
+        this_asset = self.upper.PORTFOLIO.asset(TICKER+'zc')
         for transaction in this_asset._ledger.values():
             if transaction.type() == 'income':
                 total_staking_income_thus_far += transaction.get_metric('gain_quantity')
@@ -639,16 +616,17 @@ class DEBUGStakingReportDialog(Dialog):
         if QUANTITY < total_staking_income_thus_far:   
             self.display_error(f'[ERROR] Staking quantity ({QUANTITY}) less than current total staking income earned ({total_staking_income_thus_far}).')
             return
-        new_transaction = Transaction(MAIN_PORTFOLIO, {
+        new_transaction = Transaction({
                                       'date':timezone_to_unix(str(datetime.now()).split('.')[0]), 
                                       'type':'income', 
                                       'wallet':WALLET.name(), 
-                                      'gain_asset': TICKER+'zc', 
+                                      'gain_ticker': TICKER+'zc', 
                                       'gain_quantity':str(QUANTITY-total_staking_income_thus_far), 
-                                      'gain_price':str(this_asset.get_metric('price')) 
+                                      'gain_price':str(this_asset.get_metric('price')),
+                                      'description':'Manually reported staking interest using AutoAccountant', 
                                       }
                                       )
-        MAIN_PORTFOLIO.add_transaction(new_transaction)
+        self.upper.PORTFOLIO.add_transaction(new_transaction)
 
         self.upper.undo_save()
         self.upper.metrics()

@@ -7,21 +7,26 @@ from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 import sys, os
 import textwrap
-import AAstylesheet
-from AAstylesheet import UNI_PALETTE
 import math
+from functools import partial as p
 
 
-from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QWidgetAction, QButtonGroup,
-    QApplication, QMainWindow, QDialog, QMessageBox, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
-    QComboBox, QListView, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea, QScrollBar, QStyle)
-from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QCursor, QDoubleValidator, QDrag, 
-    QDropEvent, QDragEnterEvent, QImage, QPainter, QActionGroup, QAction, QShortcut, QGuiApplication, QTextOption)
+
+from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar,
+    QApplication, QMainWindow, QDialog, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
+    QComboBox, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea)
+from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QDrag, QDoubleValidator, 
+    QDropEvent, QDragEnterEvent, QActionGroup, QAction, QShortcut, QGuiApplication, QTextOption)
 from PySide6.QtCore import (Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QPoint) 
+import pandas as pd
+from io import StringIO
 
 import decimal
 decimal.getcontext().prec = 100
 from decimal import Decimal
+
+import AAstylesheet
+from AAstylesheet import UNI_PALETTE
 
 absolute_precision = Decimal(1e-80)
 relative_precision = Decimal(1e-8)
@@ -35,8 +40,6 @@ def zeroish_prec(x:Decimal):     return abs(x) < absolute_precision
 
 
 global iconlib
-
-marketdatalib = {}
 
 TEMP = { #Universal temporary data dictionary
         'metrics' : {},
@@ -130,7 +133,7 @@ def acceptableDifference(v1:Decimal, v2:Decimal, percent_gap:float) -> bool:
     p = Decimal(1+percent_gap/100)
     return v1 < v2 * p and v1 > v2 / p #If value1 is within percent_gap of value2, then it is acceptable
 
-def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, styleSheet:str='') -> str:
+def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, styleSheet:str='', newline='') -> str:
     """Formats given metric, according to defined styling, with defined maximum charlimit
     \ndata - raw data for metric. must be valid raw datatype
     \ntextFormat - formatting code for text
@@ -146,6 +149,8 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, s
         case 'date':        toReturn = unix_to_local_timezone(data) # data is an int
         # Input should be str
         case 'type':        toReturn = pretty_trans[data]
+        case 'desc':        toReturn = f'{data[0:20-3]}...' # description limited to 20 characters at most
+        case 'class':       toReturn = class_lib[data]['name']
         case 'alpha':       
             if charlimit and charlimit < len(data): toReturn = f'{data[0:charlimit-3]}...'
             else: toReturn = data
@@ -157,12 +162,12 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, s
         case 'penny':       toReturn = format_number(data, '2f', charLimit=charlimit)
         case 'accounting':   
             if data < 0:    toReturn = f'({format_number(abs(data))})'
-            else:           toReturn = f'{format_number(data)} '
+            else:           toReturn = f'{format_number(data)}&nbsp;'
         case 'currency':        toReturn = format_number(data, charLimit=charlimit)
         case other:         raise Exception(f'||ERROR|| Unknown metric text formatting style {textFormat}')
          
     # Like 20ms out of 450ms for 230000 cycles
-    if styleSheet is '' and colorFormat is not None: # Only calculate color formatting if colorFormat specified and no stylesheet
+    if styleSheet == '' and colorFormat is not None: # Only calculate color formatting if colorFormat specified and no stylesheet
         match colorFormat:
             case 'type':        styleSheet = style(data)
             case 'profitloss':
@@ -229,19 +234,19 @@ def format_number(number, formatting_code:str=None, charLimit:int=0) -> str:
 styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 
     # Good fonts: 
-    #   Courier New
-    #   Inconsolata Medium
+    #   Courier New - monospaced
+    #   Inconsolata Medium - monospaced
     #   Calibri
     'universal':            "font-family: 'Calibri';",
 
     'GRID':                 "border: 0; border-radius: 0;",
-    'GRID_data':          "background: transparent; border-color: transparent; border-width: -2px 2px -2px 2px; font-size: px; font-family: \'Inconsolata Medium\';",
-    'GRID_header':           "background: "+UNI_PALETTE.B3+"; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_data':            "background: transparent; border-color: transparent; font-size: px; font-family: \'Inconsolata Medium\';",
+    'GRID_header':          f"background: {UNI_PALETTE.B3}; font-size: px; font-family: \'Inconsolata Medium\';",
     'GRID_error_hover':     "background: #ff0000;",
     'GRID_error_selection': "background: #cc0000;",
     'GRID_error_none':      "background: #880000;",
-    'GRID_hover':           "background: "+UNI_PALETTE.A2+";",
-    'GRID_selection':       "background: "+UNI_PALETTE.A1+";",
+    'GRID_hover':           f"background: {UNI_PALETTE.A2};",
+    'GRID_selection':       f"background: {UNI_PALETTE.A1};",
     'GRID_none':            "color: #ff0000; background: transparent;",
     
     'timestamp_indicator_online':   "background-color: transparent; color: #ffffff;",
@@ -261,28 +266,30 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
 
     'progressBar':          "QProgressBar, QProgressBar::Chunk {background-color: #00aa00; color: #000000}",
 
-    'neutral':              "color: "+UNI_PALETTE.B6+";",
+    'neutral':              f"color: {UNI_PALETTE.B6};",
     'profit':               "color: #00ff00;",
     'loss':                 "color: #ff0000;",
 
-    'main_menu_button_disabled':    "background-color: "+UNI_PALETTE.B2+";",
-    'main_menu_filtering':          "background-color: #ff5500;",
-    'main_menu_button_enabled':     "",
+    'main_menu_button_disabled':    f"background-color: {UNI_PALETTE.B2};",
+    'main_menu_filtering':          """
+        QPushButton { background-color: #ff5500; }
+        QPushButton:hover { background-color: #ff7700; }
+        QPushButton:pressed { background-color: #ff9900; }""",
 
     'entry':                "color: #ffff00; background: #000000; font-family: 'Courier New';",
     'disabledEntry':        "color: #aaaaaa; font-family: 'Courier New';",
 
-    'purchase':             'background: #00aa00;',  'purchasetext':              'background: #005d00;',
-    'purchase_crypto_fee':  'background: #00aa00;',  'purchase_crypto_feetext':   'background: #005d00;',
-    'sale':                 'background: #d80000;',  'saletext':                  'background: #740000;',
-    'gift_in':              'background: #44cc44;',  'gift_intext':               'background: #007700;',
-    'gift_out':             'background: #44cc44;',  'gift_outtext':              'background: #007700;',
-    'expense':              'background: #ee4444;',  'expensetext':               'background: #aa0000;',
-    'card_reward':          'background: #aa00aa;',  'card_rewardtext':           'background: #440044;',
-    'income':               'background: #aa00aa;',  'incometext':                'background: #440044;',
-    'transfer_in':          'background: #4488ff;',  'transfer_intext':           'background: #0044bb;',
-    'transfer_out':         'background: #4488ff;',  'transfer_outtext':          'background: #0044bb;',
-    'trade':                'background: #ffc000;',  'tradetext':                 'background: #d39700;',
+    'purchase':             'background: #00aa00;',  'purchase_dark':              'background: #005d00;',
+    'purchase_crypto_fee':  'background: #00aa00;',  'purchase_crypto_fee_dark':   'background: #005d00;',
+    'sale':                 'background: #d80000;',  'sale_dark':                  'background: #740000;',
+    'gift_in':              'background: #44cc44;',  'gift_in_dark':               'background: #007700;',
+    'gift_out':             'background: #44cc44;',  'gift_out_dark':              'background: #007700;',
+    'expense':              'background: #ee4444;',  'expense_dark':               'background: #aa0000;',
+    'card_reward':          'background: #aa00aa;',  'card_reward_dark':           'background: #440044;',
+    'income':               'background: #aa00aa;',  'income_dark':                'background: #440044;',
+    'transfer_in':          'background: #4488ff;',  'transfer_in_dark':           'background: #0044bb;',
+    'transfer_out':         'background: #4488ff;',  'transfer_out_dark':          'background: #0044bb;',
+    'trade':                'background: #ffc000;',  'trade_dark':                 'background: #d39700;',
 }
 def style(styleSheet:str): # returns the formatting for a given part of the GUI
     try:    return styleSheetLib[styleSheet]
@@ -318,6 +325,25 @@ def loadIcons(): # loads the icons for the GUI
     }
 def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI
 
+#List of asset classes, by name tag
+class_lib = {  
+    'c' : {
+        'name':'Crypto',
+        'validTrans' : ('purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade')
+    },
+    's' : {
+        'name':'Stock',
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out')
+    },
+    'f' : {
+        'name':'Fiat',
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out') 
+    }
+}
+
+# Library of market data
+marketdatalib = {class_code:{} for class_code in class_lib.keys()}
+
 # Copy of default values for Transaction object stored to improve efficiency
 default_trans_data = {
     'date' :            None,
@@ -325,14 +351,17 @@ default_trans_data = {
     'wallet' :          None,
     'description' :     '',
 
-    'loss_asset' :      None,
+    'loss_ticker' :     None,
+    'fee_ticker' :      None,
+    'gain_ticker' :     None,
+    'loss_class' :      None,
+    'fee_class' :       None,
+    'gain_class' :      None,
     'loss_quantity' :   None,
-    'loss_price' :      None,
-    'fee_asset' :       None,
     'fee_quantity' :    None,
-    'fee_price' :       None,
-    'gain_asset' :      None,
     'gain_quantity' :   None,
+    'loss_price' :      None,
+    'fee_price' :       None,
     'gain_price' :      None,
 }
 default_trans_metrics = dict(default_trans_data)
@@ -343,10 +372,10 @@ default_trans_metrics.update({
 
     'basis_price':      0,      #The cost basis price
 
-    'price':    {},     #Price, value, quantity by asset, for displaying
-    'value':    {},
-    'quantity': {},
-    'balance': {},
+    'price':    {class_code:{} for class_code in class_lib.keys()},     #Price, value, quantity by asset, for displaying
+    'value':    {class_code:{} for class_code in class_lib.keys()},
+    'quantity': {class_code:{} for class_code in class_lib.keys()},
+    'balance':  {class_code:{} for class_code in class_lib.keys()},
     'all_assets':[],
 
     'hash':             None,
@@ -364,80 +393,78 @@ default_headers = {
         # Ones I will want to hide
         'class','day_change','tax_capital_gains','tax_income','unrealized_profit_and_loss',
         ),
-    'asset': ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price'),
+    'asset': ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price','description'),
     'grand_ledger': ('date','type','wallet',
-        'loss_asset','loss_quantity','loss_price',
-        'fee_asset','fee_quantity','fee_price',
-        'gain_asset','gain_quantity','gain_price'
+        'loss_ticker','loss_class','loss_quantity','loss_price',
+        'fee_ticker', 'fee_class', 'fee_quantity','fee_price',
+        'gain_ticker','gain_class','gain_quantity','gain_price',
+        'description',
         ),
 }
 
 
 metric_formatting_lib = { # Includes formatting information for every metric in the program
     # Shared by portfolios, assets, and transactions
-    'value':{                       'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
-    'description':{                 'format': 'alpha',      'color' : None,             'name':'Description',       'headername':'Description'},
+    'value':{                       'asset_specific':True, 'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
+    'description':{                 'asset_specific':False,'format': 'desc',       'color' : None,             'name':'Description',       'headername':'Description'},
 
     #Unique to portfolios and assets
-    'day_change':{                  'format': 'penny',      'color' : 'profitloss',     'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
-    'day%':{                        'format': 'percent',    'color' : 'profitloss',     'name':'24-Hour %',         'headername':'24-Hr %'},
-    'week%':{                       'format': 'percent',    'color' : 'profitloss',     'name':'7-Day %',           'headername':'7-Day %'},
-    'month%':{                      'format': 'percent',    'color' : 'profitloss',     'name':'30-Day %',          'headername':'30-Day %'},
-    'cash_flow':{                   'format': 'penny',      'color' : 'profitloss',     'name':'Cash Flow',         'headername':'Cash\nFlow'},
-    'projected_cash_flow':{         'format': 'penny',      'color' : 'profitloss',     'name':'Projected Cash Flow',     'headername':'Projected\nCash Flow'},
-    'realized_profit_and_loss':{    'format': 'penny',      'color' : 'profitloss',     'name':'Realized P&L',      'headername':'Real\nP&L'},
-    'tax_capital_gains':{           'format': 'penny',      'color' : 'profitloss',     'name':'Capital Gains',     'headername':'Capital\nGains'},
-    'tax_income':{                  'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
-    'unrealized_profit_and_loss':{  'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
-    'unrealized_profit_and_loss%':{ 'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
-    'number_of_transactions': {     'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
+    'day_change':{                  'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
+    'day%':{                        'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'24-Hour %',         'headername':'24-Hr %'},
+    'week%':{                       'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'7-Day %',           'headername':'7-Day %'},
+    'month%':{                      'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'30-Day %',          'headername':'30-Day %'},
+    'cash_flow':{                   'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Cash Flow',         'headername':'Cash\nFlow'},
+    'projected_cash_flow':{         'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Projected Cash Flow',     'headername':'Projected\nCash Flow'},
+    'realized_profit_and_loss':{    'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Realized P&L',      'headername':'Real\nP&L'},
+    'tax_capital_gains':{           'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Capital Gains',     'headername':'Capital\nGains'},
+    'tax_income':{                  'asset_specific':False,'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
+    'unrealized_profit_and_loss':{  'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
+    'unrealized_profit_and_loss%':{ 'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
+    'number_of_transactions': {     'asset_specific':False,'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
 
     #Unique to portfolios
-    'number_of_assets': {           'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
+    'number_of_assets': {           'asset_specific':False,'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
 
     # Unique to assets
-    'ticker': {                     'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
-    'name':{                        'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
-    'class':{                       'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
-    'price':{                       'format': 'currency',   'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
-    'marketcap':{                   'format': 'currency',   'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
-    'volume24h':{                   'format': 'currency',   'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
-    'portfolio%':{                  'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
-    'average_buy_price':{           'format': 'currency',   'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
+    'ticker': {                     'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
+    'name':{                        'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
+    'class':{                       'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
+    'price':{                       'asset_specific':True, 'format': 'currency',   'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
+    'marketcap':{                   'asset_specific':False,'format': 'currency',   'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
+    'volume24h':{                   'asset_specific':False,'format': 'currency',   'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
+    'portfolio%':{                  'asset_specific':False,'format': 'percent',    'color' : None,             'name':'Portfolio Weight',  'headername':'Portfolio\nWeight'},
+    'average_buy_price':{           'asset_specific':False,'format': 'currency',   'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
 
     # Shared by assets and transactions
-    'balance':{         'format': 'currency',  'color' : None,             'name':'Balance',          'headername':'Balance'},
+    'balance':{         'asset_specific':True, 'format': 'currency',  'color' : None,             'name':'Balance',          'headername':'Balance'},
 
     #Unique to transactions
-    'date':{            'format':'date',       'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
-    'type':{            'format':'type',       'color':'type',       'name':'Type',          'headername':'Type'           },
-    'wallet':{          'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
-    'loss_asset':{      'format':'alpha',      'color':None,         'name':'Loss Asset',    'headername':'Loss\nAsset'    },
-    'fee_asset':{       'format':'alpha',      'color':None,         'name':'Fee Asset',     'headername':'Fee\nAsset'     },
-    'gain_asset':{      'format':'alpha',      'color':None,         'name':'Gain Asset',    'headername':'Gain\nAsset'    },
-    'loss_ticker':{     'format':'alpha',      'color':None,         'name':'Loss Ticker',    'headername':'Loss\nTicker'    },
-    'fee_ticker':{      'format':'alpha',      'color':None,         'name':'Fee Ticker',     'headername':'Fee\nTicker'     },
-    'gain_ticker':{     'format':'alpha',      'color':None,         'name':'Gain Ticker',    'headername':'Gain\nTicker'    },
-    'loss_class':{      'format':'alpha',      'color':None,         'name':'Loss Class',    'headername':'Loss\nClass'    },
-    'fee_class':{       'format':'alpha',      'color':None,         'name':'Fee Class',     'headername':'Fee\nClass'     },
-    'gain_class':{      'format':'alpha',      'color':None,         'name':'Gain Class',    'headername':'Gain\nClass'    },
-    'loss_quantity':{   'format':'accounting', 'color':None,         'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
-    'fee_quantity':{    'format':'accounting', 'color':None,         'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
-    'gain_quantity':{   'format':'accounting', 'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
-    'loss_price':{      'format':'currency',   'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
-    'fee_price':{       'format':'currency',   'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
-    'gain_price':{      'format':'currency',   'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
+    'date':{            'asset_specific':False,'format':'date',       'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
+    'type':{            'asset_specific':False,'format':'type',       'color':'type',       'name':'Type',          'headername':'Type'           },
+    'wallet':{          'asset_specific':False,'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
+    'loss_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Loss Ticker',    'headername':'Loss\nTicker'    },
+    'fee_ticker':{      'asset_specific':False,'format':'alpha',      'color':None,         'name':'Fee Ticker',     'headername':'Fee\nTicker'     },
+    'gain_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Gain Ticker',    'headername':'Gain\nTicker'    },
+    'loss_class':{      'asset_specific':False,'format':'class',      'color':None,         'name':'Loss Class',    'headername':'Loss\nClass'    },
+    'fee_class':{       'asset_specific':False,'format':'class',      'color':None,         'name':'Fee Class',     'headername':'Fee\nClass'     },
+    'gain_class':{      'asset_specific':False,'format':'class',      'color':None,         'name':'Gain Class',    'headername':'Gain\nClass'    },
+    'loss_quantity':{   'asset_specific':False,'format':'accounting', 'color':None,         'name':'Loss Quantity', 'headername':'Loss\nQuantity' },
+    'fee_quantity':{    'asset_specific':False,'format':'accounting', 'color':None,         'name':'Fee Quantity',  'headername':'Fee\nQuantity'  },
+    'gain_quantity':{   'asset_specific':False,'format':'accounting', 'color':None,         'name':'Gain Quantity', 'headername':'Gain\nQuantity' },
+    'loss_price':{      'asset_specific':False,'format':'currency',   'color':None,         'name':'Loss Price',    'headername':'Loss\nPrice'    },
+    'fee_price':{       'asset_specific':False,'format':'currency',   'color':None,         'name':'Fee Price',     'headername':'Fee\nPrice'     },
+    'gain_price':{      'asset_specific':False,'format':'currency',   'color':None,         'name':'Gain Price',    'headername':'Gain\nPrice'    },
 
-    'loss_value':{      'format':'currency',   'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
-    'fee_value':{       'format':'currency',   'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
-    'gain_value':{      'format':'currency',   'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
+    'loss_value':{      'asset_specific':False,'format':'currency',   'color':None,         'name':'Loss Value',    'headername':'Loss\nValue'    },
+    'fee_value':{       'asset_specific':False,'format':'currency',   'color':None,         'name':'Fee Value',     'headername':'Fee\nValue'     },
+    'gain_value':{      'asset_specific':False,'format':'currency',   'color':None,         'name':'Gain Value',    'headername':'Gain\nValue'    },
 
-    'quantity':{        'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
+    'quantity':{        'asset_specific':True, 'format':'accounting', 'color':'accounting', 'name':'Quantity',      'headername':'Quantity'       },
 
-    'ERROR':{           'format':'alpha',      'color':None,         'name':'ERROR',         'headername':'ERROR'       },
+    'ERROR':{           'asset_specific':False,'format':'alpha',      'color':None,         'name':'ERROR',         'headername':'ERROR'       },
 }
 
-metric_desc_lib = { # Includes descriptions for all metrics: this depends on whether you are looking at the portfolio overall, individual assets, or individual transactions
+metric_desc_lib = { # Includes descriptions for all metrics: this depends on the item which the metric is describing
     'portfolio':{
         #Unique to portfolios
         'number_of_transactions': "The total number of transactions across all assets",
@@ -488,14 +515,18 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'date': "The date and time this transaction occurred. Note: Order fills are lumped together if they occurred simultaneously.",
         'type': "The nature of the transaction: purchase, sale, trade, etc.",
         'wallet': "The wallet or platform on which the transaction was held.",
-        'loss_asset': "The asset lost from this transaction.",
+        'description':'Message written by user or importation method',
+        'loss_ticker': "The asset lost from this transaction.",
+        'fee_ticker': "The asset used to pay the fee.",
+        'gain_ticker': "The asset gained from this transaction.",
+        'loss_class': "Asset class of the gain asset.",
+        'fee_class': "Asset class of the gain asset.",
+        'gain_class': "Asset class of the gain asset.",
         'loss_quantity': "The quantity lost of the loss asset.",
-        'loss_price': "The USD market value of the loss asset at the time of the transaction.",
-        'fee_asset': "The asset used to pay the fee.",
         'fee_quantity': "The quantity lost of the fee asset.",
-        'fee_price': "The USD market value of the fee asset at the time of the transaction.",
-        'gain_asset': "The asset gained from this transaction.",
         'gain_quantity': "The quantity gained of the gain asset.",
+        'loss_price': "The USD market value of the loss asset at the time of the transaction.",
+        'fee_price': "The USD market value of the fee asset at the time of the transaction.",
         'gain_price': "The USD market value of the gain asset at the time of the transaction.",
     
         'balance': "The total quantity held AFTER this transaction.",
@@ -503,27 +534,6 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on whe
         'value': "The USD value of the tokens involved in this transaction, for this asset.",
         'price': "The USD value per token in this transaction.",
     }
-}
-
-assetclasslib = {  #List of asset classes, by name tag
-    'c' : {
-        'name':'Crypto',
-        'validTrans' : ('purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade')
-    },
-    's' : {
-        'name':'Stock',
-        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out')
-    },
-    'f' : {
-        'name':'Fiat',
-        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out') 
-    }
-}
-
-# List of assets which have changed tickers or have multiple tickers, so we can use the right one
-forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. Its possible a new asset took the ticker since.
-    'CGLDzc':   ('CELOzc', '9999/12/31 00:00:00'), # Ticker is different on certain platforms
-    'LUNAzc':   ('LUNCzc', '2022/05/28 00:00:00'),
 }
 
 
@@ -558,66 +568,21 @@ trans_priority = {
     'sale':                 10,  #Out only
 }
 
-# Indicates data to be stored, for each type of transaction
-valid_transaction_data_lib = {
-    'purchase':             ('type', 'date', 'wallet', 'description',               'loss_quantity',                            'fee_quantity',              'gain_asset', 'gain_quantity'),
-    'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',               'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
-    'sale':                 ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',                            'fee_quantity',                            'gain_quantity'),
-    'expense':              ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price'),
-    'trade':                ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity', 'loss_price', 'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
-    'transfer_out':         ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price',                                            ),
-    'transfer_in':          ('type', 'date', 'wallet', 'description',                                              'fee_asset', 'fee_quantity', 'fee_price', 'gain_asset', 'gain_quantity'              ),
-    'gift_out':             ('type', 'date', 'wallet', 'description', 'loss_asset', 'loss_quantity',               'fee_asset', 'fee_quantity', 'fee_price'),
-    'gift_in':              ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
-    'card_reward':          ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
-    'income':               ('type', 'date', 'wallet', 'description',                                                                                        'gain_asset', 'gain_quantity', 'gain_price'),
+# Indicates the minimal set of metrics for every transaction type
+minimal_metric_set_for_transaction_type = {
+    'purchase':             ('type', 'date', 'wallet', 'description',                              'loss_quantity',                                          'fee_quantity',              'gain_ticker', 'gain_class', 'gain_quantity'),
+    'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',                              'loss_quantity',               'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
+    'sale':                 ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity',                                          'fee_quantity',                                           'gain_quantity'),
+    'expense':              ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity', 'loss_price', 'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price'),
+    'trade':                ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity', 'loss_price', 'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
+    'transfer_out':         ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity',               'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price'),
+    'transfer_in':          ('type', 'date', 'wallet', 'description',                                                             'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
+    'gift_out':             ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity',               'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price'),
+    'gift_in':              ('type', 'date', 'wallet', 'description',                                                                                                                     'gain_ticker', 'gain_class', 'gain_quantity', 'gain_price'),
+    'card_reward':          ('type', 'date', 'wallet', 'description',                                                                                                                     'gain_ticker', 'gain_class', 'gain_quantity', 'gain_price'),
+    'income':               ('type', 'date', 'wallet', 'description',                                                                                                                     'gain_ticker', 'gain_class', 'gain_quantity', 'gain_price'),
 }
 
-
-# TIMEZONES
-timezones = {
-    'GMT':  ('[UTC+0] Greenwich Mean Time',                     0, 0),
-    'UTC':  ('[UTC+0] Universal Coordinated Time',              0, 0),
-    'ECT':  ('[UTC+1] European Central Time',                   1, 0),
-    'EET':  ('[UTC+2] Eastern European Time',                   2, 0),
-    'ART':  ('[UTC+2] (Arabic) Egypt Standard Time',            2, 0),
-    'EAT':  ('[UTC+3] Eastern African Time',                    3, 0),
-    'MET':  ('[UTC+3:30] Middle East Time',                     3, 30),
-    'NET':  ('[UTC+4] Near East Time',                          4, 0),
-    'PLT':  ('[UTC+5] Pakistan Lahore Time',                    5, 0),
-    'IST':  ('[UTC+5:30] India Standard Time',                  5, 30),
-    'BST':  ('[UTC+6] Bangladesh Standard Time',                6, 0),
-    'VST':  ('[UTC+7] Vietnam Standard Time',                   7, 0),
-    'CTT':  ('[UTC+8] China Taiwan Time',                       8, 0),
-    'JST':  ('[UTC+9] Japan Standard Time',                     9, 0),
-    'ACT':  ('[UTC+9:30] Australia Central Time',               9, 30),
-    'AET':  ('[UTC+10] Australia Eastern Time',                 10, 0),
-    'SST':  ('[UTC+11] Solomon Standard Time',                  11, 0),
-    'NST':  ('[UTC+12] New Zealand Standard Time',              12, 0),
-    'MIT':  ('[UTC-11] Midway Islands Time',                    -11, 0),
-    'HST':  ('[UTC-10] Hawaii Standard Time',                   -10, 0),
-    'AST':  ('[UTC-9] Alaska Standard Time',                    -9, 0),
-    'PST':  ('[UTC-8] Pacific Standard Time',                   -8, 0),
-    'PNT':  ('[UTC-7] Phoenix Standard Time',                   -7, 0),
-    'MST':  ('[UTC-7] Mountain Standard Time',                  -7, 0),
-    'CST':  ('[UTC-6] Central Standard Time',                   -6, 0),
-    'EST':  ('[UTC-5] Eastern Standard Time',                   -5, 0),
-    'IET':  ('[UTC-5] Indiana Eastern Standard Time',           -5, 0),
-    'PRT':  ('[UTC-4] Puerto Rico and US Virgin Islands Time',  -4, 0),
-    'CNT':  ('[UTC-3:30] Canada Newfoundland Time',             -3, -30),
-    'AGT':  ('[UTC-3] Argentina Standard Time',                 -3, 0),
-    'BET':  ('[UTC-3] Brazil Eastern Time',                     -3, 0),
-    'CAT':  ('[UTC-1] Central African Time',                    -1, 0),
-}
-def unix_to_local_timezone(unix:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
-    if tz_override: tz = timezones[tz_override]
-    else:           tz = timezones[setting('timezone')]
-    return str(datetime(1970, 1, 1) + timedelta(hours=tz[1], minutes=tz[2], seconds=unix))
-def timezone_to_unix(iso:str, tz_override:str=None) -> int:
-    iso = iso[0:19].replace('T',' ').replace('Z','') # remove poor formatting where relevant
-    if tz_override: tz = timezones[tz_override]
-    else:           tz = timezones[setting('timezone')]
-    return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
 
 # SETTINGS
 settingslib = { # A library containing all of the default settings
@@ -669,3 +634,56 @@ def loadSettings():
         except: pass 
 
 
+
+# TIMEZONES
+timezones = {
+    'GMT':  ('[UTC+0] Greenwich Mean Time',                     0, 0),
+    'UTC':  ('[UTC+0] Universal Coordinated Time',              0, 0),
+    'ECT':  ('[UTC+1] European Central Time',                   1, 0),
+    'EET':  ('[UTC+2] Eastern European Time',                   2, 0),
+    'ART':  ('[UTC+2] (Arabic) Egypt Standard Time',            2, 0),
+    'EAT':  ('[UTC+3] Eastern African Time',                    3, 0),
+    'MET':  ('[UTC+3:30] Middle East Time',                     3, 30),
+    'NET':  ('[UTC+4] Near East Time',                          4, 0),
+    'PLT':  ('[UTC+5] Pakistan Lahore Time',                    5, 0),
+    'IST':  ('[UTC+5:30] India Standard Time',                  5, 30),
+    'BST':  ('[UTC+6] Bangladesh Standard Time',                6, 0),
+    'VST':  ('[UTC+7] Vietnam Standard Time',                   7, 0),
+    'CTT':  ('[UTC+8] China Taiwan Time',                       8, 0),
+    'JST':  ('[UTC+9] Japan Standard Time',                     9, 0),
+    'ACT':  ('[UTC+9:30] Australia Central Time',               9, 30),
+    'AET':  ('[UTC+10] Australia Eastern Time',                 10, 0),
+    'SST':  ('[UTC+11] Solomon Standard Time',                  11, 0),
+    'NST':  ('[UTC+12] New Zealand Standard Time',              12, 0),
+    'MIT':  ('[UTC-11] Midway Islands Time',                    -11, 0),
+    'HST':  ('[UTC-10] Hawaii Standard Time',                   -10, 0),
+    'AST':  ('[UTC-9] Alaska Standard Time',                    -9, 0),
+    'PST':  ('[UTC-8] Pacific Standard Time',                   -8, 0),
+    'PNT':  ('[UTC-7] Phoenix Standard Time',                   -7, 0),
+    'MST':  ('[UTC-7] Mountain Standard Time',                  -7, 0),
+    'CST':  ('[UTC-6] Central Standard Time',                   -6, 0),
+    'EST':  ('[UTC-5] Eastern Standard Time',                   -5, 0),
+    'IET':  ('[UTC-5] Indiana Eastern Standard Time',           -5, 0),
+    'PRT':  ('[UTC-4] Puerto Rico and US Virgin Islands Time',  -4, 0),
+    'CNT':  ('[UTC-3:30] Canada Newfoundland Time',             -3, -30),
+    'AGT':  ('[UTC-3] Argentina Standard Time',                 -3, 0),
+    'BET':  ('[UTC-3] Brazil Eastern Time',                     -3, 0),
+    'CAT':  ('[UTC-1] Central African Time',                    -1, 0),
+}
+def unix_to_local_timezone(unix:int, tz_override:str=None) -> str:     #Converts internal UNIX/POSIX time integer to user's specified local timezone
+    if tz_override: tz = timezones[tz_override]
+    else:           tz = timezones[setting('timezone')]
+    return str(datetime(1970, 1, 1) + timedelta(hours=tz[1], minutes=tz[2], seconds=unix))
+def timezone_to_unix(iso:str, tz_override:str=None) -> int:
+    iso = iso[0:19].replace('T',' ').replace('Z','') # remove poor formatting where relevant
+    if tz_override: tz = timezones[tz_override]
+    else:           tz = timezones[setting('timezone')]
+    return int((datetime.fromisoformat(iso) - timedelta(hours=tz[1], minutes=tz[2]) - datetime(1970, 1, 1)).total_seconds())
+
+# ASSETS WHICH HAVE CHANGED TICKERS OVER TIME
+forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. Its possible a new asset took the ticker since.
+    'c':{ 
+        'CGLDzc':   ('CELO', timezone_to_unix('9999-12-31 00:00:00', 'UTC')), # Ticker is different on certain platforms
+        'LUNAzc':   ('LUNC', timezone_to_unix('2022-05-28 00:00:00', 'UTC')), # LUNA crash event, May 28 2022, "Terra 2.0"
+        }, 
+}

@@ -3,9 +3,6 @@ from AAlib import *
 
 import pandas as pd
 from io import StringIO
-import copy
-import heapq
-from functools import partial as p
 
 
 
@@ -37,7 +34,6 @@ class Filter():
         else:
             return metric_formatting_lib[self.metric()]['name']+' '+self.relation()+' '+str(self.state())
 
-
 class Wallet():
     def __init__(self, name:str, description:str=''):
         self._name = name
@@ -57,34 +53,42 @@ class Wallet():
     def toJSON(self) -> dict:   return {'name':self._name, 'description':self._description}
 
 class Transaction():
-    def __init__(self, portfolio, raw_data:dict):
+    def __init__(self, raw_data:dict):
         # 7.4042 ms for ~5300 transactions, for everything before recalculate 
         #Set to true for transfers that don't have a partner, and with missing data. Stops metrics() short, and tells the renderer to color this RED
         self.ERROR = False  
         self.ERR_MSG =  ''
         self.ERROR_TYPE = ''
-        self.portfolio = portfolio
         
         self._data = dict(default_trans_data)
-        self._data.update(raw_data) # 4.2939 ms
         self._metrics = dict(default_trans_metrics)
         self._formatted = {} # Contains pre-formatted copy of all metrics to improve performance
-        self.recalculate()
+
+        self._data.update(raw_data) # 4.2939 ms
+        self.precalculate()
 
     #Pre-calculates useful information to GREATLY increase performance
-    def recalculate(self):          # 50.3061ms for ~5300 transactions
-        """Recalculates all metrics and formatting based on current raw data"""
+    def precalculate(self):          # 50.3061ms for ~5300 transactions
+        """Precalculates metrics and formatting, based only on raw data from THIS TRANSACTION"""
         self._metrics['hash'] = self.calc_hash(self._data) # 3.0735ms for ~5300 transactions
         self.calc_missing()         # 7.2830ms for ~5300 transactions
         self.calc_metrics()         # 24.3175ms for ~5300 transactions
         self.calc_inference()       # 2.0903ms for ~5300 transactions
         self.calc_formatting()      # 88.8317ms for ~5300 transactions # worst offender, mostly from format_general
-        self.calc_bad_asset_tickers()
-        #self.calc_quick_refs()      # 6.8355ms for ~5300 transactions 
+        self.calc_correct_bad_tickers()
     
     def calc_hash(self, raw_data:dict): #Hash Function - A transaction is unique insofar as its date, type, wallet, and three asset types are unique from any other transaction.
-        """Returns hash for given raw data"""
-        return hash((raw_data['date'],raw_data['type'],raw_data['wallet'],raw_data['loss_asset'],raw_data['fee_asset'],raw_data['gain_asset']))
+        """Transaction hash based on: DATE, TYPE, WALLET, LOSS TICKER/CLASS, FEE TICKER/CLASS, GAIN TICKER/CLASS"""
+        return hash((raw_data['date'],
+                     raw_data['type'],
+                     raw_data['wallet'],
+                     raw_data['loss_ticker'],
+                     raw_data['fee_ticker'],
+                     raw_data['gain_ticker'],
+                     raw_data['loss_class'],
+                     raw_data['fee_class'],
+                     raw_data['gain_class'],
+                     ))
     def calc_missing(self):
         """Detect and log missing data for this transaction"""
         missing = set()
@@ -92,11 +96,16 @@ class Transaction():
         if self._data['type'] == None: missing.add(data)
         else: # Can only calculate these if 'type' not missing
             # If there is a fee asset, is it missing the necessary quantity/price data?
-            if self._data['fee_asset'] != None and self._data['fee_quantity'] == None:  missing.add('fee_quantity')
-            if self._data['fee_asset'] != None and self._data['fee_price'] == None:     missing.add('fee_price')
+            if self._data['fee_ticker'] != None and self._data['fee_class'] != None:
+                if self._data['fee_quantity'] == None:  missing.add('fee_quantity')
+                if self._data['fee_price'] == None:     missing.add('fee_price')
+            # If there is a ticker w/o its corresponding class, or vice versa, error
+            for a in ('loss_','fee_','gain_'):
+                if self._data[a+'ticker'] is None and self._data[a+'class'] is not None:    missing.add(a+'ticker')
+                elif self._data[a+'ticker'] is not None and self._data[a+'class'] is None:  missing.add(a+'class')
             # Check all data
-            for data in valid_transaction_data_lib[self._data['type']]:
-                if data in ('fee_asset','fee_quantity','fee_price'):    continue    # Fees are special case (above)
+            for data in minimal_metric_set_for_transaction_type[self._data['type']]:
+                if data in ('fee_ticker','fee_class','fee_quantity','fee_price'):    continue    # Fees are special case (above)
                 if self._data[data] == None:                            missing.add(data)
 
         self._metrics['missing'] = list(missing) # list of missing data
@@ -111,8 +120,8 @@ class Transaction():
         # INTEGERS - Datatype preserved by JSON
         if 'date' not in MISSING: self._metrics['date'] = int(self._data['date'])
         # STRINGS - Datatype preserved by JSON
-        for data in ('type','wallet','description','loss_asset','fee_asset','gain_asset'):
-            if data not in MISSING: self._metrics[data] = self._data[data]
+        for data in ('type','wallet','description','loss_ticker','fee_ticker','gain_ticker','loss_class','fee_class','gain_class'):
+            self._metrics[data] = self._data[data]
         # DECIMALS
         for data in ('loss_quantity','loss_price','fee_quantity','fee_price','gain_quantity','gain_price'):     #NOTE: Lag is ~11ms for ~4000 transactions
             if data not in MISSING: 
@@ -144,23 +153,24 @@ class Transaction():
         self._metrics['loss_value'],self._metrics['fee_value'],self._metrics['gain_value'] = LV,FV,GV
 
         # PRICE QUANTITY VALUE - The price, quantity, and value, displayed on asset panes
-        LA,FA,GA = self._data['loss_asset'],self._data['fee_asset'],self._data['gain_asset']
-        self._metrics['all_assets'] = list(set(self._data[data] for data in ('loss_asset','fee_asset','gain_asset') if self._data[data] is not None))
-        for a in self._metrics['all_assets']:
+        LT,FT,GT = self._data['loss_ticker'],self._data['fee_ticker'],self._data['gain_ticker']
+        LC,FC,GC = self._data['loss_class'],self._data['fee_class'],self._data['gain_class']
+        self._metrics['all_assets'] = list(set((self._data[metric+'ticker'],self._data[metric+'class']) for metric in ('loss_','fee_','gain_') if self._data[metric+'ticker'] is not None))
+        for t,c in self._metrics['all_assets']:
             P,Q,V = 0,0,0
-            if a == LA:
+            if t==LT and c==LC:
                 Q -= LQ
                 V -= LV
-            if a == FA:
+            if t==FT and c==FC:
                 Q -= FQ
                 V -= FV
-            if a == GA:
+            if t==GT and c==GC:
                 Q += GQ
                 V += GV
             if Q!=0 and V!=0:  P = V/Q 
             V = abs(V)
 
-            self._metrics['price'][a], self._metrics['quantity'][a], self._metrics['value'][a] = P,Q,V
+            self._metrics['price'][c][t], self._metrics['quantity'][c][t], self._metrics['value'][c][t] = P,Q,V
 
         # BASIS PRICE - The price of the cost basis of this transaction, if it is a gain
         if   TYPE in ('purchase','purchase_crypto_fee'):    self._metrics['basis_price'] = (LV+FV)/GQ     # Purchase cost basis includes fee
@@ -176,11 +186,11 @@ class Transaction():
         # Desc - always stored
         # Wallet - always stored
 
-        # loss_asset
+        # loss_ticker
         #       purchase: USDzf
         #       purchase w/ crypto fee: USDzf
         if TYPE in ('purchase','purchase_crypto_fee'):
-            self._metrics['loss_asset'] = 'USDzf'
+            self._metrics['loss_ticker'],self._metrics['loss_class'] = 'USD','f'
 
         # loss_price - as above
         #       purchase: 1
@@ -193,19 +203,19 @@ class Transaction():
                 self._metrics['loss_price'] = (self._metrics['gain_quantity']-self._metrics['fee_quantity'])/self._metrics['loss_quantity']
             except: pass
 
-        # fee_asset
+        # fee_ticker
         #       purchase: USDzf
         #       sale: USDzf
         if TYPE in ('purchase','sale'):
-            self._metrics['fee_asset'] = 'USDzf'
+            self._metrics['fee_ticker'],self._metrics['fee_class'] = 'USD','f'
 
         # fee_price
         if TYPE in ('purchase','sale'):
             self._metrics['fee_price'] = 1.0
 
-        # gain_asset
+        # gain_ticker
         if TYPE == 'sale':
-            self._metrics['gain_asset'] = 'USDzf'
+            self._metrics['gain_ticker'],self._metrics['gain_class'] = 'USD','f'
 
         # gain_price
         if TYPE == 'sale':
@@ -226,69 +236,48 @@ class Transaction():
             if metric not in metric_formatting_lib: 
                 self._formatted[metric] = '!NO_FORMAT'
                 continue
-            match metric:
-                # asset-dependent variables
-                case 'value' | 'quantity' | 'price' | 'balance': 
-                    textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
-                    self._formatted[metric] = {}
-                    for a in self._metrics['all_assets']:
-                        # if self._metrics[metric][a] doesn't exist, this causes a crash
-                        try:    self._formatted[metric][a] = format_metric(self._metrics[metric][a], textFormat, colorFormat) 
-                        except: self._formatted[metric][a] = MISSINGDATA
-                    continue
-                case other:    
-                    textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
-                    metric_value = self._metrics[metric]
-                    if metric_value:    formatted_metric = format_metric(metric_value, textFormat, colorFormat)
+
+            # asset-dependent variables (price, value, quantity, etc)
+            if metric_formatting_lib[metric]['asset_specific']: 
+                textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
+                self._formatted[metric] = {class_code:{} for class_code in class_lib.keys()}
+                for t,c in self._metrics['all_assets']:
+                    # If self._metrics[metric][a] doesn't exist, this causes a crash
+                    try:    self._formatted[metric][c][t] = format_metric(self._metrics[metric][c][t], textFormat, colorFormat) 
+                    except: self._formatted[metric][c][t] = MISSINGDATA
+                continue
+            else:    
+                textFormat,colorFormat = metric_formatting_lib[metric]['format'],metric_formatting_lib[metric]['color']
+                metric_value = self._metrics[metric]
+                if metric_value:    formatted_metric = format_metric(metric_value, textFormat, colorFormat)
             self._formatted[metric] = formatted_metric
-    def calc_bad_asset_tickers(self):
-        for a in ('loss_asset','fee_asset','gain_asset'):
-            tc = self._data[a]
-            if tc in forks_and_duplicate_tickers_lib:
-                self._data[a] = forks_and_duplicate_tickers_lib[tc][0]
+    def calc_correct_bad_tickers(self):
+        for part in ('loss_','fee_','gain_'):
+            t,c,d = self._data[part+'ticker'],self._data[part+'class'],self._data['date']
+            if c and d and t in forks_and_duplicate_tickers_lib[c] and forks_and_duplicate_tickers_lib[c][t][1] < d:
+                self._data[part+'ticker'] = forks_and_duplicate_tickers_lib[c][t][0]
                 break
         else: return # no assets replace
-        self.recalculate()
+        self.precalculate()
         self.calc_formatting()
         
-
-    def calc_quick_refs(self):
-        """Sets WALLET, LOSS_ASSET, FEE_ASSET, and GAIN_ASSET to object references from the portfolio, in the _metrics dict"""
-        for metric in ('loss_asset','fee_asset','gain_asset'):
-            if self._data[metric] is not None:
-                try:
-                    self._metrics[metric] = self.portfolio.asset(self._data[metric])
-                except: raise Exception(f'||ERROR|| Failed to find reference to asset \'{self._data[metric]}\' in portfolio')
-        if self._data['wallet'] is not None:
-            try:
-                self._metrics['wallet'] = self.portfolio.wallet(self._data['wallet'])
-                # Formatting can be done without the asset object
-            except: raise Exception(f'||ERROR|| Failed to find reference to wallet \'{self._data['wallet']}\' in portfolio')
-
     #Comparison operator overrides
     def __eq__(self, __o: object) -> bool:
         if type(__o) != Transaction: return False
         return self.get_hash() == __o.get_hash()
     def __lt__(self, __o: object) -> bool:
-        # Basically, we try to sort transactions by date, unless they're the same, then we sort by type, unless that's also the same, then by wallet... and so on.
+        # Basically, we try to sort transactions by date, unless they're the same, then we sort by type, unless that's also the same, then... we assume its always false
         #date
         if 'date' in self._metrics['missing']: return True
-        S,O = self.get_raw('date'),__o.get_raw('date')
+        S,O = self._data['date'],__o._data['date']
         if S!=O:   return S<O
         #Type
         if 'type' in self._metrics['missing']: return True
-        S,O = self.get_raw('type'),__o.get_raw('type')
+        S,O = self._data['type'],__o._data['type']
         if S!=O:   return trans_priority[S]<trans_priority[O]
-        # S,O = self.wallet(),__o.wallet()                      #Hopefully I don't need to add the rest in. With them all, sorting goes from ~17ms to ~120ms for ~12000 transactions
-        # if S!=O:   return S<O
-        # S,O = self.get_raw('loss_asset'),__o.get_raw('loss_asset')
-        # if S and O and S!=O: return S<O
-        # S,O = self.get_raw('fee_asset'),__o.get_raw('fee_asset')
-        # if S and O and S!=O: return S<O
-        # S,O = self.get_raw('gain_asset'),__o.get_raw('gain_asset')
-        # if S and O and S!=O: return S<O
+        # Break - assume always false
         return False
-    def __hash__(self) -> str: return self.get_hash()
+    def __hash__(self) -> str: return self._metrics['hash']
 
     #Access functions for basic information
     def unix_date(self) -> int:         return self._data['date']
@@ -304,36 +293,33 @@ class Transaction():
     def get_raw(self, info:str) -> str:    
         """Returns raw savedata string for this metric"""
         return self._data[info]
-    def get_metric(self, info:str, asset:str=None):
+    def get_metric(self, info:str, ticker:str=None, class_code:str=None):
         """Returns this metric in its native datatype"""
         if info in ['value','quantity','price','balance']:    
-            try:    return self._metrics[info][asset]
+            try:    return self._metrics[info][class_code][ticker]
             except: return None
         try:    return self._metrics[info]
         except: return None
 
-    def metric_to_str(self, info:str, asset:str=None) -> str:
+    def metric_to_str(self, info:str, ticker:str=None, class_code:str=None) -> str:
         """Returns formatted str for given metric"""
-        try:
-            if info in ('value','quantity','price','balance'):   
-                return self._formatted[info][asset]
-            else:       return self._formatted[info]
-        except: 
-            return MISSINGDATA
+        if metric_formatting_lib[info]['asset_specific']:   
+            try: return self._formatted[info][class_code][ticker]
+            except: pass
+        else:       
+            try: return self._formatted[info]
+            except: pass
+        return MISSINGDATA
 
     #JSON Functions
     def toJSON(self) -> dict: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
-        return {data:self._data[data] for data in valid_transaction_data_lib[self._data['type']] if self._data[data] != None}
+        return {data:self._data[data] for data in minimal_metric_set_for_transaction_type[self._data['type']] if self._data[data] != None}
    
-
-
 class Asset():  
-    def __init__(self, tickerclass:str, name:str='', description:str=''):
+    def __init__(self, ticker:str, class_code:str, name:str='', description:str=''):
         self.ERROR = False  
-        self._tickerclass = tickerclass
-        tc_tuple = self.calc_separate_tickerclass(tickerclass)
-        self._ticker = tc_tuple[0]
-        self._class = tc_tuple[1]
+        self._ticker = ticker
+        self._class = class_code
         self._name = name
         self._description = description
         self._hash = None
@@ -344,15 +330,10 @@ class Asset():
 
         self._hash = self.calc_hash(self._ticker, self._class)
 
-    def calc_hash(self, TICKER, CLASS, TICKERCLASS=None): # Gives this asset a unique identifier based on its ticker and class
-        if TICKERCLASS: return hash(Asset.calc_separate_tickerclass(self, TICKERCLASS))
+    def calc_hash(self, TICKER, CLASS): # Gives this asset a unique identifier based on its ticker and class
         return hash((TICKER, CLASS))
     
-    def calc_separate_tickerclass(self, TICKERCLASS):
-        return tuple(TICKERCLASS.split('z'))
-    def calc_join_tickerclass(self, TICKER, CLASS):
-        return TICKER+'z'+CLASS
-    
+
     #Modification functions
     def add_transaction(self, transaction_obj:Transaction): self._ledger[transaction_obj.get_hash()] = transaction_obj
     def delete_transaction(self, transaction_obj:Transaction): self._ledger.pop(transaction_obj.get_hash())
@@ -362,14 +343,17 @@ class Asset():
         if type(__o) != Asset: return False
         return self.get_hash() == __o.get_hash()
     def __lt__(self, __o: object) -> bool:
-        return self.tickerclass() < __o.tickerclass()
+        S,O = self.ticker(), __o.ticker()
+        if S<O: return S<O
+        S,O = self.class_code(), __o.class_code()
+        if S<O: return S<O
+        return False
     def __hash__(self) -> str: return self.get_hash()
 
     #Access functions
     def get_hash(self) -> int:      return self._hash
-    def tickerclass(self) -> str:   return self._tickerclass
     def ticker(self) -> str:        return self._ticker
-    def assetClass(self) -> str:    return self._class
+    def class_code(self) -> str:    return self._class
     def name(self) -> str:          return self._name
     def desc(self) -> str:          return self._description
 
@@ -385,28 +369,28 @@ class Asset():
         except: pass
 
         #This is Market Data (separate from metric data, so we don't delete it upon deleting this asset)
-        try:    return marketdatalib[self._tickerclass][info]
+        try:    return marketdatalib[self.class_code()][self.ticker()][info]
         except: pass
         
         return MISSINGDATA
     
-    def get_metric(self, info:str) -> Decimal:
+    def get_metric(self, info:str, *args, **kwargs) -> Decimal:
         """Returns this metric in its native datatype"""
         #This is metric data
         try:    return self._metrics[info]
         except: pass
         #This is Market Data (separate from metric data, so we don't delete it upon deleting this asset)
-        try:    return Decimal(marketdatalib[self._tickerclass][info])
+        try:    return Decimal(marketdatalib[self.class_code()][self.ticker()][info])
         except: pass
 
-    def metric_to_str(self, info:str, *args, **kwargs) -> str:
+    def metric_to_str(self, info:str, charlimit:int=0, newline='', *args, **kwargs) -> str:
         """Returns formatted str for given metric"""
         if info == 'ticker':        return self._ticker
         if info == 'name':          return self._name
-        if info == 'class':         return assetclasslib[self._class]['name'] #Returns the long display name for this class
+        if info == 'class':         return class_lib[self._class]['name'] #Returns the long display name for this class
 
         #This is Market Data
-        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'])
+        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit, newline=newline)
     
     #JSON functions
     def toJSON(self) -> dict:
@@ -445,18 +429,18 @@ class Portfolio():
         self._wallets.clear()
 
     def add_asset(self, asset_obj:Asset):
-        if self.hasAsset(asset_obj.get_hash()): print('||WARNING|| Overwrote asset with same hash.', asset_obj.get_hash())
+        if self.hasAsset(asset_obj.ticker(), asset_obj.class_code()): print('||WARNING|| Overwrote asset with same hash.', asset_obj.get_hash())
         self._assets[asset_obj.get_hash()] = asset_obj
     def add_transaction(self, transaction_obj:Transaction):
         # Automatically add assets
-        for a in transaction_obj._metrics['all_assets']:
-            if not self.hasAsset(a):
-                asset_obj = Asset(a)
+        for t,c in transaction_obj._metrics['all_assets']:
+            if not self.hasAsset(t,c):
+                asset_obj = Asset(t, c, t)
                 self.add_asset(asset_obj)
-            else:  asset_obj = self.asset(a)
+            else:  asset_obj = self.asset(t, c)
             asset_obj.add_transaction(transaction_obj) #Adds this transaction to asset's ledger
         # Automatically add wallets
-        WALLET = transaction_obj.get_raw('wallet')
+        WALLET = transaction_obj.get_metric('wallet')
         if WALLET and not self.hasWallet(WALLET):
             self.add_wallet(Wallet(WALLET))
         # Add transaction
@@ -477,7 +461,7 @@ class Portfolio():
                     other_trans._data[part+'_quantity'] =   str(merged_quantity)
                 if NP and OP and not appxEqPrec(OP, NP):
                     other_trans._data[part+'_price'] = str((OQ/merged_quantity*OP)+(NQ/merged_quantity*NP)) #Weighted average of prices
-            other_trans.recalculate()
+            other_trans.precalculate()
     def add_wallet(self, wallet_obj:Wallet):
         if self.hasWallet(wallet_obj.name()): print('||WARNING|| Overwrote wallet with same hash.', wallet_obj.get_hash())
         self._wallets[wallet_obj.get_hash()] = wallet_obj
@@ -485,19 +469,18 @@ class Portfolio():
         if self.hasFilter(filter_obj.get_hash()): print('||WARNING|| Overwrote filter with same hash.', filter_obj.get_hash())
         self._filters[filter_obj.get_hash()] = filter_obj
 
-    def delete_asset(self, asset:Asset):              self._assets.pop(asset.get_hash())
+    def delete_asset(self, asset:Asset):               self._assets.pop(asset.get_hash())
     def delete_transaction(self, transaction_obj:Transaction):  
         # Automatically remove assets
-        for a in transaction_obj.get_metric('all_assets'):
-            a_obj = self.asset(a)
+        for t,c in transaction_obj.get_metric('all_assets'):
+            a_obj = self.asset(t,c)
             if len(a_obj._ledger) == 0:
                 self.delete_asset(a_obj)
         # Automatically add/remove assets
         transaction_obj = self._transactions.pop(transaction_obj.get_hash()) #Removes transaction from the portfolio itself
         #Removes transaction from relevant asset ledgers
-        assets = set([transaction_obj.get_raw('loss_asset'),transaction_obj.get_raw('fee_asset'),transaction_obj.get_raw('gain_asset')])
-        for a in assets: 
-            if a != None: self.asset(a).delete_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
+        for t,c in transaction_obj.get_metric('all_assets'): 
+            if t and c: self.asset(t,c).delete_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
     def delete_wallet(self, wallet:Wallet):            self._wallets.pop(wallet.get_hash())
     def delete_filter(self, filter:Filter):            self._filters.pop(filter.get_hash())
 
@@ -511,7 +494,6 @@ class Portfolio():
 
         if not merge:   self.clear()
 
-
         # TRANSACTIONS & ASSETS & WALLETS - NOTE: Lag is ~443.4364ms for ~5300 transactions
         if 'transactions' in JSON:
             parsed_transactions = None
@@ -520,7 +502,7 @@ class Portfolio():
             if type(parsed_transactions) == pd.DataFrame:
                 for t in parsed_transactions.iterrows():
                     raw_data = t[1].dropna().to_dict() # 185.2033 ms for ~5300 transactions
-                    new_trans = Transaction(self, raw_data) # 153.2676 ms for ~5300 transactions
+                    new_trans = Transaction(raw_data) # 153.2676 ms for ~5300 transactions
                     if merge and not overwrite and self.hasTransaction(new_trans.get_hash()): continue     #Don't overwrite identical transactions, when specified
                     self.add_transaction(new_trans) #8.5012ms for ~5300 transactions
 
@@ -534,14 +516,14 @@ class Portfolio():
             except: print('||ERROR|| Failed to read asset names/descriptions from JSON.')
             if type(parsed_assets) == pd.DataFrame:
                 for a in parsed_assets.iterrows(): # Look through all asset savedata
-                    try:    new_asset_data = Asset.calc_join_tickerclass(None, a[1]['ticker'], a[1]['class']), a[1]['name'], a[1]['description'] # Parse row
+                    try:    TICKER, CLASS, NAME, DESC = a[1]['ticker'], a[1]['class'], a[1]['name'], a[1]['description'] # Parse row
                     except: 
                         print('||ERROR|| An asset\'s name/decription failed to load.')
                         continue
-                    if self.hasAsset(new_asset_data[0]): # If asset already in portfolio, import name/description
+                    if self.hasAsset(TICKER, CLASS): # If asset already in portfolio, import name/description
                         if merge and not overwrite: continue #Don't overwrite identical assets, when specified
-                        self.asset(new_asset_data[0])._name = new_asset_data[1] # Set existing asset name to saved name
-                        self.asset(new_asset_data[0])._description = new_asset_data[2] # Set existing asset description to saved description
+                        self.asset(TICKER, CLASS)._name = NAME # Set existing asset name to saved name
+                        self.asset(TICKER, CLASS)._description = DESC # Set existing asset description to saved description
         
         # WALLETS - 0.9553ms for 9 wallets (probably not much more for a million) 
         # MOST Wallets already initialized in the first step (implemented in add_transaction function)
@@ -559,7 +541,6 @@ class Portfolio():
                     if self.hasWallet(NAME):    
                         if merge and not overwrite: continue #Don't overwrite identical wallets, when specified
                         self.wallet(NAME)._description = DESC
-                    else:                       self.add_wallet(Wallet(NAME, DESC))
   
 
     def toJSON(self) -> dict:
@@ -567,36 +548,23 @@ class Portfolio():
         # Now, we convert each list of assets/transactions/wallets and their respective properties into a dataframe, 
         # then into a CSV to save a TON of disk space. The CSV is stored as a string.
         return {
-            'assets':       pd.DataFrame.from_dict([asset.toJSON() for asset in self.assets()]).to_csv(index=False),
-            'transactions': pd.DataFrame.from_dict([transaction.toJSON() for transaction in self.transactions()]).to_csv(index=False),
-            'wallets':      pd.DataFrame.from_dict([wallet.toJSON() for wallet in self.wallets()]).to_csv(index=False),
+            'assets':       pd.DataFrame.from_dict([a.toJSON() for a in self.assets()]).to_csv(index=False),
+            'transactions': pd.DataFrame.from_dict([t.toJSON() for t in self.transactions()]).to_csv(index=False),
+            'wallets':      pd.DataFrame.from_dict([w.toJSON() for w in self.wallets()]).to_csv(index=False),
         }
     
     #Status functions
     def isEmpty(self) -> bool:  return {} == self._assets == self._transactions == self._wallets
 
-    def hasAsset(self, asset) -> bool: 
-        """Takes Asset obj or tickerclass"""                 
-        if type(asset)==str:  # "asset" is a tickerclass string
-            return Asset(asset).get_hash() in self._assets.keys() # True if hashed tickerclass is in our portfolio, false other
-        else: # "asset" is an Asset object
-            return asset in self.assets()
-    def hasTransaction(self, transaction:int) -> bool:      return transaction in self._transactions
-    def hasWallet(self, wallet:str) -> bool:                return Wallet(wallet).get_hash() in self._wallets
+    def hasAsset(self, ticker, class_code:str) -> bool:     return Asset.calc_hash(None, ticker, class_code) in self._assets.keys()
+    def hasTransaction(self, transaction_hash:int) -> bool: return transaction_hash in self._transactions.keys()
+    def hasWallet(self, wallet_name:str) -> bool:           return Wallet(wallet_name).get_hash() in self._wallets
     def hasFilter(self, filter:str) -> bool:                return filter in self._filters
     
     #Access functions:
-    def asset(self, asset:str) -> Asset:                    # Returns asset object, given its tickerclass
-        """Returns asset object, given its tickerclass"""
-        if type(asset)==str:        return self._assets[Asset.calc_hash(None, None, None, asset)]
-        elif type(asset)==Asset:    return self._assets[asset]
-        else: raise TypeError(f'||ERROR|| Invalid type {type(asset)}')
-    def transaction(self, transaction:int) -> Transaction:  # Returns transaction object, given its hash
-        """Returns transaction, given its hash"""
-        return self._transactions[transaction]
-    def wallet(self, wallet_name:str) -> Wallet:                 # Returns wallet object, given its hash
-        """Returns wallet object, given its name"""
-        return self._wallets[hash(wallet_name)]
+    def asset(self, ticker:str, class_code=None) -> Asset:  return self._assets[Asset.calc_hash(None, ticker, class_code)]
+    def transaction(self, transaction_hash:int) -> Transaction:  return self._transactions[transaction_hash]
+    def wallet(self, wallet_name:str) -> Wallet:            return self._wallets[hash(wallet_name)]
 
     def assets(self) -> list:                               return self._assets.values()
     def transactions(self) -> list:                         return self._transactions.values()
@@ -604,90 +572,23 @@ class Portfolio():
     def filters(self) -> list:                              return self._filters.values()
 
     def all_wallet_names(self) -> list:                     return [w.name() for w in self._wallets.values()]
-    def all_asset_tickerclasses(self) -> list:              return [a.tickerclass() for a in self._assets.values()]
 
 
-    def get_metric(self, info:str):
+    def get_metric(self, info:str, *args, **kwargs):
         """Returns raw savedata string for this metric"""
         try:    return self._metrics[info]
         except: return MISSINGDATA
 
-    def metric_to_str(self, info:str, charlimit=0, *args, **kwargs) -> str:
+    def metric_to_str(self, info:str, charlimit=0, newline='', *args, **kwargs) -> str:
         """Returns formatted str for given metric"""
-        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit)
+        return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit, newline=newline)
     
-
-MAIN_PORTFOLIO = Portfolio()
- 
-
-
-
-class gain_obj(): #A unit of assets aquired. Could be a purchase, gift_in, income, card_reward, anything with an asset gained.
-    def __init__(self, hash:int, price:Decimal, quantity:Decimal, date:str, accounting_method:str):
-        self._hash =        hash
-        self._price =       price
-        self._quantity =    quantity
-        self._date =        date
-        self._accounting_method = accounting_method
-
-    def __lt__(self, __o: object) -> bool:
-        if self._accounting_method == 'hifo':   return self._price > __o._price #"Smallest" element in the minheap is the highest (greatest) price  #NOTE: Insertion is 60ms avg
-        if self._accounting_method == 'fifo':   return self._date < __o._date   #"Smallest" element in the minheap is the oldest (least) date       #NOTE: Insertion is 20ms avg
-        if self._accounting_method == 'lifo':   return self._date > __o._date   #"Smallest" element in the minheap is the newest (greatest) date    #NOTE: Insertion is 30ms avg
-
-class gain_heap(): #Sorts the gains depending on the accounting method chosen. HIFO, FIFO, LIFO. Uses a heap for maximum efficiency
-    def __init__(self, accounting_method:str):
-        self._heap = [] #Stores all gains with minimum at the top
-        self._dict = {} #Stores all gains, indexed by their respective transaction's hash. This allows for efficient merging of re-united gains
-        self._accounting_method = accounting_method
-    
-    def store(self, hash:int, price:Decimal, quantity:Decimal, date:str):   #NOTE: Lag is ~34ms on average
-        if hash not in self._dict:  #Re-unite same-source gains, if possible, to be a little more efficient, and for less discombobulated tax reports
-            new_gain = gain_obj(hash, price, quantity, date, self._accounting_method)    #15-20ms for ~14000 stores
-            heapq.heappush(self._heap, new_gain)                #25ms for ~14000 stores
-            self._dict[hash] = new_gain                         #4ms for ~14000 stores
-        else:
-            self._dict[hash]._quantity += quantity          #~1ms for ~14000 stores (few will fit this category)
-
-    def store_direct(self, new_gain:gain_obj):
-        hash = new_gain._hash
-        if hash not in self._dict:  #Re-unite same-source gains, if possible, to be a little more efficient, and for less discombobulated tax reports
-            heapq.heappush(self._heap, new_gain)                #25ms for ~14000 stores
-            self._dict[hash] = new_gain                         #4ms for ~14000 stores
-        else:
-            self._dict[hash]._quantity += new_gain._quantity          #~1ms for ~14000 stores (few will fit this category)
-
-    def disburse(self, quantity:Decimal): #Removes quantity, returns list of the gains which were sold #NOTE: 30ms on avg for 231 disbursals
-        
-        gains_removed = []
-        while len(self._dict) > 0 and quantity > 0:
-            next_gain = self._heap[0]
-            next_gain_quantity = next_gain._quantity
-            #We completely disburse a gain
-            gain_is_equivalent = appxEqPrec(quantity, next_gain_quantity)
-            if quantity > next_gain_quantity or gain_is_equivalent:
-                if gain_is_equivalent:  quantity = 0
-                else:                   quantity -= next_gain_quantity
-                gains_removed.append(next_gain) #Add this gain to what's been disbursed     #2ms for ~12000 transactions
-                heapq.heappop(self._heap)       #Remove this gain from the heap array       #30ms for ~12000 transactions
-                self._dict.pop(next_gain._hash) #Remove this gain from the dictionary       #4ms for ~12000 transactions
-            #We partially disburse a gain - this will always be the last one we disburse from
-            else:
-                #Adds this gain to what's been disbursed, with its quantity modified to what's been disbursed
-                gains_removed.append(gain_obj(next_gain._hash, next_gain._price, quantity, next_gain._date, self._accounting_method))
-                next_gain._quantity -= quantity   #Remove the quantity disbursed
-                quantity = 0
-                
-        #return what's remaining to disburse (to check if its not close enough to zero), and what gains have been removed (to calculate cost basis, taxes, etc.)
-        return (quantity, gains_removed)
-
-
 
 class ViewState():
     """Stores current visual mode, and accessory relevant information"""
     def __init__(self):
         self.state = None
-        self.asset = None
+        self.asset = (None, None)
         self.PORTFOLIO = 'portfolio'
         self.GRAND_LEDGER = 'grand_ledger'
         self.ASSET = 'asset'
@@ -707,15 +608,13 @@ class ViewState():
         if self.state == self.PORTFOLIO:    return metric_desc_lib['asset'][header]
         else:                               return metric_desc_lib['transaction'][header]
 
+    def setAsset(self, ticker, class_code):
+        self.asset = (ticker, class_code)
 
     def isPortfolio(self):
         return self.state == self.PORTFOLIO
-
-    def setAsset(self, currentAsset):
-        self.asset = currentAsset
     def isAsset(self):
         return self.state == self.ASSET
-    
     def isGrandLedger(self):
         return self.state == self.GRAND_LEDGER
 
@@ -822,15 +721,16 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.left_click,self.right_click = left_click,right_click
         self.upper = upper
         self.setRowStretch(self.pagelength+1, 1)        # Headers stretch to accomodate bits of extra space
+        self.font_size_style = '' # used to store dynamic font size
 
         # Adds the first column in the grid, with the row indices
         self.item_indices = (
             QLabel("\n", styleSheet=style('GRID_header')),
-            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_header'))
+            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_header'), margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
         )
         self.highlights = [GRID_ROW(row, self.set_highlight, self._click, self._double_click) for row in range(self.pagelength)]
         
-        self.fake_header = QWidget(styleSheet=style('GRID_header'))
+        self.fake_header = QWidget(styleSheet=style('GRID_header')) # "header" right of last actual header
         header,text = self.item_indices[0],self.item_indices[1]
         self.addWidget(header, 0, 0) # Upper-left corner of the GRID
         self.addWidget(text, 1, 0, self.pagelength, 1)
@@ -879,10 +779,9 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.columns.append(
             (
             GRID_HEADER(self, p(self.header_left_click, new_index), p(self.header_right_click, new_index), fixedHeight=(icon('size').height())),
-            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_data'))
+            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_data')+self.font_size_style, margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
         ))
         header,text = self.columns[new_index][0],self.columns[new_index][1]
-        
 
         self.addWidget(header, 0, new_index+1)
         self.addWidget(text, 1, new_index+1, self.pagelength, 1)
@@ -935,32 +834,25 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         font = self.item_indices[1].font()
         scrollArea = self.upper.GUI['gridScrollArea']
         QScrollArea_height = scrollArea.height()
-        QScrollArea_margin_and_border_height = 4 # currently border is 1 px thick, top and bottom, and margin is 2px on the bottom (2px intersect with scrollbar but whatever)
+        QScrollArea_margin_and_border_height = 2 # currently border is 1 px thick, top and bottom
         QScrollArea_scrollbar_height = scrollArea.horizontalScrollBar().height() #Always assume horizontal scrollbar is present, even if not. Solves issue with flickering
         header_height = icon('size').height()
-        desired_height = (QScrollArea_height-QScrollArea_margin_and_border_height-header_height-QScrollArea_scrollbar_height)//self.pagelength
+        desired_font_px_height = (QScrollArea_height-QScrollArea_margin_and_border_height-header_height-QScrollArea_scrollbar_height)//self.pagelength
         
         fontSize = 0
         f = QFont(font)
         while True:
             f.setPixelSize( fontSize+1 )
-            if QFontMetrics(f).height() <= desired_height: 
+            if QFontMetrics(f).height() <= desired_font_px_height: 
                 fontSize += 1
             else:   break
-            
-        first = style('GRID_data').split('font-size:')
-        second = first[1].split('px')
-        second[0] = str(fontSize)
-        styleSheetLib['GRID_data'] = first[0] + 'font-size:' + 'px'.join(second)
-        first2 = style('GRID_header').split('font-size:')
-        second2 = first2[1].split('px')
-        second2[0] = str(fontSize)
-        styleSheetLib['GRID_header'] = first2[0] + 'font-size:' + 'px'.join(second2)
+        
+        self.font_size_style = f'font-size: {fontSize}px;' #CSS font-size code
 
         # Applies font size modification - only slow part of this whole thing
-        self.item_indices[1].setStyleSheet(style('GRID_header'))
+        self.item_indices[1].setStyleSheet(style('GRID_header')+self.font_size_style)
         for c in range(len(self.columns)):
-            self.columns[c][1].setStyleSheet(style('GRID_data'))
+            self.columns[c][1].setStyleSheet(style('GRID_data')+self.font_size_style)
         self.upper.set_page()
 
     # Loads all of the text and formatting for the GRID,
@@ -998,7 +890,7 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
                     item = sorted_items[r]
                     if item.ERROR:   self.highlights[r%self.pagelength].error(True) # if transaction/asset has an error, highlights it in red
                     # adds this row of text to the display
-                    toDisplay += f'{item.metric_to_str(header_ID, view.getAsset())}<br>'
+                    toDisplay += f'{item.metric_to_str(info=header_ID, ticker=view.getAsset()[0], class_code=view.getAsset()[1])}<br>'
             self.columns[c][1].setText(toDisplay.removesuffix('<br>')) # Sets column text to toDisplay
             
 

@@ -1,9 +1,70 @@
-
 from AAobjects import *
+import heapq
+
+class gain_obj(): #A unit of assets aquired. Could be a purchase, gift_in, income, card_reward, anything with an asset gained.
+    def __init__(self, hash:int, price:Decimal, quantity:Decimal, date:str, accounting_method:str):
+        self._hash =        hash
+        self._price =       price
+        self._quantity =    quantity
+        self._date =        date
+        self._accounting_method = accounting_method
+
+    def __lt__(self, __o: object) -> bool:
+        if self._accounting_method == 'hifo':   return self._price > __o._price #"Smallest" element in the minheap is the highest (greatest) price  #NOTE: Insertion is 60ms avg
+        if self._accounting_method == 'fifo':   return self._date < __o._date   #"Smallest" element in the minheap is the oldest (least) date       #NOTE: Insertion is 20ms avg
+        if self._accounting_method == 'lifo':   return self._date > __o._date   #"Smallest" element in the minheap is the newest (greatest) date    #NOTE: Insertion is 30ms avg
+
+class gain_heap(): #Sorts the gains depending on the accounting method chosen. HIFO, FIFO, LIFO. Uses a heap for maximum efficiency
+    def __init__(self, accounting_method:str):
+        self._heap = [] #Stores all gains with minimum at the top
+        self._dict = {} #Stores all gains, indexed by their respective transaction's hash. This allows for efficient merging of re-united gains
+        self._accounting_method = accounting_method
+    
+    def store(self, hash:int, price:Decimal, quantity:Decimal, date:str):   #NOTE: Lag is ~34ms on average
+        if hash not in self._dict:  #Re-unite same-source gains, if possible, to be a little more efficient, and for less discombobulated tax reports
+            new_gain = gain_obj(hash, price, quantity, date, self._accounting_method)    #15-20ms for ~14000 stores
+            heapq.heappush(self._heap, new_gain)                #25ms for ~14000 stores
+            self._dict[hash] = new_gain                         #4ms for ~14000 stores
+        else:
+            self._dict[hash]._quantity += quantity          #~1ms for ~14000 stores (few will fit this category)
+
+    def store_direct(self, new_gain:gain_obj):
+        hash = new_gain._hash
+        if hash not in self._dict:  #Re-unite same-source gains, if possible, to be a little more efficient, and for less discombobulated tax reports
+            heapq.heappush(self._heap, new_gain)                #25ms for ~14000 stores
+            self._dict[hash] = new_gain                         #4ms for ~14000 stores
+        else:
+            self._dict[hash]._quantity += new_gain._quantity          #~1ms for ~14000 stores (few will fit this category)
+
+    def disburse(self, quantity:Decimal): #Removes quantity, returns list of the gains which were sold #NOTE: 30ms on avg for 231 disbursals
+        
+        gains_removed = []
+        while len(self._dict) > 0 and quantity > 0:
+            next_gain = self._heap[0]
+            next_gain_quantity = next_gain._quantity
+            #We completely disburse a gain
+            gain_is_equivalent = appxEqPrec(quantity, next_gain_quantity)
+            if quantity > next_gain_quantity or gain_is_equivalent:
+                if gain_is_equivalent:  quantity = 0
+                else:                   quantity -= next_gain_quantity
+                gains_removed.append(next_gain) #Add this gain to what's been disbursed     #2ms for ~12000 transactions
+                heapq.heappop(self._heap)       #Remove this gain from the heap array       #30ms for ~12000 transactions
+                self._dict.pop(next_gain._hash) #Remove this gain from the dictionary       #4ms for ~12000 transactions
+            #We partially disburse a gain - this will always be the last one we disburse from
+            else:
+                #Adds this gain to what's been disbursed, with its quantity modified to what's been disbursed
+                gains_removed.append(gain_obj(next_gain._hash, next_gain._price, quantity, next_gain._date, self._accounting_method))
+                next_gain._quantity -= quantity   #Remove the quantity disbursed
+                quantity = 0
+                
+        #return what's remaining to disburse (to check if its not close enough to zero), and what gains have been removed (to calculate cost basis, taxes, etc.)
+        return (quantity, gains_removed)
+
+
 
 class metrics:
     # We initialize the metrics object with a reference to our Portfolio, and TEMP data
-    def __init__(self, portfolio, temp, main_app):
+    def __init__(self, portfolio:Portfolio, temp, main_app):
         self.PORTFOLIO = portfolio
         self.TEMPDATA = temp
         self.MAIN_APP_REF = main_app
@@ -79,7 +140,8 @@ class metrics:
         for t_out in list(transfer_OUT):
             for t_in in list(transfer_IN): #We have to look at all the t_in's
                 # We pair them up if they have the same asset, occur within 5 minutes of eachother, and if their quantities are within 0.1% of eachother
-                if t_in.get_raw('gain_asset') == t_out.get_raw('loss_asset') and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.get_metric('gain_quantity'), t_out.get_metric('loss_quantity'), 0.1):
+                in_GT, in_GC, out_LT, out_LC = t_in.get_raw('gain_ticker'), t_in.get_raw('gain_class'), t_out.get_raw('loss_ticker'), t_out.get_raw('loss_class')
+                if in_GT==out_LT and in_GC==out_LC and acceptableTimeDiff(t_in.unix_date(),t_out.unix_date(),300) and acceptableDifference(t_in.get_metric('gain_quantity'), t_out.get_metric('loss_quantity'), 0.1):
                         # we've already paired this t_in or t_out. Skip this!
                         if (t_in not in transfer_IN) or (t_out not in transfer_OUT):    continue
                         
@@ -94,9 +156,9 @@ class metrics:
         for t in transfer_IN + transfer_OUT:
             t.ERROR,t.ERROR_TYPE = True,'transfer'
             if t.type() == 'transfer_in':
-                t.ERR_MSG = 'Failed to automatically find a \'Transfer Out\' transaction under '+t.get_raw('gain_asset')[:-2]+' that pairs with this \'Transfer In\'.'
+                t.ERR_MSG = f'Failed to automatically find a \'Transfer Out\' transaction under {t.get_raw('gain_ticker')} that pairs with this \'Transfer In\'.'
             else:
-                t.ERR_MSG = 'Failed to automatically find a \'Transfer In\' transaction under '+t.get_raw('loss_asset')[:-2]+' that pairs with this \'Transfer Out\'.'
+                t.ERR_MSG = f'Failed to automatically find a \'Transfer In\' transaction under {t.get_raw('loss_ticker')} that pairs with this \'Transfer Out\'.'
                         
 
         ###################################
@@ -104,30 +166,34 @@ class metrics:
         ###################################
         #Transfers linked. It's showtime. Time to perform the Auto-Accounting!
         # INFO VARIABLES - data we collect as we account for every transaction #NOTE: Lag is 0ms for ~12000 transactions
-        metrics = { asset:{'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0,} for asset in self.PORTFOLIO.all_asset_tickerclasses() }
+        metrics = { class_code:{} for class_code in class_lib.keys()}
+        for asset in self.PORTFOLIO.assets():
+            metrics[asset.class_code()][asset.ticker()] = {'cash_flow':0, 'realized_profit_and_loss': 0, 'tax_capital_gains': 0,'tax_income': 0}
         
         # LEDGER - The data structure which tracks asset's original price across sales #NOTE: Lag is 0ms for ~12000 transactions
-        # Ledger is a dict of all assets, under which is a dict of all wallets, and each wallet is a priority heap (depending on HIFO/LIFO/FIFO) which stores our transactions
+        # STRUCTURE:    ledger[class][ticker][wallet] = gain_heap
         # We use a min/max heap to decide which transactions are "sold" when assets are sold, to determine what the capital gains actually is
         accounting_method = setting('accounting_method')
-        ledger = {asset:{wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()} for asset in self.PORTFOLIO.all_asset_tickerclasses()}
+        ledger = { class_code:{} for class_code in class_lib.keys()}
+        for asset in self.PORTFOLIO.assets():
+            ledger[asset.class_code()][asset.ticker()] = {wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()}
 
         # DISBURSE QUANTITY - removes a 'gain', from the LEDGER data structure.
-        def disburse_quantity(t:Transaction, quantity:Decimal, a:str, w:str, w2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
+        def disburse_quantity(t:Transaction, quantity:Decimal, ticker:str, class_code:str, wallet:str, wallet2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
             '''Removes, quantity of asset from specified wallet, then returns cost basis of removed quantity.\n
                 If wallet2 \'w2\' specified, instead moves quantity into w2.'''
-            result = ledger[a][w].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
-            if not zeroish_prec(result[0]):  #NOTE: Lag is ~0ms
+            quantity,gains_removed = ledger[class_code][ticker][wallet].disburse(quantity)     #NOTE - Lag is ~40ms for ~12000 transactions
+            if not zeroish_prec(quantity):  #NOTE: Lag is ~0ms
                 t.ERROR,t.ERROR_TYPE = True,'over_disbursed'
-                t.ERR_MSG = 'User disbursed more ' + a.split('z')[0] + ' than they owned from the '+w+' wallet, with ' + str(result[0]) + ' remaining to disburse.'
+                t.ERR_MSG = f'User disbursed {quantity} more {ticker} than their {wallet} wallet contained.'
                 
 
             #NOTE - Lag is ~27ms including store_quantity, 11ms excluding
             cost_basis = 0
-            for gain in result[1]: #Result[1] is a list of gain objects that were just disbursed
+            for gain in gains_removed: #Result[1] is a list of gain objects that were just disbursed
                 cost_basis += gain._price*gain._quantity
                 if tax_report == '8949': tax_8949(t, gain, quantity)
-                if w2: ledger[a][w2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
+                if wallet2: ledger[class_code][ticker][wallet2].store_direct(gain)   #Moves transfers into the other wallet, using the gains objects we already just created
             return cost_basis
             
         def tax_8949(t:Transaction, gain:gain_obj, total_disburse:Decimal):
@@ -143,7 +209,7 @@ class metrics:
             post_fee_value = (t.get_metric('gain_value')-t.get_metric('fee_value'))*(gain._quantity/total_disburse)
             if post_fee_value < 0:  post_fee_value = 0     #If we gained nothing and there was a fee, it will be negative. We can't have negative proceeds.
             form8949 = {
-                'Description of property':      str(gain._quantity) + ' ' + self.PORTFOLIO.transaction(gain._hash).get_raw('gain_asset').split('z')[0],  # 0.0328453 ETH
+                'Description of property':      str(gain._quantity) + ' ' + self.PORTFOLIO.transaction(gain._hash).get_raw('gain_ticker').split('z')[0],  # 0.0328453 ETH
                 'Date acquired':                store_date[5:7]+'/'+store_date[8:10]+'/'+store_date[:4],            # 11/12/2021    month, day, year
                 'Date sold or disposed of':     disburse_date[5:7]+'/'+disburse_date[8:10]+'/'+disburse_date[:4],   # 6/23/2022     month, day, year
                 'Proceeds':                     str(post_fee_value),    # to value gained from this sale/trade/expense/gift_out. could be negative if its a gift_out with a fee.
@@ -163,9 +229,10 @@ class metrics:
             if t.ERROR and t.ERROR_TYPE in ('data','transfer'): continue    
 
             #NOTE: 6.9029ms for ~5300 transactions
-            HASH,TYPE,WALLET = t.get_metric('hash'),     t.get_raw('type'),              t.get_raw('wallet') # 2.3034 ms
+            HASH,TYPE,WALLET = t.get_metric('hash'),    t.get_raw('type'),              t.get_raw('wallet') # 2.3034 ms
             WALLET2 = t.get_metric('dest_wallet') # only exists for TRANSFER_OUTs
-            LA,FA,GA = t.get_raw('loss_asset'),         t.get_raw('fee_asset'),         t.get_raw('gain_asset') # These are the asset tickers combined with their class (like BTCzc)
+            LT,FT,GT = t.get_raw('loss_ticker'),        t.get_raw('fee_ticker'),        t.get_raw('gain_ticker')
+            LC,FC,GC = t.get_raw('loss_class'),         t.get_raw('fee_class'),         t.get_raw('gain_class')
             LQ,FQ,GQ = t.get_metric('loss_quantity'),   t.get_metric('fee_quantity'),   t.get_metric('gain_quantity')
             LV,FV,GV = t.get_metric('loss_value'),      t.get_metric('fee_value'),      t.get_metric('gain_value')
             LOSS_COST_BASIS,FEE_COST_BASIS = 0,0
@@ -173,30 +240,31 @@ class metrics:
             
             # BALANCE CALCULATION - 10.0648 ms for 5300 transactions - to improve efficiency, make it so parent assets saved to transaction's _metrics dict for direct access
             # Sets account balance for these assets at time of transaction
-            if LA: 
-                LAA = self.PORTFOLIO.asset(LA)
+            if LT: 
+                LAA = self.PORTFOLIO.asset(LT,LC)
                 LAA._metrics['balance'] -= LQ
-                t._metrics['balance'][LA] = LAA._metrics['balance']
-            if FA: 
-                FAA = self.PORTFOLIO.asset(FA)
+                t._metrics['balance'][LC][LT] = LAA._metrics['balance']
+            if FT: 
+                FAA = self.PORTFOLIO.asset(FT,FC)
                 FAA._metrics['balance'] -= FQ
-                t._metrics['balance'][FA] = FAA._metrics['balance']
-            if GA: 
-                GAA = self.PORTFOLIO.asset(GA)
+                t._metrics['balance'][FC][FT] = FAA._metrics['balance']
+            if GT: 
+                GAA = self.PORTFOLIO.asset(GT,GC)
                 GAA._metrics['balance'] += GQ
-                t._metrics['balance'][GA] = GAA._metrics['balance']
-            for asset,quantity in t._metrics['balance'].items():
-                formatting = metric_formatting_lib['balance']
-                t._formatted['balance'][asset] = format_metric(quantity, formatting['format'], colorFormat=formatting['color']) 
+                t._metrics['balance'][GC][GT] = GAA._metrics['balance']
+            for class_code in t._metrics['balance']:
+                for ticker,quantity in t._metrics['balance'][class_code].items():
+                    formatting = metric_formatting_lib['balance']
+                    t._formatted['balance'][class_code][ticker] = format_metric(quantity, formatting['format'], colorFormat=formatting['color']) 
 
             # COST BASIS CALCULATION    #NOTE: Lag ~7.0662ms for ~5300 transactions. 
             # NOTE: We have to do the gain, then the fee, then the loss, because some Binance trades incur a fee in the crypto you just bought
             # GAINS - We gain assets one way or another     #NOTE: Lag ~xxx, on average
-            if COST_BASIS_PRICE:    ledger[GA][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
+            if COST_BASIS_PRICE:    ledger[GC][GT][WALLET].store(HASH, COST_BASIS_PRICE, GQ, t.unix_date())
             # FEE LOSS - We lose assets because of a fee     #NOTE: Lag ~xxx, on average
-            if FA:                  FEE_COST_BASIS =  disburse_quantity(t, FQ, FA, WALLET)
+            if FT:                  FEE_COST_BASIS =  disburse_quantity(t, FQ, FT, FC, WALLET)
             # LOSS - We lose assets one way or another.
-            if LA:                  LOSS_COST_BASIS = disburse_quantity(t, LQ, LA, WALLET, WALLET2)
+            if LT:                  LOSS_COST_BASIS = disburse_quantity(t, LQ, LT, LC, WALLET, WALLET2)
 
             # METRIC CALCULATION    #NOTE: Lag is ~3.0454ms for ~5300 transactions (all metrics below)
             
@@ -206,32 +274,32 @@ class metrics:
             # I essentially just "move the cash flow" from the Loss Asset to the Gain Asset, and pretend that I bought the gain asset directly with USD
             # Since LV - FV = GV, this shouldn't affect the cash flow for the overall portfolio, since the +/- change on each asset cancels out overall
             match TYPE:
-                case 'purchase' | 'purchase_crypto_fee':    metrics[GA]['cash_flow'] -= GV + FV
-                case 'sale':                                metrics[LA]['cash_flow'] += LV - FV
+                case 'purchase' | 'purchase_crypto_fee':    metrics[GC][GT]['cash_flow'] -= GV + FV
+                case 'sale':                                metrics[LC][LT]['cash_flow'] += LV - FV
                 case 'trade': # Here, we include the trades
-                    metrics[LA]['cash_flow'] += LV - FV
-                    metrics[GA]['cash_flow'] -= GV
+                    metrics[LC][LT]['cash_flow'] += LV - FV
+                    metrics[GC][GT]['cash_flow'] -= GV
 
             
             # REALIZED PROFIT AND LOSS - Sales and trades sometimes profit, whereas gift_outs, expenses, as well as any fees always incur a loss
             # Fees are always a realized loss, if there is one
-            if FA:                              metrics[FA]['realized_profit_and_loss'] -= FEE_COST_BASIS   # Base fee cost is realized
-            elif TYPE == 'purchase':            metrics[GA]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset bought
-            elif TYPE == 'sale':                metrics[LA]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset sold
+            if FT:                              metrics[FC][FT]['realized_profit_and_loss'] -= FEE_COST_BASIS   # Base fee cost is realized
+            elif TYPE == 'purchase':            metrics[GC][GT]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset bought
+            elif TYPE == 'sale':                metrics[LC][LT]['realized_profit_and_loss'] -= FV        # Base fee cost is realized to asset sold
             #Expenses and gift_outs are a complete realized loss. Sales and trades we already lost the fee, but hopefully gain more from sale yield
-            if TYPE in ('expense','gift_out'):  metrics[LA]['realized_profit_and_loss'] -= LOSS_COST_BASIS  # Base loss cost is realized
-            elif TYPE in ('sale','trade'):      metrics[LA]['realized_profit_and_loss'] += LV - LOSS_COST_BASIS # Base loss cost is realized, but sale yields the loss value
+            if TYPE in ('expense','gift_out'):  metrics[LC][LT]['realized_profit_and_loss'] -= LOSS_COST_BASIS  # Base loss cost is realized
+            elif TYPE in ('sale','trade'):      metrics[LC][LT]['realized_profit_and_loss'] += LV - LOSS_COST_BASIS # Base loss cost is realized, but sale yields the loss value
 
             # CAPITAL GAINS TAX
             #Independent transfer fees are taxed as a 'sale'
-            if FA and TYPE in ('gift_out','transfer_out','transfer_in'): metrics[FA]['tax_capital_gains'] += FV - FEE_COST_BASIS
+            if FT and TYPE in ('gift_out','transfer_out','transfer_in'): metrics[FC][FT]['tax_capital_gains'] += FV - FEE_COST_BASIS
             #Expenses taxed as a 'sale', trade treated as an immediate sale and purchase
-            elif TYPE in ('sale','trade'):                               metrics[LA]['tax_capital_gains'] += (LV - FV) - LOSS_COST_BASIS 
-            elif TYPE == 'expense':                                      metrics[LA]['tax_capital_gains'] += (LV + FV) - LOSS_COST_BASIS 
+            elif TYPE in ('sale','trade'):                               metrics[LC][LT]['tax_capital_gains'] += (LV - FV) - LOSS_COST_BASIS 
+            elif TYPE == 'expense':                                      metrics[LC][LT]['tax_capital_gains'] += (LV + FV) - LOSS_COST_BASIS 
 
             # INCOME TAX
             if TYPE in ('card_reward','income'):    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
-                metrics[GA]['tax_income'] += GV
+                metrics[GC][GT]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
                     self.TEMPDATA['taxes']['1099-MISC'] = self.TEMPDATA['taxes']['1099-MISC'].append( {'Date acquired':t.iso_date(), 'Value of assets':str(GV)}, ignore_index=True)
 
@@ -244,22 +312,22 @@ class metrics:
         # Then we check all transactions for an ERROR state, and apply that to its parent asset(s)
         for t in transactions:
             if t.ERROR:
-                if t.get_raw('loss_asset'):     self.PORTFOLIO.asset(t.get_raw('loss_asset')).ERROR = True
-                if t.get_raw('fee_asset'):      self.PORTFOLIO.asset(t.get_raw('fee_asset')).ERROR =  True
-                if t.get_raw('gain_asset'):     self.PORTFOLIO.asset(t.get_raw('gain_asset')).ERROR = True
+                for part in ('loss_','fee_','gain_'):
+                    if t.get_raw(part+'ticker') and t.get_raw(part+'class'):     
+                        self.PORTFOLIO.asset(t.get_raw(part+'ticker'), t.get_raw(part+'class')).ERROR = True
 
         for asset in self.PORTFOLIO.assets(): #TODO: Lag is like 30ms for ~4000 transactions
             #Update this asset's metrics dictionary with our newly calculated information
-            a = asset.tickerclass()
-            asset._metrics.update(metrics[a])
+            asset._metrics.update(metrics[asset.class_code()][asset.ticker()])
+            CLASS, TICKER = asset.class_code(), asset.ticker()
 
             total_cost_basis = 0    #The overall cost basis of what you currently own
             wallet_balance = {}    #A dictionary indicating the balance by wallet
-            for w in ledger[a]:
-                wallet_balance[w] = 0 # Initializes wallet balance at 0$
-                for gain in ledger[a][w]._heap:
+            for WALLET in ledger[CLASS][TICKER]:
+                wallet_balance[WALLET] = 0 # Initializes wallet balance at 0$
+                for gain in ledger[CLASS][TICKER][WALLET]._heap:
                     total_cost_basis        += gain._price*gain._quantity   #cost basis of this gain
-                    wallet_balance[w]      += gain._quantity               #Number of tokens within each wallet
+                    wallet_balance[WALLET]      += gain._quantity               #Number of tokens within each wallet
             asset._metrics['cost_basis'] =  total_cost_basis
             asset._metrics['wallets'] =     wallet_balance
             

@@ -7,6 +7,11 @@ class DateEntry(QDateTimeEdit): # For entering datetimes in the ISO format yyyy-
     def __init__(self, text:str, *args, **kwargs):
         super().__init__(displayFormat='yyyy-MM-dd hh:mm:ss', dateTime=datetime.fromisoformat(text), *args, **kwargs)
     
+    def setReadOnly(self, val:bool) -> None: 
+        if val: self.setStyleSheet(style('disabledEntry'))
+        else:   self.setStyleSheet(style('entry'))
+        super().setReadOnly(val)     
+        
     def entry(self) -> str:             return self.text()
     def set(self, text:str) -> None:    self.setDateTime(datetime.fromisoformat(text))
 
