@@ -335,76 +335,76 @@ class metrics:
     # Market-independent
     def calculate_average_buy_price(self, asset:Asset):
         try:    asset._metrics['average_buy_price'] = asset.get_metric('cost_basis') / asset.get_metric('balance')
-        except: asset._metrics['average_buy_price'] = 0
+        except: pass
     # Market-dependent
     def calculate_value(self, asset:Asset):   #Calculates the overall value of this asset
         #Must be a try statement because it relies on market data
-        try:    asset._metrics['value'] = asset.get_metric('balance') * asset.get_metric('price')
-        except: asset._metrics['value'] = None
+        try: asset._metrics['value'] = asset.get_metric('balance') * asset.get_metric('price')
+        except: pass
     def calculate_unrealized_profit_and_loss(self, asset:Asset):
         #You need current market data for these bad boys
         average_buy_price = asset.get_metric('average_buy_price')
         try:        
             asset._metrics['unrealized_profit_and_loss'] =      asset.get_metric('value') - ( average_buy_price * asset.get_metric('balance') )
             asset._metrics['unrealized_profit_and_loss%'] =   ( asset.get_metric('price') /  average_buy_price )-1
-        except:     asset._metrics['unrealized_profit_and_loss%'] = asset._metrics['unrealized_profit_and_loss'] = 0
+        except: pass
     def calculate_changes(self, asset:Asset): #Calculates the unrealized USD lost or gained in the last 24 hours, week, and month for this asset
         #Must be a try statement because it relies on market data
         value = asset.get_metric('value')
         try:    asset._metrics['day_change'] =   value-(value / (1 + asset.get_metric('day%')))
-        except: asset._metrics['day_change'] =   0
+        except: pass
         try:    asset._metrics['week_change'] =  value-(value / (1 + asset.get_metric('week%')))
-        except: asset._metrics['week_change'] =  0
+        except: pass
         try:    asset._metrics['month_change'] = value-(value / (1 + asset.get_metric('month%')))
-        except: asset._metrics['month_change'] = 0
+        except: pass
     def calculate_projected_cash_flow(self, asset:Asset): #Calculates what the cash flow would become if you sold everything right now
         #Must be a try statement because it relies on market data
         try:    asset._metrics['projected_cash_flow'] = asset.get_metric('cash_flow') + asset.get_metric('value') 
-        except: asset._metrics['projected_cash_flow'] = 0
+        except: pass
     def calculate_percentage_of_portfolio(self, asset:str): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
-        try:    asset._metrics['portfolio%'] = asset.get_raw('value')  / self.PORTFOLIO.get_metric('value')
-        except: asset._metrics['portfolio%'] = 0
+        try:    asset._metrics['portfolio%'] = asset.get_metric('value')  / self.PORTFOLIO.get_metric('value')
+        except: pass
 
     # METRICS FOR THE OVERALL PORTFOLIO
     # Market-independent
     def calculate_portfolio_cash_flow(self): # Calculates to total USD that has gone into and out of the portfolio
         cash_flow = 0
         for a in self.PORTFOLIO.assets():    #Compiles complete list of all assets in the portfolio
-            try: cash_flow += a.get_raw('cash_flow') #Adds the cash flow for this asset to the overall portfolio cash flow.
+            try: cash_flow += a.get_metric('cash_flow') #Adds the cash flow for this asset to the overall portfolio cash flow.
             except: continue # If the cash flow was unable to be calculated, ignore this asset
         self.PORTFOLIO._metrics['cash_flow'] = cash_flow
     # Market-Dependent
     def calculate_portfolio_value(self): # Calculates the overall current market value of the portfolio
         value = 0
         for a in self.PORTFOLIO.assets():    #Compiles complete list of all wallets used in the portfolio
-            try: value += a.get_raw('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
+            try: value += a.get_metric('value') #Adds the total value of this asset to the overall portfolio value. If no price data can be found we assume this asset it worthless.
             except: continue
         self.PORTFOLIO._metrics['value'] = value
     def calculate_portfolio_projected_cash_flow(self): #Calculates what the cash flow would become if you sold everything right now
         #Must be a try statement because it relies on market data
         try:    self.PORTFOLIO._metrics['projected_cash_flow'] = self.PORTFOLIO._metrics['cash_flow'] + self.PORTFOLIO._metrics['value']
-        except: self.PORTFOLIO._metrics['projected_cash_flow'] = 0
+        except: pass
     def calculate_portfolio_changes(self): # Calculates absolute change over the past day, week, and month
         self.PORTFOLIO._metrics.update({'day_change':0,'week_change':0,'month_change':0})
         for a in self.PORTFOLIO.assets():
             try:
-                self.PORTFOLIO._metrics['day_change'] += a.get_raw('day_change')
-                self.PORTFOLIO._metrics['week_change'] += a.get_raw('week_change')
-                self.PORTFOLIO._metrics['month_change'] += a.get_raw('month_change')
+                self.PORTFOLIO._metrics['day_change'] += a.get_metric('day_change')
+                self.PORTFOLIO._metrics['week_change'] += a.get_metric('week_change')
+                self.PORTFOLIO._metrics['month_change'] += a.get_metric('month_change')
             except: pass
     def calculate_portfolio_percents(self): # Calculates relative change over the past day, week, and month
         try:    self.PORTFOLIO._metrics['day%'] =   self.PORTFOLIO.get_metric('day_change') /   (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('day_change'))
-        except: self.PORTFOLIO._metrics['day%'] = 0
+        except: pass
         try:    self.PORTFOLIO._metrics['week%'] =  self.PORTFOLIO.get_metric('week_change') /  (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('week_change'))
-        except: self.PORTFOLIO._metrics['week%'] = 0
+        except: pass
         try:    self.PORTFOLIO._metrics['month%'] = self.PORTFOLIO.get_metric('month_change') / (self.PORTFOLIO.get_metric('value') - self.PORTFOLIO.get_metric('month_change'))
-        except: self.PORTFOLIO._metrics['month%'] = 0
+        except: pass
     def calculate_portfolio_value_by_wallet(self):    #Calculates the current market value held within each wallet, across all assets
         wallets = {wallet:0 for wallet in self.PORTFOLIO.all_wallet_names()}  #Creates a dictionary of wallets, defaulting to 0$ within each
         for asset in self.PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
-            for wallet in asset.get_raw('wallets'):
+            for wallet in asset.get_metric('wallets'):
                 # Asset wallet list is total units by wallet, multiply by asset price to get value
-                try:    wallets[wallet] += asset.get_raw('wallets')[wallet] * asset.get_metric('price')
+                try:    wallets[wallet] += asset.get_metric('wallets')[wallet] * asset.get_metric('price')
                 except: pass
         self.PORTFOLIO._metrics['wallets'] = wallets
     def calculate_portfolio_unrealized_profit_and_loss(self):

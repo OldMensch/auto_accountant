@@ -33,8 +33,15 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
         if self.format in ('float', 'pos_float') and toReturn in ('','.','-'):
                 return '0'
         else:   return toReturn
-    def set(self, text:str) -> None:      self.setText(text)
+    def entry_decimal(self) -> Decimal:
+        return Decimal(self.entry())
+    def set(self, text) -> None:      self.setText(str(text))
     
+    # Makes it so that unfocusing out of the entry box set the cursor position back to the beginning
+    def focusOutEvent(self, e):
+        self.setCursorPosition(0)
+        super().focusOutEvent(e)
+
 class DescEntry(QPlainTextEdit): # For entering lots of text
     def __init__(self, text:str, *args, **kwargs):
         super().__init__(text, *args, **kwargs)
@@ -45,6 +52,7 @@ class DescEntry(QPlainTextEdit): # For entering lots of text
         super().setReadOnly(val)     
     def entry(self) -> str:             return self.toPlainText().rstrip().lstrip()
     def set(self, text:str) -> None:  self.setPlainText(text)
+    
 
 class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a ListEntry
     def __init__(self, dictionary:dict, default:str=None, current=None, selectCommand=None, sortOptions=False, *args, **kwargs):

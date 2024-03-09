@@ -96,14 +96,14 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.add_label('Date (' + setting('timezone') + ')', 1,0,columnspan=2)
         self.ENTRIES['date'] = self.add_entry(str(datetime.now()).split('.')[0], 1, 1, columnspan=2, format='date')
         self.add_label('Type',3,0)
-        self.ENTRIES['type'] =  self.add_dropdown_list({pretty_trans[id]:id for id in pretty_trans}, 3, 1, default=' -TYPE- ', selectCommand=self.update_entry_interactability)
+        self.ENTRIES['type'] =  self.add_dropdown_list({trans_type_formatting_lib[t_type]['name']:t_type for t_type in trans_type_formatting_lib}, 3, 1, default=' -TYPE- ', selectCommand=self.update_entry_interactability)
         self.add_label('Wallet',4,0)
-        self.ENTRIES['wallet']= self.add_dropdown_list({w.name():w.name() for w in self.upper.PORTFOLIO.wallets()}, 4, 1, default=' -WALLET- ')
+        self.ENTRIES['wallet']= self.add_dropdown_list({w.name():w.name() for w in self.upper.PORTFOLIO.wallets()}, 4, 1, default=' -WALLET- ', selectCommand=self.update_entry_interactability)
         self.add_label('Asset Class',1,2)
         all_classes_dict = {class_lib[c]['name']:c for c in class_lib}
-        self.ENTRIES['loss_class'] = self.add_dropdown_list(all_classes_dict, 1, 3, current='f')
-        self.ENTRIES['fee_class'] =  self.add_dropdown_list(all_classes_dict, 1, 4, default='-NO FEE-')
-        self.ENTRIES['gain_class'] = self.add_dropdown_list(all_classes_dict, 1, 5, current='f')
+        self.ENTRIES['loss_class'] = self.add_dropdown_list(all_classes_dict, 1, 3, current='f', selectCommand=self.update_entry_interactability)
+        self.ENTRIES['fee_class'] =  self.add_dropdown_list(all_classes_dict, 1, 4, default='-NO FEE-', selectCommand=self.update_entry_interactability)
+        self.ENTRIES['gain_class'] = self.add_dropdown_list(all_classes_dict, 1, 5, current='f', selectCommand=self.update_entry_interactability)
         self.add_label('Ticker',2,2)
         self.ENTRIES['loss_ticker'] = self.add_entry('USD', 2, 3, maxLength=24)
         self.ENTRIES['fee_ticker'] =  self.add_entry('USD', 2, 4, maxLength=24)
@@ -122,77 +122,84 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.add_label('Desc.',0,6)
         self.ENTRIES['description'] = self.add_entry('', 1, 6, columnspan=4, format='description')
 
-        # ENTRY BOX DATA - When editing, puts existing data in entry boxes
+        # ENTRY BOX DATA - If editing, fills entry boxes with existing transaction data
         if transaction:
-            raw_data = {metric:data for metric,data in transaction._data.items() if metric in minimal_metric_set_for_transaction_type[transaction.type()] and data is not None}
-            for metric,data in raw_data:
+            for metric,data in transaction._data.items():
+                # Ignore missing/irrelevant data
+                if metric not in trans_type_minimal_set[transaction.type()] or data is None: continue
                 #Update entry box with known data.
-                if data == 'date':  self.ENTRIES[data].set(unix_to_local_timezone(data))
-                else:               self.ENTRIES[data].set(data)
+                if metric == 'date':  self.ENTRIES[metric].set(unix_to_local_timezone(data))
+                else:               self.ENTRIES[metric].set(data)
 
-        # Traced, automatically fill in gain/loss price, for purchases, sales, and trades
-        self.ENTRIES['loss_quantity'].textChanged.connect(self.auto_purchase_sale_price)
-        self.ENTRIES['gain_quantity'].textChanged.connect(self.auto_purchase_sale_price)
-        self.ENTRIES['loss_price'].textChanged.connect(self.auto_purchase_sale_price)
+        # Interacting with any entry boxes causes window to re-render boxes, inference data where possible, etc.
+        for metric in self.ENTRIES:
+            if metric == 'date': 
+                self.ENTRIES[metric].timeChanged.connect(self.update_entry_interactability)
+            elif metric in ('type','wallet','loss_class','fee_class','gain_class'):
+                pass # already connected above
+            else:
+                self.ENTRIES[metric].textChanged.connect(self.update_entry_interactability)
 
         #Menu buttons
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
         if transaction and not copy: self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
 
-        self.update_entry_interactability(self.ENTRIES['type'].entry())
-
-        self.auto_purchase_sale_price() # Initializes the autoprice boxes with something
+        self.update_entry_interactability()
         self.show()
     
-    def auto_purchase_sale_price(self):
-        '''Updates visual-only price information where entering the price directly is not neccessary'''
-        try:
-            TYPE = self.ENTRIES['type'].entry()
-            LQ = Decimal(self.ENTRIES['loss_quantity'].entry())
-            GQ = Decimal(self.ENTRIES['gain_quantity'].entry())
-            match TYPE:
-                case 'purchase':
-                    self.ENTRIES['gain_price'].set(str(LQ/GQ))
-                    self.ENTRIES['gain_price'].setCursorPosition(0)
-                case 'sale':
-                    self.ENTRIES['loss_price'].set(str(GQ/LQ))
-                    self.ENTRIES['loss_price'].setCursorPosition(0)
-                case 'trade':
-                    LP = Decimal(self.ENTRIES['loss_price'].entry())
-                    self.ENTRIES['gain_price'].set(str(LQ*LP/GQ))
-                    self.ENTRIES['gain_price'].setCursorPosition(0)
-        except: return
 
-    def update_entry_interactability(self, TYPE):
-        '''Appropriately sets the color and functionality of all entry boxes/labels, based on transaction type'''
-        #COLOR CHANGES
-        if TYPE == None:    self.ENTRIES['type'].setStyleSheet(style('entry'))
-        else:               self.ENTRIES['type'].setStyleSheet(style('entry')+style(TYPE+'_dark'))
-        
-        #ENABLING AND DISABLING
-        if TYPE == None: # No type is selected: disable all other entry boxes
-            for entry in self.ENTRIES:
-                if entry != 'type': self.ENTRIES[entry].setReadOnly(True)
-        else: # Set functionality based on whether entry box is warranted for transaction type
-            for entry in self.ENTRIES:
-                if entry == 'type': continue
-                elif entry in minimal_metric_set_for_transaction_type[TYPE]:   self.ENTRIES[entry].setReadOnly(False)
-                else:                                           self.ENTRIES[entry].setReadOnly(True)
-            if TYPE == 'purchase':  
-                self.ENTRIES['loss_class'].set('f')
-                self.ENTRIES['fee_class'].set('f')
+    def update_entry_interactability(self, *args, **kwargs):
+        '''Appropriately sets the color and functionality of all entry boxes/labels, depending on what is selected'''
+        TYPE,WALLET = self.ENTRIES['type'].entry(), self.ENTRIES['wallet'].entry()
 
-                self.ENTRIES['loss_ticker'].set('USD')
-                self.ENTRIES['fee_ticker'].set('USD')
-            elif TYPE == 'sale':    
-                self.ENTRIES['gain_class'].set('f')
-                self.ENTRIES['fee_class'].set('f')
+        # TYPE - Only 'type' enabled when no type selected
+        if TYPE is None:
+            self.ENTRIES['type'].setStyleSheet(style('entry'))
+            for metric in self.ENTRIES: 
+                self.ENTRIES[metric].setReadOnly(metric != 'type') # disables all entries, except type
+            return
+        self.ENTRIES['type'].setStyleSheet(style('entry')+style(TYPE+'_dark'))
 
-                self.ENTRIES['gain_ticker'].set('USD')
-                self.ENTRIES['fee_ticker'].set('USD')
-            elif TYPE == 'purchase_crypto_fee':    
-                self.ENTRIES['fee_class'].set('c')
+        # WALLET - Only 'wallet'/'type' enabled when type, but no wallet selected
+        if WALLET is None:
+            for metric in self.ENTRIES: 
+                self.ENTRIES[metric].setReadOnly(metric not in ('type','wallet')) # disables all entries, except type and wallet
+            return
+    
+        # Set all entries to enabled/disabled, based on the trans_type_minimal_set
+        for metric in self.ENTRIES:
+            self.ENTRIES[metric].setReadOnly(metric not in trans_type_minimal_set[TYPE])
+        # Disable fee data, when fee class is "no fee"
+        if self.ENTRIES['fee_class'].entry() is None:
+            for metric in ('fee_ticker','fee_quantity','fee_price'):
+                self.ENTRIES[metric].setReadOnly(True)
+
+        # STATIC INFERENCES
+        for metric in trans_type_static_inference[TYPE]:
+            self.ENTRIES[metric].set(str(trans_type_static_inference[TYPE][metric]))
+
+        # DYNAMIC INFERENCES
+        # loss_price
+        if TYPE == 'sale':
+            try:    inferred_loss_price = ((self.ENTRIES['gain_quantity'].entry_decimal() - self.ENTRIES['fee_quantity'].entry_decimal()) /
+                                            self.ENTRIES['loss_quantity'].entry_decimal())
+            except: inferred_loss_price = 0
+            if inferred_loss_price > 0:
+                    self.ENTRIES['loss_price'].set(inferred_loss_price)
+            else:   self.ENTRIES['loss_price'].set(' ')
+            self.ENTRIES['loss_price'].setCursorPosition(0)
+        # gain_price
+        if TYPE in ('purchase','purchase_crypto_fee','trade'):
+            try:    inferred_gain_price =  ((self.ENTRIES['loss_quantity'].entry_decimal() * self.ENTRIES['loss_price'].entry_decimal() +
+                                             self.ENTRIES['fee_quantity'].entry_decimal()  * self.ENTRIES['fee_price'].entry_decimal()) /
+                                             self.ENTRIES['gain_quantity'].entry_decimal())
+            except: inferred_gain_price = 0
+            if inferred_gain_price > 0:
+                    self.ENTRIES['gain_price'].set(inferred_gain_price)
+            else:   self.ENTRIES['gain_price'].set(' ')
+            self.ENTRIES['gain_price'].setCursorPosition(0)
+
 
     def delete(self):
         self.upper.PORTFOLIO.delete_transaction(self.t)  #deletes the transaction
@@ -241,7 +248,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         #DATA CULLING AND CONVERSION
         ################################
         # Creates dictionary of all data, and removes any data not in the minimal dataset for this transaction type
-        TO_SAVE = {entry.entry() for metric,entry in self.ENTRIES.items() if metric in minimal_metric_set_for_transaction_type[self.ENTRIES['type'].entry()]}
+        TO_SAVE = {entry.entry() for metric,entry in self.ENTRIES.items() if metric in trans_type_minimal_set[self.ENTRIES['type'].entry()]}
 
         # Cull fee data if 'no fee' was selected
         if self.ENTRIES['fee_class'].entry() == None:
@@ -258,7 +265,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         # CHECKS 2
         ################################
         error = None
-        valids = minimal_metric_set_for_transaction_type[TYPE]
+        valids = trans_type_minimal_set[TYPE]
 
         # Valid loss?
         if 'loss_quantity' in valids and zeroish(LQ):                     error = 'Loss quantity must be non-zero.'
@@ -301,7 +308,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
             return
 
         # ACTUALLY SAVING THE TRANSACTION
-        TO_SAVE = {metric:TO_SAVE[metric] for metric in minimal_metric_set_for_transaction_type[TYPE]} # Clean the transaction of useless data
+        TO_SAVE = {metric:TO_SAVE[metric] for metric in trans_type_minimal_set[TYPE]} # Clean the transaction of useless data
         self.upper.PORTFOLIO.add_transaction(Transaction(TO_SAVE))           # Add the new transaction, or overwrite the old
         if OLDHASH != None and NEWHASH != OLDHASH:
             self.upper.PORTFOLIO.delete_transaction(self.t)      # Delete the old transaction if it's hash will have changed

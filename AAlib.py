@@ -148,7 +148,7 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, s
         # Input should be int
         case 'date':        toReturn = unix_to_local_timezone(data) # data is an int
         # Input should be str
-        case 'type':        toReturn = pretty_trans[data]
+        case 'type':        toReturn = trans_type_formatting_lib[data]['name']
         case 'desc':        toReturn = f'{data[0:20-3]}...' # description limited to 20 characters at most
         case 'class':       toReturn = class_lib[data]['name']
         case 'alpha':       
@@ -250,7 +250,7 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'GRID_none':            "color: #ff0000; background: transparent;",
     
     'timestamp_indicator_online':   "background-color: transparent; color: #ffffff;",
-    'timestamp_indicator_offline':   "background-color: #ff0000; color: #ffffff;",
+    'timestamp_indicator_offline':  "background-color: #ff0000; color: #ffffff;",
 
     'title':                "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 30px;",
     'subtitle':             "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 15px;",
@@ -341,9 +341,6 @@ class_lib = {
     }
 }
 
-# Library of market data
-marketdatalib = {class_code:{} for class_code in class_lib.keys()}
-
 # Copy of default values for Transaction object stored to improve efficiency
 default_trans_data = {
     'date' :            None,
@@ -428,7 +425,7 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     # Unique to assets
     'ticker': {                     'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Ticker',            'headername':'Ticker'},
     'name':{                        'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Name',              'headername':'Name'},
-    'class':{                       'asset_specific':False,'format': 'alpha',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
+    'class':{                       'asset_specific':False,'format': 'class',      'color' : None,             'name':'Asset Class',       'headername':'Class'},
     'price':{                       'asset_specific':True, 'format': 'currency',   'color' : None,             'name':'Price',             'headername':'Spot\nPrice'},
     'marketcap':{                   'asset_specific':False,'format': 'currency',   'color' : None,             'name':'Market Cap',        'headername':'Market\nCap'},
     'volume24h':{                   'asset_specific':False,'format': 'currency',   'color' : None,             'name':'24hr Volume',       'headername':'24 Hr\nVolume'},
@@ -436,15 +433,15 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'average_buy_price':{           'asset_specific':False,'format': 'currency',   'color' : None,             'name':'Average Buy Price', 'headername':'Avg Buy\nPrice'},
 
     # Shared by assets and transactions
-    'balance':{         'asset_specific':True, 'format': 'currency',  'color' : None,             'name':'Balance',          'headername':'Balance'},
+    'balance':{         'asset_specific':True, 'format': 'currency',  'color' : None,       'name':'Balance',       'headername':'Balance'},
 
     #Unique to transactions
     'date':{            'asset_specific':False,'format':'date',       'color':None,         'name':'Date (UTC)',    'headername':'Date (UTC)'     },
     'type':{            'asset_specific':False,'format':'type',       'color':'type',       'name':'Type',          'headername':'Type'           },
     'wallet':{          'asset_specific':False,'format':'alpha',      'color':None,         'name':'Wallet',        'headername':'Wallet'         },
-    'loss_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Loss Ticker',    'headername':'Loss\nTicker'    },
-    'fee_ticker':{      'asset_specific':False,'format':'alpha',      'color':None,         'name':'Fee Ticker',     'headername':'Fee\nTicker'     },
-    'gain_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Gain Ticker',    'headername':'Gain\nTicker'    },
+    'loss_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Loss Ticker',   'headername':'Loss\nTicker'   },
+    'fee_ticker':{      'asset_specific':False,'format':'alpha',      'color':None,         'name':'Fee Ticker',    'headername':'Fee\nTicker'    },
+    'gain_ticker':{     'asset_specific':False,'format':'alpha',      'color':None,         'name':'Gain Ticker',   'headername':'Gain\nTicker'   },
     'loss_class':{      'asset_specific':False,'format':'class',      'color':None,         'name':'Loss Class',    'headername':'Loss\nClass'    },
     'fee_class':{       'asset_specific':False,'format':'class',      'color':None,         'name':'Fee Class',     'headername':'Fee\nClass'     },
     'gain_class':{      'asset_specific':False,'format':'class',      'color':None,         'name':'Gain Class',    'headername':'Gain\nClass'    },
@@ -537,41 +534,41 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on the
 }
 
 
-# Translation dictionary between internal and display names for transaction types
-pretty_trans = {
-    'purchase':             'Purchase',
-    'purchase_crypto_fee':  'Purchase w / Crypto Fee',
-    'sale':                 'Sale',
-    'gift_out':             'Gift OUT',
-    'gift_in':              'Gift IN',
-    'card_reward':          'Card Reward',
-    'income':               'Income',
-    'expense':              'Expense',
-    'transfer_out':         'Transfer OUT',
-    'transfer_in':          'Transfer IN',
-    'trade':                'Trade',
-}
-
-
 #Dictionary that sorts simultaneous transactions by what makes sense
-trans_priority = {  
-    'purchase':             0,  #In only
-    'card_reward':          1,  #In only
-    'income':               2,  #In only
-    'gift_in':              3,  #In only
-    'purchase_crypto_fee':  4,  #Definitively both
-    'trade':                5,  #Definitively both
-    'transfer_out':         6,  #Kinda both
-    'transfer_in':          7,  #Kinda both
-    'gift_out':             8,  #Out only
-    'expense':              9,  #Out only
-    'sale':                 10,  #Out only
+trans_type_formatting_lib = {  
+    'purchase':             {'priority':0,  'name':'Purchase',},#In only
+    'purchase_crypto_fee':  {'priority':4,  'name':'Purchase w / Crypto Fee',},#Definitively both
+    'sale':                 {'priority':10, 'name':'Sale',},#Out only
+    'gift_out':             {'priority':8,  'name':'Gift OUT',},#Out only
+    'gift_in':              {'priority':3,  'name':'Gift IN',},#In only
+    'card_reward':          {'priority':1,  'name':'Card Reward',},#In only
+    'income':               {'priority':2,  'name':'Income',},#In only
+    'expense':              {'priority':9,  'name':'Expense',},#Out only
+    'transfer_out':         {'priority':6,  'name':'Transfer OUT',},#Kinda both
+    'transfer_in':          {'priority':7,  'name':'Transfer IN',},#Kinda both
+    'trade':                {'priority':5,  'name':'Trade',},#Definitively both
 }
 
-# Indicates the minimal set of metrics for every transaction type
-minimal_metric_set_for_transaction_type = {
+# Certain transaction types always have the same inferred metrics. For example, purchases always have a loss asset of fiat USD, which has a price of 1$
+trans_type_static_inference = {
+    'purchase':             {'loss_ticker':'USD','loss_class':'f','loss_price':1,'fee_ticker':'USD','fee_class':'f','fee_price':1,},
+    'purchase_crypto_fee':  {'loss_ticker':'USD','loss_class':'f','loss_price':1,                   'fee_class':'c',},
+    'sale':                 {                                                    'fee_ticker':'USD','fee_class':'f','fee_price':1,'gain_ticker':'USD','gain_class':'f','gain_price':1,},
+    'expense':              {}, # Nothing inferrable at all
+    'trade':                {}, # Can infer gain price, but this is a dynamic inference
+    'transfer_out':         {}, # Nothing inferrable at all
+    'transfer_in':          {}, # Nothing inferrable at all
+    'gift_out':             {}, # Nothing inferrable at all
+    'gift_in':              {}, # Nothing inferrable at all
+    'card_reward':          {}, # Nothing inferrable at all
+    'income':               {}, # Nothing inferrable at all
+
+}
+
+# Only this data is saved to JSON, depending on transaction type
+trans_type_minimal_set = {
     'purchase':             ('type', 'date', 'wallet', 'description',                              'loss_quantity',                                          'fee_quantity',              'gain_ticker', 'gain_class', 'gain_quantity'),
-    'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',                              'loss_quantity',               'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
+    'purchase_crypto_fee':  ('type', 'date', 'wallet', 'description',                              'loss_quantity',               'fee_ticker',              'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
     'sale':                 ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity',                                          'fee_quantity',                                           'gain_quantity'),
     'expense':              ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity', 'loss_price', 'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price'),
     'trade':                ('type', 'date', 'wallet', 'description', 'loss_ticker', 'loss_class', 'loss_quantity', 'loss_price', 'fee_ticker', 'fee_class', 'fee_quantity', 'fee_price', 'gain_ticker', 'gain_class', 'gain_quantity'),
@@ -591,7 +588,7 @@ settingslib = { # A library containing all of the default settings
     'max_undo_saves': 100,                      # Maximum # of saved progress points, before we start deleting the oldest ones 
     'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
     'lastSaveDir': '',                          # Our last opened portfolio's filepath
-    'offlineMode': True,                        # Whether or not to start in offline/online mode
+    'is_offline': True,                         # Whether or not to start in offline/online mode
     'header_portfolio': list(default_headers['portfolio']),        # List of headers currently displayed when showing the portfolio
     'header_asset': list(default_headers['asset']),                # List of headers currently displayed when showing an asset
     'header_grand_ledger': list(default_headers['grand_ledger']),  # List of headers currently displayed when showing the grand ledger

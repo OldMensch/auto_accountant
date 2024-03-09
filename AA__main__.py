@@ -4,7 +4,7 @@ import threading
 
 #In-house
 from AAlib import *
-from AAmarketData import market_data, getMissingPrice
+from AAmarketData import market_data_thread, getMissingPrice
 import AAimport
 from AAmetrics import metrics 
 from AAdialogs import *
@@ -19,6 +19,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     PORTFOLIO = Portfolio() # Our currently loaded portfolio
     page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
     sorted = [] # List of sorted and filtered assets
+    market_data = {class_code:{} for class_code in class_lib.keys()}
 
     def __init__(self):
         super().__init__()
@@ -30,16 +31,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         metric_formatting_lib['date']['name'] = metric_formatting_lib['date']['headername'] = metric_formatting_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
         self.__init_gui__() # Most GUI elements
+        self.__init_place_gui__()
         self.__init_taskbar__() # Taskbar dropdown menus and options
         self.__init_menu__() # GUI elements for the main menu bar (underneath the taskbar)
+        self.__init_place_menu__()
+        self.__init_bindings__() # Key/mouse bindings for the program
 
-        # LOAD MOST RECENT SAVE
-        # Only applies if the setting is active, and file exists.
+        # LOAD MOST RECENT SAVE - must be loaded BEFORE market data 
         if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'))
         else:                                                                           self.new(first=True)
 
-        self.__init_market_data__() # Loads market data from offline file, or directly from CoinMarketCap/YahooFinance
-        self.__init_bindings__() # Key/mouse bindings for the program
+        self.__init_market_data__() # Loads market data from file or internet - NOTE: Must be before first .metrics() calculation or market data will be missing
 
         # PYINSTALLER - Closes splash screen now that the program is loaded
         try: exec("""import pyi_splash\npyi_splash.close()""") # exec() is used so that VSCode ignores the "I can't find this module error"
@@ -63,7 +65,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         return QWidget.eventFilter(self, self, event)
 
         
-# INIT SUB-FUNCTIONS
+# INIT - MISC FUNCTIONS
 #=============================================================
     def __init_bindings__(self):
         """Initializes keyboard bindings for the main program window."""
@@ -79,29 +81,58 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     def __init_market_data__(self):
         self.online_event = threading.Event()
         #Now that the hard data is loaded, we need market data
-        if setting('offlineMode'):
-            #If in Offline Mode, try to load any saved offline market data. If there is an issue, goes into online mode
-            try:
-                with open('OfflineMarketData.json', 'r') as file:
-                    data = json.load(file)
-                    data['_timestamp']
-                    marketdatalib.update(data)
-                self.GUI['timestamp_indicator'].setText('OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-                self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_offline'))
-                self.market_metrics()
-            except:
-                self.toggle_offline_mode()
-                print('||ERROR|| Failed to load offline market data! Going online.')
-                self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
-        else:
-            self.online_event.set()
-            self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
+        self.set_offline_mode(setting('is_offline'))
 
         #We always turn on the threads for gethering market data. Even without internet, they just wait for the internet to turn on.
-        self.market_data = market_data(self, self.PORTFOLIO, self.online_event)
-        self.market_data.start_threads()
+        self.market_data_thread = market_data_thread(self, self.PORTFOLIO, self.online_event)
+        self.market_data_thread.start_threads()
 
+    def toggle_offline_mode(self):
+        self.set_offline_mode(not setting('is_offline'))
+    def set_offline_mode(self, set_to_offline:bool):
+        """Attempts to set offline/online state. Defaults to online."""
 
+        if set_to_offline: # Set to Offline
+            if '_timestamp' in self.market_data:   # market_data -> JSON, if we have any data
+                with open('OfflineMarketData.json', 'w') as file:
+                    decimals_converted_to_float = {
+                        class_code:{
+                            ticker:{
+                                metric:float(data) 
+                                for metric,data in self.market_data[class_code][ticker].items()} 
+                            for ticker in self.market_data[class_code].keys()} 
+                        for class_code in class_lib.keys()}
+                    decimals_converted_to_float['_timestamp'] = self.market_data['_timestamp']
+                    json.dump(decimals_converted_to_float, file, indent=4, sort_keys=True)
+            try: # change to offline successful
+                with open('OfflineMarketData.json', 'r') as file:
+                    offline_market_data = json.load(file)
+                floats_to_decimals = {
+                    class_code:{
+                        ticker:{
+                            metric:Decimal(data) 
+                            for metric,data in offline_market_data[class_code][ticker].items()} 
+                        for ticker in offline_market_data[class_code].keys()} 
+                    for class_code in class_lib.keys()}
+                floats_to_decimals['_timestamp'] = offline_market_data['_timestamp']
+                self.market_data.update(floats_to_decimals)
+                self.GUI['timestamp_indicator'].setText(f'OFFLINE MODE - Data from {self.market_data['_timestamp'][0:16]}')
+                self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_offline'))
+                self.online_event.clear()
+            except:  # change to offline not successful, continue in online mode
+                Message(self, 'Offline File Error', 'Failed to load offline market data cache. Staying in online mode.')
+                return
+        else:  # Set to Online
+            if '_timestamp' in self.market_data:
+                self.GUI['timestamp_indicator'].setText(f'Data from {self.market_data['_timestamp'][0:16]}')
+            self.online_event.set()
+            self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
+        
+        self.metrics()
+        self.render()
+        set_setting('is_offline', set_to_offline)
+        self.offlineMode.setChecked(set_to_offline)
+    
 
 #TASKBAR & FUNCTIONS FOR TASKBAR AND MAIN MENU
 #NOTE: Tax forms have been temporarily disabled to speed up boot time until I implement a better method
@@ -136,7 +167,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         settings = self.TASKBAR['settings'] = QMenu('Settings')
         taskbar.addMenu(settings)
 
-        self.offlineMode = QAction('Offline Mode', parent=settings, triggered=self.toggle_offline_mode, checkable=True, checked=setting('offlineMode'))
+        self.offlineMode = QAction('Offline Mode', parent=settings, triggered=self.toggle_offline_mode, checkable=True, checked=setting('is_offline'))
         settings.addAction(self.offlineMode)
 
         # submenu - TIMEZONE
@@ -219,32 +250,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         taskbar.addMenu(DEBUG)
         DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
 
-    def toggle_offline_mode(self):
-        """Toggles if state is unspecified, sets to state if specified"""
-        if setting('offlineMode'):  #Changed from Offline to Online Mode
-            self.online_event.set()
-            self.GUI['timestamp_indicator'].setText('Data being downloaded...')
-            self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
-        else:                       #Changed to from Online to Offline Mode
-            if '_timestamp' in marketdatalib:   # Saves marketdatalib for offline use, if we have any data to save
-                with open('OfflineMarketData.json', 'w') as file:
-                    json.dump(marketdatalib, file, indent=4, sort_keys=True)
-            else:                               # If we don't have data to save, try to load old data. If that fails... we're stuck in Online Mode
-                try:
-                    with open('OfflineMarketData.json', 'r') as file:
-                        data = json.load(file)
-                        data['_timestamp']
-                        marketdatalib.update(data)
-                except:
-                    Message(self, 'Offline File Error', 'Failed to load offline market data cache. Staying in online mode.')
-            self.online_event.clear()
-            self.GUI['timestamp_indicator'].setText('OFFLINE MODE - Data from ' + marketdatalib['_timestamp'][0:16])
-            self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_offline'))
-            self.metrics()
-            self.render()
-        set_setting('offlineMode',not setting('offlineMode'))
-        self.offlineMode.setChecked(setting('offlineMode'))
-        
+
     def tax_Form_8949(self):
         dir = QFileDialog.getOpenFileName(self, 'Save data for IRS Form 8949', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
         if dir == '':   return
@@ -398,12 +404,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             return True     #Hashes are different, file is modified
 
 
-#OVERARCHING GUI FRAMEWORK
+# RENDERING: WIDGET INSTANTIATION
 #=============================================================
     def __init_gui__(self):
         """Creates QT widgets for all GUI elements in the main program window, including the GRID"""
-        #GUI CREATION
-        #==============================
         self.GUI = {}
 
         #Contains everything
@@ -438,51 +442,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['timestamp_indicator'] = QLabel(' OFFLINE MODE ')
         self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=style('progressBar'), hidden=True)
 
-        #GUI PLACEMENT
-        #==============================
-        #Self - The main QApplication
-        self.setCentralWidget(self.GUI['masterFrame']) #Makes the master frame fill the entire main window
-        #Master Frame - Contains everything
-        self.GUI['masterLayout'].setRowStretch(1, 1) # The side panel and GRID absorb vertical stretching
-        self.GUI['masterLayout'].setColumnStretch(1, 1) # The GRID absorbs horizontal stretching
-        self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'], 0, 0, 1, 2)
-        self.GUI['masterLayout'].addWidget(self.GUI['sidePanelFrame'], 1, 0)
-
-        self.GUI['gridFrame'] = QWidget(layout=self.GUI['GRID'], contentsMargins=QMargins(0,0,0,0))
-        #self.GUI['GRID'].setMargin(0)
-        self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=style('GRID'))
-        # Prevents vertical scrollbar from appearing, even by accident, or while resizing the window
-        self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-
-        self.GUI['masterLayout'].addWidget(self.GUI['gridScrollArea'], 1, 1)
-        self.GUI['masterLayout'].addWidget(self.GUI['bottomFrame'], 2, 0, 1, 2)
-
-        #Side Panel Frame - The side menu, which contains multiple buttons and things
-        self.GUI['sidePanelLayout'].setRowStretch(3, 1) # The info panel absorbs vertical stretching
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['title'], 0, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['subtitle'], 1, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['buttonFrame'], 2, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['info_pane'], 3, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['grand_ledger'], 4, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['back'], 5, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_number'], 6, 0, 1, 2)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_prev'], 7, 0, 1, 1)
-        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_next'], 7, 1, 1, 1)
-
-        #Button Frame - inside the side panel, contains info button and edit asset button
-        self.GUI['buttonLayout'].addWidget(self.GUI['info'])
-        self.GUI['buttonLayout'].addStretch(1)
-        self.GUI['buttonLayout'].addWidget(self.GUI['edit'])
-        
-        #Bottom Frame - This could be replaced by the QStatusBar widget, which may be better suited for this use
-        self.GUI['bottomLayout'].addWidget(self.GUI['copyright'])
-        self.GUI['bottomLayout'].addWidget(self.GUI['progressBar'])
-        self.GUI['bottomLayout'].addStretch(1)
-        self.GUI['bottomLayout'].addWidget(self.GUI['timestamp_indicator'])
-
-        self.GUI['sidePanelFrame'].raise_()
-
         #GUI TOOLTIPS
         #==============================
         tooltips = {
@@ -493,8 +452,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         for widget in tooltips:     self.GUI[widget].setToolTip(tooltips[widget])
     def __init_menu__(self):
         """Initializes the main menu bar at the top of the window, with common-use buttons like save, load, undo, redo, filter, etc."""
-        #MENU CREATION
-        #==============================
         self.MENU = {}
 
         self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.new, False))
@@ -512,26 +469,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['DEBUG_staking_report'] = QPushButton(':DEBUG:\nReport Staking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
         def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
         self.MENU['DEBUG_ttt_report'] = QPushButton(':DEBUG:\nTTT Report', clicked=return_report, fixedHeight=icon('size2').height())
-        self.MENU['DEBUG_ttt_reset'] = QPushButton(':DEBUG:\nTTT Reset', clicked=p(ttt, 'reset'), fixedHeight=icon('size2').height())
-
-        #MENU RENDERING
-        #==============================
-        self.GUI['menuLayout'].addWidget(self.MENU['new'])
-        self.GUI['menuLayout'].addWidget(self.MENU['load'])
-        self.GUI['menuLayout'].addWidget(self.MENU['save'])
-        self.GUI['menuLayout'].addWidget(self.MENU['settings'])
-        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
-        self.GUI['menuLayout'].addWidget(self.MENU['undo'])
-        self.GUI['menuLayout'].addWidget(self.MENU['redo'])
-        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
-        self.GUI['menuLayout'].addWidget(self.MENU['new_transaction'])
-        self.GUI['menuLayout'].addWidget(self.MENU['wallets'])
-        self.GUI['menuLayout'].addWidget(self.MENU['filters'])
-        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
-        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_staking_report'])
-        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_report'])
-        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_reset'])
-        self.GUI['menuLayout'].addStretch(1)
+        self.MENU['DEBUG_ttt_reset'] = QPushButton(':DEBUG:\nTTT Reset', clicked=self.market_metrics, fixedHeight=icon('size2').height())
 
         #MENU TOOLTIPS
         #==============================
@@ -637,8 +575,69 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.metrics()
         self.render(sort=True)
 
+# RENDERING: STATIC WIDGET LAYOUT
+#=============================================================
+    def __init_place_gui__(self):#Self - The main QApplication
+        self.setCentralWidget(self.GUI['masterFrame']) #Makes the master frame fill the entire main window
+        #Master Frame - Contains everything
+        self.GUI['masterLayout'].setRowStretch(1, 1) # The side panel and GRID absorb vertical stretching
+        self.GUI['masterLayout'].setColumnStretch(1, 1) # The GRID absorbs horizontal stretching
+        self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'], 0, 0, 1, 2)
+        self.GUI['masterLayout'].addWidget(self.GUI['sidePanelFrame'], 1, 0)
 
-# PORTFOLIO RENDERING
+        self.GUI['gridFrame'] = QWidget(layout=self.GUI['GRID'], contentsMargins=QMargins(0,0,0,0))
+        #self.GUI['GRID'].setMargin(0)
+        self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=style('GRID'))
+        # Prevents vertical scrollbar from appearing, even by accident, or while resizing the window
+        self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+
+        self.GUI['masterLayout'].addWidget(self.GUI['gridScrollArea'], 1, 1)
+        self.GUI['masterLayout'].addWidget(self.GUI['bottomFrame'], 2, 0, 1, 2)
+
+        #Side Panel Frame - The side menu, which contains multiple buttons and things
+        self.GUI['sidePanelLayout'].setRowStretch(3, 1) # The info panel absorbs vertical stretching
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['title'], 0, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['subtitle'], 1, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['buttonFrame'], 2, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['info_pane'], 3, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['grand_ledger'], 4, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['back'], 5, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_number'], 6, 0, 1, 2)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_prev'], 7, 0, 1, 1)
+        self.GUI['sidePanelLayout'].addWidget(self.GUI['page_next'], 7, 1, 1, 1)
+
+        #Button Frame - inside the side panel, contains info button and edit asset button
+        self.GUI['buttonLayout'].addWidget(self.GUI['info'])
+        self.GUI['buttonLayout'].addStretch(1)
+        self.GUI['buttonLayout'].addWidget(self.GUI['edit'])
+        
+        #Bottom Frame - This could be replaced by the QStatusBar widget, which may be better suited for this use
+        self.GUI['bottomLayout'].addWidget(self.GUI['copyright'])
+        self.GUI['bottomLayout'].addWidget(self.GUI['progressBar'])
+        self.GUI['bottomLayout'].addStretch(1)
+        self.GUI['bottomLayout'].addWidget(self.GUI['timestamp_indicator'])
+
+        self.GUI['sidePanelFrame'].raise_()
+    def __init_place_menu__(self):
+        self.GUI['menuLayout'].addWidget(self.MENU['new'])
+        self.GUI['menuLayout'].addWidget(self.MENU['load'])
+        self.GUI['menuLayout'].addWidget(self.MENU['save'])
+        self.GUI['menuLayout'].addWidget(self.MENU['settings'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['undo'])
+        self.GUI['menuLayout'].addWidget(self.MENU['redo'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['new_transaction'])
+        self.GUI['menuLayout'].addWidget(self.MENU['wallets'])
+        self.GUI['menuLayout'].addWidget(self.MENU['filters'])
+        self.GUI['menuLayout'].addSpacing(2*setting('font_size'))
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_staking_report'])
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_report'])
+        self.GUI['menuLayout'].addWidget(self.MENU['DEBUG_ttt_reset'])
+        self.GUI['menuLayout'].addStretch(1)
+
+# RENDERING: DYNAMIC WIDGETS
 #=============================================================
     def set_state(self, state):
         """Prepares buttons/labels in side panel for new render state"""
@@ -678,7 +677,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.GUI['grand_ledger'].hide()
             self.GUI['back'].show()
         
-
     def render(self, state:str=None, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
         '''Re-renders: Side panel and GRID
         \nRefreshes page if called without any input.
@@ -688,21 +686,20 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.set_state(state)
 
         #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
-        if self.view.isAsset() and not self.PORTFOLIO.hasAsset(self.view.getAsset()[0], self.view.getAsset()[1]):   
+        if not self.view.getState() or (self.view.isAsset() and not self.PORTFOLIO.hasAsset(self.view.getAsset()[0], self.view.getAsset()[1])):   
             self.render(state=self.view.PORTFOLIO, sort=True)
             return
 
         # WORST OFFENDOR for rendering:
         if sort:  self.sort()     # Sorts the assets/transactions (10.9900ms for ~5300 transactions, when re-sorting in grand-ledger view).
 
-        self.update_info_pane()     # Updates lefthand side panel metrics (basically 0)
+        self.update_side_panel()     # Updates lefthand side panel metrics (basically 0)
         self.update_page_buttons()  # Enables/disables page flipping buttons (0.04540 when buttons are enabled/disabled)
 
         # Fills in the GRID with metrics
         self.GUI['GRID'].grid_render(self.view, self.sorted, self.page) # (1.4930ms for ~5300 transactions, switching panes (portfolio/grandledger))
     
-    
-    def update_info_pane(self): # Adds basic summary statistics on the lefthand side panel for easy viewing
+    def update_side_panel(self):
         """Updates brief summary stats to be displayed in the lefthand side panel"""
         textbox = self.GUI['info_pane']
         toDisplay = '<meta name="qrichtext" content="1" />'
@@ -714,6 +711,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 formatted_info = self.PORTFOLIO.metric_to_str(metric)
             elif self.view.isAsset():
                 formatted_info = self.PORTFOLIO.asset(self.view.getAsset()[0], self.view.getAsset()[1]).metric_to_str(metric)
+            else: raise Exception(f'Unknown viewState {self.view.getState()}')
             toDisplay += metric_formatting_lib[metric]['headername'].replace('\n',' ')+'<br>'
             
             info_format = metric_formatting_lib[metric]['format']
@@ -917,7 +915,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         value = asset.get_metric('price') # gets asset price for this asset
         for w in wallets:
             quantity = asset.get_metric('wallets')[w] # gets quantity of tokens for this asset
-            if not zeroish_prec(quantity):
+            if not zeroish_prec(quantity) and value:
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
                 toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(quantity*value, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
@@ -943,17 +941,26 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 #METRICS
 #=============================================================
-    def metrics(self, tax_report:str=''): # Recalculates all metrics
-        '''Calculates and renders all metrics for all assets and the portfolio.'''
+    def update_asset_market_metrics(self):
+        """Updates all asset's _metrics files with current market data"""
+        for asset in self.PORTFOLIO.assets(): # Updates market data for all the assets
+            CLASS, TICKER = asset.class_code(), asset.ticker()
+            recent_market_data = self.market_data
+            if TICKER in recent_market_data[CLASS].keys():
+                asset._metrics.update(recent_market_data[CLASS][TICKER])
+    def metrics(self, tax_report:str=''): # Recalculates all dynamic metrics
+        '''Calculates and renders all metrics (including market metrics) for all assets and the portfolio.'''
+        self.update_asset_market_metrics()
         metrics(self.PORTFOLIO, TEMP, self).calculate_all(tax_report)
-    def market_metrics(self):   # Recalculates all market-dependent metrics
+    def market_metrics(self):   # Recalculates only all market-dependent metrics
+        self.update_asset_market_metrics()
         metrics(self.PORTFOLIO, TEMP, self).recalculate_market_dependent()
 
 
-#PROGRESS BAR - a bunch of small useful functions for controlling the progress bar
+#PROGRESS BAR
 #=============================================================
-    def hide_progress(self):            self.GUI['progressBar'].hide()
-    def show_progress(self):            self.GUI['progressBar'].show()
+    def hide_progress(self):                self.GUI['progressBar'].hide()
+    def show_progress(self):                self.GUI['progressBar'].show()
     def set_progress_range(self, min, max): self.GUI['progressBar'].setRange(min, max)
     def set_progress(self, value):          self.GUI['progressBar'].setValue(value)
         

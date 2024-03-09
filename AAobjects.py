@@ -104,7 +104,7 @@ class Transaction():
                 if self._data[a+'ticker'] is None and self._data[a+'class'] is not None:    missing.add(a+'ticker')
                 elif self._data[a+'ticker'] is not None and self._data[a+'class'] is None:  missing.add(a+'class')
             # Check all data
-            for data in minimal_metric_set_for_transaction_type[self._data['type']]:
+            for data in trans_type_minimal_set[self._data['type']]:
                 if data in ('fee_ticker','fee_class','fee_quantity','fee_price'):    continue    # Fees are special case (above)
                 if self._data[data] == None:                            missing.add(data)
 
@@ -181,51 +181,20 @@ class Transaction():
         # Can only infer if type is known
         if 'type' in self._metrics['missing']: return 
         TYPE = self._data['type']
-        # Date - always stored
-        # Type - always stored
-        # Desc - always stored
-        # Wallet - always stored
 
-        # loss_ticker
-        #       purchase: USDzf
-        #       purchase w/ crypto fee: USDzf
-        if TYPE in ('purchase','purchase_crypto_fee'):
-            self._metrics['loss_ticker'],self._metrics['loss_class'] = 'USD','f'
+        # STATIC INFERENCES - these are the same for all transactions
+        self._metrics.update(trans_type_static_inference[TYPE])
 
-        # loss_price - as above
-        #       purchase: 1
-        #       purchase w/ crypto fee: 1
-        #       sale: inferrable from USD fee and gained USD
-        if TYPE in ('purchase','purchase_crypto_fee'):
-            self._metrics['loss_price'] = 1.0
-        elif TYPE == 'sale':
-            try:
-                self._metrics['loss_price'] = (self._metrics['gain_quantity']-self._metrics['fee_quantity'])/self._metrics['loss_quantity']
-            except: pass
-
-        # fee_ticker
-        #       purchase: USDzf
-        #       sale: USDzf
-        if TYPE in ('purchase','sale'):
-            self._metrics['fee_ticker'],self._metrics['fee_class'] = 'USD','f'
-
-        # fee_price
-        if TYPE in ('purchase','sale'):
-            self._metrics['fee_price'] = 1.0
-
-        # gain_ticker
+        # DYNAMIC INFERENCES - these were omitted to prevent user error, and minimize savefile size
+        # loss_price
         if TYPE == 'sale':
-            self._metrics['gain_ticker'],self._metrics['gain_class'] = 'USD','f'
-
+            try:    self._metrics['loss_price'] = (self._metrics['gain_quantity']-self._metrics['fee_quantity'])/self._metrics['loss_quantity']
+            except: pass
         # gain_price
-        if TYPE == 'sale':
-            self._metrics['gain_price'] = 1.0
-        elif TYPE in ('purchase','purchase_crypto_fee','trade'):
-            try:
-                self._metrics['gain_price'] = (self._metrics['loss_value']+self._metrics['fee_value'])/self._metrics['gain_quantity']
+        if TYPE in ('purchase','purchase_crypto_fee','trade'):
+            try:    self._metrics['gain_price'] = (self._metrics['loss_value']+self._metrics['fee_value'])/self._metrics['gain_quantity']
             except: pass
 
-        # QUANTITIES - always stored or irrelevant
     def calc_formatting(self):
         """Pre-calculates formatted versions of all metrics in _metrics"""
         for metric in default_trans_metrics.keys():
@@ -274,7 +243,7 @@ class Transaction():
         #Type
         if 'type' in self._metrics['missing']: return True
         S,O = self._data['type'],__o._data['type']
-        if S!=O:   return trans_priority[S]<trans_priority[O]
+        if S!=O:   return trans_type_formatting_lib[S]['priority']<trans_type_formatting_lib[O]['priority']
         # Break - assume always false
         return False
     def __hash__(self) -> str: return self._metrics['hash']
@@ -293,12 +262,12 @@ class Transaction():
     def get_raw(self, info:str) -> str:    
         """Returns raw savedata string for this metric"""
         return self._data[info]
-    def get_metric(self, info:str, ticker:str=None, class_code:str=None):
+    def get_metric(self, metric:str, ticker:str=None, class_code:str=None):
         """Returns this metric in its native datatype"""
-        if info in ['value','quantity','price','balance']:    
-            try:    return self._metrics[info][class_code][ticker]
+        if metric in metric_formatting_lib and metric_formatting_lib[metric]['asset_specific']:    
+            try:    return self._metrics[metric][class_code][ticker]
             except: return None
-        try:    return self._metrics[info]
+        try:    return self._metrics[metric]
         except: return None
 
     def metric_to_str(self, info:str, ticker:str=None, class_code:str=None) -> str:
@@ -313,7 +282,7 @@ class Transaction():
 
     #JSON Functions
     def toJSON(self) -> dict: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
-        return {data:self._data[data] for data in minimal_metric_set_for_transaction_type[self._data['type']] if self._data[data] != None}
+        return {data:self._data[data] for data in trans_type_minimal_set[self._data['type']] if self._data[data] != None}
    
 class Asset():  
     def __init__(self, ticker:str, class_code:str, name:str='', description:str=''):
@@ -324,7 +293,7 @@ class Asset():
         self._description = description
         self._hash = None
 
-        self._metrics = {}
+        self._metrics = {'ticker':self._ticker,'class':self._class,'name':self._name}
 
         self._ledger = {} #A dictionary of all the transactions for this asset. Mainly for making rendering more efficient.
 
@@ -356,38 +325,16 @@ class Asset():
     def class_code(self) -> str:    return self._class
     def name(self) -> str:          return self._name
     def desc(self) -> str:          return self._description
-
-    def get_raw(self, info:str) -> str:
-        """Returns raw savedata string for this metric"""
-        #This info is basic
-        if info == 'ticker':        return self._ticker
-        if info == 'name':          return self._name
-        if info == 'class':         return self._class
-
-        #This is metric data
-        try:    return self._metrics[info]
-        except: pass
-
-        #This is Market Data (separate from metric data, so we don't delete it upon deleting this asset)
-        try:    return marketdatalib[self.class_code()][self.ticker()][info]
-        except: pass
-        
-        return MISSINGDATA
     
     def get_metric(self, info:str, *args, **kwargs) -> Decimal:
         """Returns this metric in its native datatype"""
         #This is metric data
-        try:    return self._metrics[info]
-        except: pass
-        #This is Market Data (separate from metric data, so we don't delete it upon deleting this asset)
-        try:    return Decimal(marketdatalib[self.class_code()][self.ticker()][info])
-        except: pass
+        if info in self._metrics:   return self._metrics[info]
+        else:                       return None
 
     def metric_to_str(self, info:str, charlimit:int=0, newline='', *args, **kwargs) -> str:
         """Returns formatted str for given metric"""
-        if info == 'ticker':        return self._ticker
-        if info == 'name':          return self._name
-        if info == 'class':         return class_lib[self._class]['name'] #Returns the long display name for this class
+        if info not in self._metrics or self._metrics[info] is None: return MISSINGDATA
 
         #This is Market Data
         return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit, newline=newline)
@@ -587,7 +534,7 @@ class Portfolio():
 class ViewState():
     """Stores current visual mode, and accessory relevant information"""
     def __init__(self):
-        self.state = None
+        self.state = ''
         self.asset = (None, None)
         self.PORTFOLIO = 'portfolio'
         self.GRAND_LEDGER = 'grand_ledger'

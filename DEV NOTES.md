@@ -4,14 +4,7 @@
 
 # Design, GUI, and User-Friendliness
 
-### DESIGN
-
-* GRAPHS
-	- Create informative graphs which show chronological data displayed daily/monthly/annually, for individual cryptos or the whole portfolio
-		- shows total holdings over time
-		- shows 
-
-### GUI
+### Design/GUI
 
 * INFO/STATS INTEGRATION: Integrate info/stats panels into the main window where the GRID is currently
 
@@ -22,16 +15,20 @@
 		- transactions here same as under grandledger: same metrics shown
 	- requires calculating a lot more wallet-specific metrics like total USD value, asset balances, etc.
 
-* THE GRID: Fancier GRID functionality ideas:
-	- Alternating gray/darker gray for rows of the table to improve readability
-
-* NEW VIEW: ERROR LOG
+* NEW VIEW: ERRORS/WARNINGS LOG
 	- all printed program messages are saved to a log, which can be displayed.
-	- 
 
-* TABS
-	- For selecting different views, the user can simply click on tabs at the top of the screen like browser tabs
+* "BROWSER TABS" FOR VIEW SELECTION
+	- For selecting different views, the user can simply click on tabs at the top of the screen like in a browser
 	- Will not include asset_ledger view and wallet_ledger view
+
+* THE GRID: Fancier GRID functionality ideas:
+	- Alternating lighter/darker gray for rows of the table to improve readability
+
+* GRAPHS
+	- Create informative graphs which show chronological data displayed daily/monthly/annually, for individual cryptos or the whole portfolio
+		- shows total holdings over time
+		- shows 
 
 ### User-Friendliness
 
@@ -62,6 +59,16 @@
 	- Implementing the ability to have a base currency that ISN'T USD is VERY difficult, since all transactions prices are currently known and based in USD. It changes how assets have performed over time, especially if the foreign fiat is unstable relative to USD
 
 # Refactoring
+
+- MAKE TRANSACTIONS CLEAN RAW_DATA ON IMPORT, NOT EXPORT
+	- clean based on trans. type if type is defined
+	- if type undefined, clean based on default_trans_data
+
+- TRANSACTION CHECKS CONSISTENCY
+	- Use Transaction(raw_data).get_metric('missing') as much as possible to determine when raw data are missing, instead of doing needless extra checks
+	- Mainly this will affect the Transaction Editor
+
+- DESTROY "TEMP", make its variables part of AutoAccountant class
 
 * DESTROY METRICS CLASS
 	- most methods are specific to assets, portfolios, even wallets. these methods should be moved to their respective object classes

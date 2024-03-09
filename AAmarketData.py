@@ -12,7 +12,7 @@ import threading
 from AAdialogs import Message
 from AAlib import *
 
-class market_data:
+class market_data_thread:
     def __init__(self, main_app, portfolio, online_flag:threading.Event):
         self.MAIN_APP = main_app
         self.PORTFOLIO = portfolio
@@ -25,12 +25,24 @@ class market_data:
         Thread(target=self.StockDataLoop, daemon=True).start()
         Thread(target=self.CryptoDataLoop, daemon=True).start()
 
+    def finalize_market_import(self, toImport):
+        self.MAIN_APP.market_data.update(toImport) # replaces all data for each class
+        #Updates the timestamp for last update of the self.MAIN_APP.market_data
+        self.MAIN_APP.market_data['_timestamp'] = str(datetime.now()) 
+        self.MAIN_APP.GUI['timestamp_indicator'].setText('Data from ' + self.MAIN_APP.market_data['_timestamp'][0:16])
+
+        self.MAIN_APP.market_metrics() # Recalculates all market-based metrics
+        self.MAIN_APP.render(sort=True) # Re-renders portfolio
+
+
+
     ###Yahoo Financials for STOCK DATA and finding missing data
     ###============================================
     def StockDataLoop(self): # Only works when all stocks actually exist
         
         while True:
             self.online_event.wait() #waits eternally until we're online
+            self.MAIN_APP.GUI['timestamp_indicator'].setText('Data being downloaded...')
             #Ok, we're online. Process immediately, then wait for 5 minutes and do it all again.
 
             # creates a list of 'tickers' or 'symbols' or whatever you want to call them
@@ -57,6 +69,7 @@ class market_data:
 
             raw_data = raw_data.get_historical_price_data(date_month, date_today, 'daily')    #300ms
 
+            toExport = {'s':{}}
             for stock in stockList:
                 #creates the initial dictionary ready for filling. This removes all the unnecessary data from curr[stock], leaving just the info we want in a universal format
                 export = {
@@ -77,16 +90,10 @@ class market_data:
                         export['week%'] =  export['price'] / dataref[i]['close'] - 1
                         break
                 
-                marketdatalib['s'][stock] = export    #update the library which gets called to by the main portfolio
+                toExport['s'][stock] = export    #update the library which gets called to by the main portfolio
 
-            InvokeMethod(self.MAIN_APP.market_metrics)
-            InvokeMethod(p(self.MAIN_APP.render, sort=True))
-
-            #Updates the timestamp for last update of the marketdatalib
-            marketdatalib['_timestamp'] = str(datetime.now())
-            # Updates the visual element for the timestamp
-            self.MAIN_APP.GUI['timestamp_indicator'].setText('Data from ' + marketdatalib['_timestamp'][0:16])
-                
+            toExport = {key:Decimal(value) for key,value in toExport.items()} # convert all data to Decimal object
+            InvokeMethod(p(self.finalize_market_import, toExport))
 
             #Ok, we've got the market data. Wait 5 minutes
             time.sleep(300)
@@ -95,9 +102,9 @@ class market_data:
     ###Coinmarketcap API for CRYPTO DATA
     ###============================================
     def CryptoDataLoop(self):
-
         while True:
             self.online_event.wait() #waits eternally until we're online
+            self.MAIN_APP.GUI['timestamp_indicator'].setText('Data being downloaded...')
             #Ok, we're online. Process immediately, then wait for 5 minutes. Then we do this check again, and so on.
 
             #creates a comma-separated list of crypto tickers to be fed into CoinMarketCap
@@ -127,10 +134,11 @@ class market_data:
                 if type(e) == ConnectionError: msg = 'Connection error: Could not connect to CoinMarketCap API'
                 elif type(e) == Timeout: msg = 'Timeout error: Timed out while trying to connect to CoinMarketCap API'
                 elif type(e) == TooManyRedirects: msg = 'TooManyRedirects error: Could not connect to CoinMarketCap API'
+                else: msg = str(e)
                 InvokeMethod(p(Message, self.MAIN_APP, 'CoinMarketCap API Error', msg))
                 time.sleep(60)      #Waits for 1 minute
                 continue
-            if data != None and data['status']['error_message'] != None:
+            if data and data['status']['error_message']:
                 errmsg = data['status']['error_message']
                 InvokeMethod(p(Message, self.MAIN_APP, 'CoinMarketCap API Error', errmsg))
 
@@ -153,35 +161,18 @@ class market_data:
 
                 response = session.get(url, params=parameters)  #reloads 
                 data = json.loads(response.text)
+            
+            if data:
+                toExport = {'c':{crypto:{
+                            'marketcap' :   Decimal(data['data'][crypto]['quote']['USD']['market_cap']),
+                            'day%' :        Decimal(data['data'][crypto]['quote']['USD']['percent_change_24h']/100),
+                            'week%' :       Decimal(data['data'][crypto]['quote']['USD']['percent_change_7d']/100),
+                            'month%' :      Decimal(data['data'][crypto]['quote']['USD']['percent_change_30d']/100),
+                            'price' :       Decimal(data['data'][crypto]['quote']['USD']['price']),
+                            'volume24h' :   Decimal(data['data'][crypto]['quote']['USD']['volume_24h']),
+                            } for crypto in data['data']}}
 
-            if data != None:
-                for crypto in data['data']:
-                    try:
-                        marketdatalib['c'][crypto] =  {
-                            'marketcap' :   str(data['data'][crypto]['quote']['USD']['market_cap']),
-                            'day%' :        str(data['data'][crypto]['quote']['USD']['percent_change_24h']/100),
-                            'week%' :       str(data['data'][crypto]['quote']['USD']['percent_change_7d']/100),
-                            'month%' :      str(data['data'][crypto]['quote']['USD']['percent_change_30d']/100),
-                            'price' :       str(data['data'][crypto]['quote']['USD']['price']),
-                            'volume24h' :   str(data['data'][crypto]['quote']['USD']['volume_24h']),
-                        }
-                    except:
-                        marketdatalib['c'][crypto] =  {   #Basically this is just for LUNA which is no longer tracked on CoinMarketCap
-                            'marketcap' :   '0',
-                            'day%' :        '0',
-                            'week%' :       '0',
-                            'month%' :      '0',
-                            'price' :       '0',
-                            'volume24h' :   '0',
-                        }
-
-                InvokeMethod(self.MAIN_APP.market_metrics)
-                InvokeMethod(p(self.MAIN_APP.render, sort=True))
-
-            #Updates the timestamp for last update of the marketdatalib
-            marketdatalib['_timestamp'] = str(datetime.now())
-            # Updates the visual element for the timestamp
-            self.MAIN_APP.GUI['timestamp_indicator'].setText('Data from ' + marketdatalib['_timestamp'][0:16])
+                InvokeMethod(p(self.finalize_market_import, toExport))
             
             #Ok, we've got the market data. Wait 5 minutes, then start the loop again.
             time.sleep(300)

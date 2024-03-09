@@ -27,7 +27,7 @@ def trans_from_raw(portfolio, date_unix=None,type=None,wallet=None,description='
         'gain_price' :      gain[2],
     }
     # Clean data (just in case! should be unneccessary)
-    if type:    raw_data = {metric:raw_data[metric] for metric in minimal_metric_set_for_transaction_type[type]}
+    if type:    raw_data = {metric:raw_data[metric] for metric in trans_type_minimal_set[type]}
     return Transaction(raw_data)
 
 def finalize_import(mainAppREF, PORTFOLIO_TO_MERGE):
