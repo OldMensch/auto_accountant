@@ -229,26 +229,16 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         if not WALLET:
             self.display_error('[ERROR] Must select wallet!')
             return
-        # CONVERT DATE TO VALID UNIX CODE
-        #valid datetime format? - NOTE: This also converts the date to unix time
-        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
-        except:     error = 'Invalid date!'
-        # MUST HAVE BOTH TICKER AND CLASS
-        if (LT and not LC) or (not LT and LC):  
-            self.display_error('[ERROR] Must have loss ticker AND class if one is specified')
-            return
-        if (FT and not FC) or (not FT and FC):  
-            self.display_error('[ERROR] Must have fee ticker AND class if one is specified')
-            return
-        if (GT and not GC) or (not GT and GC):  
-            self.display_error('[ERROR] Must have gain ticker AND class if one is specified')
-            return
-
         ################################
         #DATA CULLING AND CONVERSION
         ################################
         # Creates dictionary of all data, and removes any data not in the minimal dataset for this transaction type
-        TO_SAVE = {entry.entry() for metric,entry in self.ENTRIES.items() if metric in trans_type_minimal_set[self.ENTRIES['type'].entry()]}
+        TO_SAVE = {metric:entry.entry() for metric,entry in self.ENTRIES.items()}
+
+        # CONVERT DATE TO VALID UNIX CODE
+        #valid datetime format? - NOTE: This also converts the date to unix time
+        try:        TO_SAVE['date'] = timezone_to_unix(TO_SAVE['date'])
+        except:     error = 'Invalid date!'
 
         # Cull fee data if 'no fee' was selected
         if self.ENTRIES['fee_class'].entry() == None:
@@ -261,11 +251,27 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         FT,FC,FQ,FP = TO_SAVE['fee_ticker'], TO_SAVE['fee_class'], TO_SAVE['fee_quantity'], TO_SAVE['fee_price']
         GT,GC,GQ,GP = TO_SAVE['gain_ticker'],TO_SAVE['gain_class'],TO_SAVE['gain_quantity'],TO_SAVE['gain_price']
 
+        # Cull irrelevant data
+        for metric in TO_SAVE:
+            if metric not in trans_type_minimal_set[TO_SAVE['type']]:
+                TO_SAVE[metric] = None
+
         ################################
         # CHECKS 2
         ################################
         error = None
         valids = trans_type_minimal_set[TYPE]
+        
+        # MUST HAVE BOTH TICKER AND CLASS
+        if (LT and not LC) or (not LT and LC):  
+            self.display_error('[ERROR] Must have loss ticker AND class if one is specified')
+            return
+        if (FT and not FC) or (not FT and FC):  
+            self.display_error('[ERROR] Must have fee ticker AND class if one is specified')
+            return
+        if (GT and not GC) or (not GT and GC):  
+            self.display_error('[ERROR] Must have gain ticker AND class if one is specified')
+            return
 
         # Valid loss?
         if 'loss_quantity' in valids and zeroish(LQ):                     error = 'Loss quantity must be non-zero.'

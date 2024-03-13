@@ -19,7 +19,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     PORTFOLIO = Portfolio() # Our currently loaded portfolio
     page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
     sorted = [] # List of sorted and filtered assets
-    market_data = {class_code:{} for class_code in class_lib.keys()}
+    market_data = {class_code:{} for class_code in class_lib.keys()} # Used in AAmetrics to update asset market info
 
     def __init__(self):
         super().__init__()
@@ -544,7 +544,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 m.addAction(f'Show {item.ticker()} info/stats', p(self.asset_stats_and_info, item.ticker(), item.class_code()))
                 m.addAction(f'Edit {item.ticker()}', p(AssetEditor, self, item))
             else:
-                trans_title = item.iso_date() + ' ' + item.metric_to_str('type')
+                trans_title = item.iso_date() + ' ' + item.type()
                 m.addAction('Edit ' + trans_title, p(TransEditor, self, item))
                 m.addAction('Copy ' + trans_title, p(TransEditor, self, item, True))
                 m.addAction('Delete ' + trans_title, p(self.delete_selection, highlighted))
@@ -704,7 +704,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         textbox = self.GUI['info_pane']
         toDisplay = '<meta name="qrichtext" content="1" />'
         
-        for metric in ('price', 'value','cash_flow','projected_cash_flow','unrealized_profit_and_loss%','day%'):
+        for metric in ('price', 'value','cost_basis','unrealized_profit_and_loss%','day%'):
             colorFormat = metric_formatting_lib[metric]['color']
             if self.view.isPortfolio() or self.view.isGrandLedger():
                 if metric == 'price': continue # price doesnt exist for portfolio
@@ -941,19 +941,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 #METRICS
 #=============================================================
-    def update_asset_market_metrics(self):
-        """Updates all asset's _metrics files with current market data"""
-        for asset in self.PORTFOLIO.assets(): # Updates market data for all the assets
-            CLASS, TICKER = asset.class_code(), asset.ticker()
-            recent_market_data = self.market_data
-            if TICKER in recent_market_data[CLASS].keys():
-                asset._metrics.update(recent_market_data[CLASS][TICKER])
     def metrics(self, tax_report:str=''): # Recalculates all dynamic metrics
         '''Calculates and renders all metrics (including market metrics) for all assets and the portfolio.'''
-        self.update_asset_market_metrics()
-        metrics(self.PORTFOLIO, TEMP, self).calculate_all(tax_report)
+        metrics(self.PORTFOLIO, TEMP, self).recalculate_all(tax_report)
     def market_metrics(self):   # Recalculates only all market-dependent metrics
-        self.update_asset_market_metrics()
         metrics(self.PORTFOLIO, TEMP, self).recalculate_market_dependent()
 
 

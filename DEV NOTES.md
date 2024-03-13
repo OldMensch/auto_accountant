@@ -32,6 +32,10 @@
 
 ### User-Friendliness
 
+* HELP BUTTONS
+	- Provide detailed information about metric calculation
+	- Provide detailed information in the transaction editor about transactions 
+
 * EXCHANGE API INTEGRATION: Integrate APIs into my program so that I can instantly and effortlessly import new transactions without having to download stupid files first
 	- Coinbase API
 	- Gemini API
@@ -83,20 +87,13 @@
 
 * PRE-FORMATTING - consider above, "destroy metrics class", before this
 	- pre-format asset metrics
-	- pre-format portfolio metrics
+	- pre-format wallet metrics
+	- pre-format portfolio metrics?
 
 * FORMAT NUMBER PERFORMANCE FIX
 	- format_number currently performs like ass: 450ms for 200,000 iterations!!! 
 	- that's half a second of load time each time you load a 5300-transaction portfolio!!!! Not horrible... yet.
 	- I should test whether this is O(n) or something worse (should be O(n) where n = # of transactions)
-
-* FULL-AUTO WALLETS 
-	- Make wallet creation/deletion FULLY automatic
-	you will only be able to create new wallets when:
-		- creating a transaction
-		- importing assets into your portfolio. 
-	- This will simultaneously be more streamlined, __and also enable me to give undo/redo a super-easy-to-implement huge speed boost__
-		- 
 
 * FASTER UNDO/REDO SAVES (Maybe rename these to "statesaves", indicating they save a change of state)
 	- Instead of saving a copy of the entire portfolio to memory, just save the part whose state changed before/after

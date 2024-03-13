@@ -149,7 +149,11 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, s
         case 'date':        toReturn = unix_to_local_timezone(data) # data is an int
         # Input should be str
         case 'type':        toReturn = trans_type_formatting_lib[data]['name']
-        case 'desc':        toReturn = f'{data[0:20-3]}...' # description limited to 20 characters at most
+        case 'desc':        
+            if len(data) > 40-3:
+                toReturn = f'{data[0:40-3]}...' # description limited to 20 characters at most
+            else:
+                toReturn = data
         case 'class':       toReturn = class_lib[data]['name']
         case 'alpha':       
             if charlimit and charlimit < len(data): toReturn = f'{data[0:charlimit-3]}...'
@@ -367,8 +371,6 @@ default_trans_metrics.update({
     'fee_value':        0,
     'gain_value':       0,
 
-    'basis_price':      0,      #The cost basis price
-
     'price':    {class_code:{} for class_code in class_lib.keys()},     #Price, value, quantity by asset, for displaying
     'value':    {class_code:{} for class_code in class_lib.keys()},
     'quantity': {class_code:{} for class_code in class_lib.keys()},
@@ -387,6 +389,7 @@ default_headers = {
         "portfolio%","marketcap","volume24h","day%","week%","month%",
         "cash_flow","value","projected_cash_flow",
         "unrealized_profit_and_loss%","realized_profit_and_loss",
+        "cost_basis",
         # Ones I will want to hide
         'class','day_change','tax_capital_gains','tax_income','unrealized_profit_and_loss',
         ),
@@ -417,7 +420,8 @@ metric_formatting_lib = { # Includes formatting information for every metric in 
     'tax_income':{                  'asset_specific':False,'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
     'unrealized_profit_and_loss':{  'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
-    'number_of_transactions': {     'asset_specific':False,'format':'integer',     'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
+    'number_of_transactions': {     'asset_specific':False,'format': 'integer',    'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
+    'cost_basis': {                 'asset_specific':False,'format': 'penny',      'color' : None,             'name':'Cost Basis',        'headername':'Cost\nBasis'},
 
     #Unique to portfolios
     'number_of_assets': {           'asset_specific':False,'format':'integer',     'color' : None,             'name':'# Assets',          'headername':'# Assets'},
@@ -493,8 +497,9 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on the
         'tax_capital_gains': "The total value taxable as capital gains.",
         'tax_income': "The total value taxable as income.",
         'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
-        'unrealized_profit_and_loss': "Measures the USD gained on unsold assets since their purchase.",
-        'unrealized_profit_and_loss%': "The relative unrealized P&L of your asset. A basic measure of performance since purchasing the asset.",
+        'unrealized_profit_and_loss': "Value - Cost Basis = Unreal P&L. Total unrealized P&L for current balance.",
+        'unrealized_profit_and_loss%': "Value / Cost Basis = Unreal P&L %. Basic indicator of asset performance. Green means in-profit, red not in-profit.",
+        'cost_basis':'Value of the current balance, at time of aquisition',
 
         # Unique to assets
         'ticker': "The ticker for this asset. BTC, ETH, etc.",

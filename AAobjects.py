@@ -155,7 +155,9 @@ class Transaction():
         # PRICE QUANTITY VALUE - The price, quantity, and value, displayed on asset panes
         LT,FT,GT = self._data['loss_ticker'],self._data['fee_ticker'],self._data['gain_ticker']
         LC,FC,GC = self._data['loss_class'],self._data['fee_class'],self._data['gain_class']
-        self._metrics['all_assets'] = list(set((self._data[metric+'ticker'],self._data[metric+'class']) for metric in ('loss_','fee_','gain_') if self._data[metric+'ticker'] is not None))
+        self._metrics['all_assets'] = list(set((self._data[metric+'ticker'],self._data[metric+'class']) 
+                                               for metric in ('loss_','fee_','gain_') 
+                                               if self._data[metric+'ticker'] is not None))
         for t,c in self._metrics['all_assets']:
             P,Q,V = 0,0,0
             if t==LT and c==LC:
@@ -172,10 +174,6 @@ class Transaction():
 
             self._metrics['price'][c][t], self._metrics['quantity'][c][t], self._metrics['value'][c][t] = P,Q,V
 
-        # BASIS PRICE - The price of the cost basis of this transaction, if it is a gain
-        if   TYPE in ('purchase','purchase_crypto_fee'):    self._metrics['basis_price'] = (LV+FV)/GQ     # Purchase cost basis includes fee
-        elif TYPE == 'trade':                               self._metrics['basis_price'] = LV/GQ          # Trade price doesn't include fee
-        elif GP:                                            self._metrics['basis_price'] = GP             # Gain price is defined already
     def calc_inference(self):
         """Infers metrics where possible - really only for display purposes"""
         # Can only infer if type is known
@@ -469,11 +467,13 @@ class Portfolio():
                         continue
                     if self.hasAsset(TICKER, CLASS): # If asset already in portfolio, import name/description
                         if merge and not overwrite: continue #Don't overwrite identical assets, when specified
-                        self.asset(TICKER, CLASS)._name = NAME # Set existing asset name to saved name
-                        self.asset(TICKER, CLASS)._description = DESC # Set existing asset description to saved description
+                        existing_asset = self.asset(TICKER, CLASS)
+                        existing_asset._name = NAME # Set existing asset name to saved name
+                        existing_asset._metrics['name'] = NAME
+                        existing_asset._description = DESC # Set existing asset description to saved description
         
         # WALLETS - 0.9553ms for 9 wallets (probably not much more for a million) 
-        # MOST Wallets already initialized in the first step (implemented in add_transaction function)
+        # Wallets already initialized in the first step (implemented in add_transaction function)
         # Here we load descriptions
         if 'wallets' in JSON:
             parsed_wallets = None
