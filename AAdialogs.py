@@ -105,9 +105,9 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.ENTRIES['fee_class'] =  self.add_dropdown_list(all_classes_dict, 1, 4, default='-NO FEE-', selectCommand=self.update_entry_interactability)
         self.ENTRIES['gain_class'] = self.add_dropdown_list(all_classes_dict, 1, 5, current='f', selectCommand=self.update_entry_interactability)
         self.add_label('Ticker',2,2)
-        self.ENTRIES['loss_ticker'] = self.add_entry('USD', 2, 3, maxLength=24)
-        self.ENTRIES['fee_ticker'] =  self.add_entry('USD', 2, 4, maxLength=24)
-        self.ENTRIES['gain_ticker'] = self.add_entry('USD', 2, 5, maxLength=24)
+        self.ENTRIES['loss_ticker'] = self.add_entry('USD', 2, 3, maxLength=24, capsLock=True)
+        self.ENTRIES['fee_ticker'] =  self.add_entry('USD', 2, 4, maxLength=24, capsLock=True)
+        self.ENTRIES['gain_ticker'] = self.add_entry('USD', 2, 5, maxLength=24, capsLock=True)
         self.add_label('Quantity',3,2)
         self.ENTRIES['loss_quantity'] = self.add_entry('', 3, 3, format='pos_float')
         self.ENTRIES['fee_quantity'] =  self.add_entry('', 3, 4, format='pos_float')
@@ -278,7 +278,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.' # NOTE: See above
         # Valid fee?
         if FT: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
-            if        'fee_ticker' in valids  and   not self.upper.PORTFOLIO.hasAsset(f'{FT}z{FC}'): error = 'Fee asset does not exist in portfolio.'
+            if        'fee_ticker' in valids  and   not self.upper.PORTFOLIO.hasAsset(FT, FC): error = 'Fee asset does not exist in portfolio.'
             if FQ and 'fee_quantity' in valids and zeroish(FQ):                     error = 'Fee quantity must be non-zero.'
             #if FP and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
         # Valid gain?
@@ -465,7 +465,7 @@ class FilterEditor(Dialog): #For creating/editing filters
 
         # Relation
         self.add_label('Relation',0,1)
-        self.DROPDOWN_relation = self.add_dropdown_list({r:r for r in ('<','=','>')}, 1, 1, current='=')
+        self.DROPDOWN_relation = self.add_dropdown_list({r:r for r in ('<','!=','=','>')}, 1, 1, current='=')
 
         # State
         self.add_label('State',0,2,rowspan=2)
@@ -532,7 +532,7 @@ class FilterEditor(Dialog): #For creating/editing filters
                 self.display_error('[ERROR] Must enter a state for this filter')
                 return
             #State is a valid float, if metric is numeric?
-            metric_is_numeric = metric_formatting_lib[METRIC]['format'] != 'alpha'
+            metric_is_numeric = metric_formatting_lib[METRIC]['format'] not in ('alpha','type','desc','class','date')
             if metric_is_numeric:
                 try: 
                     new_filter = Filter(METRIC, RELATION, float(STATE)) # try to parse the state as float
@@ -542,8 +542,8 @@ class FilterEditor(Dialog): #For creating/editing filters
             else:
                 new_filter = Filter(METRIC, RELATION, STATE)
             # Not using a non-equals, if metric is alpha?
-            if not metric_is_numeric and RELATION != '=' and METRIC != 'date':
-                self.display_error('[ERROR] Relation must be \'=\' for text metrics')
+            if not metric_is_numeric and RELATION not in ('=','!=') and METRIC != 'date':
+                self.display_error('[ERROR] Relation must be \'=\' or \'!=\' for text metrics')
                 return
         # Identical filter doesn't already exist?
         if new_filter is not self.filter_to_edit and new_filter in self.filterManager.upper.PORTFOLIO.filters():
@@ -584,7 +584,7 @@ class DEBUGStakingReportDialog(Dialog):
     def __init__(self, upper, *args, **kwargs):
         super().__init__(upper, 'Report Staking Interest')
         self.add_label('Crypto Ticker',0,0)
-        self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24)
+        self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24, capsLock=True)
         self.add_label('Staking Wallet',0,1)
         self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
         self.add_label('Crypto Ticker',0,2)
@@ -594,14 +594,14 @@ class DEBUGStakingReportDialog(Dialog):
         self.show()
 
     def report(self):
-        TICKER = self.ENTRY_asset.entry().upper()
+        TICKER = self.ENTRY_asset.entry()
         WALLET = self.DROPDOWN_wallet.entry()
         QUANTITY = self.ENTRY_quantity.entry()
 
         # CHECKS
         # Asset is in portfolio?
-        if not self.upper.PORTFOLIO.hasAsset(TICKER+'zc'):
-            self.display_error('[ERROR] Cryptocurrency \'TICKER\' not found in portfolio.')
+        if not self.upper.PORTFOLIO.hasAsset(TICKER, 'c'):
+            self.display_error('[ERROR] Cryptocurrency \'{TICKER}\' not found in portfolio.')
             return
         # Selected a wallet?
         if WALLET == None:   
@@ -620,7 +620,7 @@ class DEBUGStakingReportDialog(Dialog):
         
         # Add up all income transactions in this wallet for this asset
         total_staking_income_thus_far = Decimal(0)
-        this_asset = self.upper.PORTFOLIO.asset(TICKER+'zc')
+        this_asset = self.upper.PORTFOLIO.asset(TICKER, 'c')
         for transaction in this_asset._ledger.values():
             if transaction.type() == 'income':
                 total_staking_income_thus_far += transaction.get_metric('gain_quantity')
@@ -633,7 +633,8 @@ class DEBUGStakingReportDialog(Dialog):
                                       'date':timezone_to_unix(str(datetime.now()).split('.')[0]), 
                                       'type':'income', 
                                       'wallet':WALLET.name(), 
-                                      'gain_ticker': TICKER+'zc', 
+                                      'gain_ticker': TICKER, 
+                                      'gain_class': 'c',
                                       'gain_quantity':str(QUANTITY-total_staking_income_thus_far), 
                                       'gain_price':str(this_asset.get_metric('price')),
                                       'description':'Manually reported staking interest using AutoAccountant', 

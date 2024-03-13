@@ -74,7 +74,7 @@ class metrics:
         self.recalculate_market_independent(tax_report) # Recalculates all metrics that only need historical transaction data to calculate
         self.recalculate_market_dependent() # Recalculates all metrics that depend on current market information
 
-    # Functions to calculate only what's needed
+    # Market-independent
     def recalculate_market_independent(self, tax_report:str=None): # Recalculates all market-independent asset metrics: also triggers portfolio recalculation
         '''ALL market independent, for ASSETS and PORTFOLIO'''
         if tax_report:
@@ -105,16 +105,16 @@ class metrics:
 
         # MORE METRIC CALCULATION
         for asset in self.PORTFOLIO.assets():
-            self.calculate_for_asset(asset, 'average_buy_price', 'A/B', 'cost_basis', 'balance')
+            asset.calculate_metric('average_buy_price', 'A/B', 'cost_basis', 'balance')
         self.recalculate_portfolio_market_independent()
-
     def recalculate_portfolio_market_independent(self): #Recalculates all market-independent portfolio metrics
         '''ALL market independent, for PORTFOLIO'''
         self.PORTFOLIO._metrics['number_of_transactions'] = len(self.PORTFOLIO.transactions())
         self.PORTFOLIO._metrics['number_of_assets'] = len(self.PORTFOLIO.assets())
-        self.calculate_for_portfolio('cash_flow', 'sum')
-        self.calculate_for_portfolio('cost_basis', 'sum')
+        self.PORTFOLIO.calculate_metric('cash_flow', 'sum')
+        self.PORTFOLIO.calculate_metric('cost_basis', 'sum')
 
+    # Market-dependent
     def recalculate_market_dependent(self):   # Recalculates all market-dependent asset metrics: also triggers portfolio recalculation
         '''ALL market dependent, for ASSETS and PORTFOLIO'''
         for asset in self.PORTFOLIO.assets(): 
@@ -124,34 +124,33 @@ class metrics:
             if TICKER in recent_market_data[CLASS].keys():
                 asset._metrics.update(recent_market_data[CLASS][TICKER])
 
-            self.calculate_for_asset(asset, 'value', 'A*B', 'balance', 'price')
-            self.calculate_for_asset(asset, 'unrealized_profit_and_loss', 'A-B', 'value', 'cost_basis')
-            self.calculate_for_asset(asset, 'unrealized_profit_and_loss%', '(A/B)-1', 'value', 'cost_basis')
-            self.calculate_for_asset(asset, 'day_change', '(AB)/(1+B)', 'value', 'day%')
-            self.calculate_for_asset(asset, 'week_change', '(AB)/(1+B)', 'value', 'week%')
-            self.calculate_for_asset(asset, 'month_change', '(AB)/(1+B)', 'value', 'month%')
-            self.calculate_for_asset(asset, 'projected_cash_flow', 'A+B', 'cash_flow', 'value')
+            asset.calculate_metric('value', 'A*B', 'balance', 'price')
+            asset.calculate_metric('unrealized_profit_and_loss', 'A-B', 'value', 'cost_basis')
+            asset.calculate_metric('unrealized_profit_and_loss%', '(A/B)-1', 'value', 'cost_basis')
+            asset.calculate_metric('day_change', '(AB)/(1+B)', 'value', 'day%')
+            asset.calculate_metric('week_change', '(AB)/(1+B)', 'value', 'week%')
+            asset.calculate_metric('month_change', '(AB)/(1+B)', 'value', 'month%')
+            asset.calculate_metric('projected_cash_flow', 'A+B', 'cash_flow', 'value')
         self.recalculate_portfolio_market_dependent()
-
     def recalculate_portfolio_market_dependent(self): #Recalculates all market-dependent portfolio metrics
         '''ALL market dependent, for PORTFOLIO'''
-        self.calculate_for_portfolio('value', 'sum')
+        self.PORTFOLIO.calculate_metric('value', 'sum')
         for asset in self.PORTFOLIO.assets():
             self.calculate_percentage_of_portfolio(asset)
-        self.calculate_for_portfolio('projected_cash_flow', 'A+B', 'cash_flow', 'value')
-        self.calculate_for_portfolio('day_change', 'sum')
-        self.calculate_for_portfolio('week_change', 'sum')
-        self.calculate_for_portfolio('month_change', 'sum')
-        self.calculate_for_portfolio('day%', 'A/(B-C)', 'day_change', 'value', 'day_change')
-        self.calculate_for_portfolio('week%', 'A/(B-C)', 'week_change', 'value', 'week_change')
-        self.calculate_for_portfolio('month%', 'A/(B-C)', 'month_change', 'value', 'month_change')
-        self.calculate_for_portfolio('unrealized_profit_and_loss', 'A-B', 'value', 'cost_basis')
-        self.calculate_for_portfolio('unrealized_profit_and_loss%', '(A/B)-1', 'value', 'cost_basis')
+        self.PORTFOLIO.calculate_metric('projected_cash_flow', 'A+B', 'cash_flow', 'value')
+        self.PORTFOLIO.calculate_metric('day_change', 'sum')
+        self.PORTFOLIO.calculate_metric('week_change', 'sum')
+        self.PORTFOLIO.calculate_metric('month_change', 'sum')
+        self.PORTFOLIO.calculate_metric('day%', 'A/(B-C)', 'day_change', 'value', 'day_change')
+        self.PORTFOLIO.calculate_metric('week%', 'A/(B-C)', 'week_change', 'value', 'week_change')
+        self.PORTFOLIO.calculate_metric('month%', 'A/(B-C)', 'month_change', 'value', 'month_change')
+        self.PORTFOLIO.calculate_metric('unrealized_profit_and_loss', 'A-B', 'value', 'cost_basis')
+        self.PORTFOLIO.calculate_metric('unrealized_profit_and_loss%', '(A/B)-1', 'value', 'cost_basis')
         self.calculate_portfolio_value_by_wallet()
 
-    ############################
+    ########################################
     # ACCOUNTING
-    ############################
+    ########################################
     # Link TRANSFER_OUTs with TRANSFER_INs
     def automatically_link_transfers(self):
         """Market-independent. Links TRANSFER_OUTs with TRANSFER_INs via dest_wallet variable, to allow for cross-platform, cross-wallet accounting.
@@ -193,8 +192,8 @@ class metrics:
             else:
                 t.ERR_MSG = f'Failed to automatically find a \'Transfer In\' transaction under {t.get_raw('loss_ticker')} that pairs with this \'Transfer Out\'.'
                         
-    # "Holy Grail" Function of the program
-    # Calculates all metrics which are directly dependent on the order of transactions (thus, the accounting method)
+    # "Holy Grail" of the program
+    # Calculates all metrics dependent on the order of transactions, regulated by the accounting method
     def perform_automatic_accounting(self, tax_report:str=''):   #Dependent on the Accounting Method, calculates the Holdings per Wallet, Total Holdings, Average Buy Price, Real P&L (Capital Gains)
         """Market-independent. Calculates all metrics dependent on the particular order of transactions"""
         #Creates a list of all transactions, sorted chronologically #NOTE: Lag is ~18ms for ~12000 transactions
@@ -219,7 +218,7 @@ class metrics:
         accounting_method = setting('accounting_method')
         ledger = { class_code:{} for class_code in class_lib.keys()}
         for asset in self.PORTFOLIO.assets():
-            ledger[asset.class_code()][asset.ticker()] = {wallet:gain_heap(accounting_method) for wallet in self.PORTFOLIO.all_wallet_names()}
+            ledger[asset.class_code()][asset.ticker()] = {wallet.name():gain_heap(accounting_method) for wallet in self.PORTFOLIO.wallets()}
 
         # DISBURSE QUANTITY - removes a 'gain', from the LEDGER data structure.
         def disburse_quantity(t:Transaction, quantity:Decimal, ticker:str, class_code:str, wallet:str, wallet2:str=None):  #NOTE: Lag is ~50ms for ~231 disbursals with ~2741 gains moved on average, or ~5 disbursals/ms, or ~54 disbursed gains/ms
@@ -352,81 +351,17 @@ class metrics:
             asset._metrics['cost_basis'] =  total_cost_basis # original value of current asset balance
             asset._metrics['wallets'] =     wallet_balance
             
-    ############################
-    # Generalized metric calculation functions
-    ############################
+    ########################################
+    # METRIC CALCULATION - SPECIAL CASES
+    ########################################
     # ASSETS
-    # Generic functions
-    def calculate_for_asset(self, asset:Asset, metric, operation, A=None, B=None):
-        if not A or not B: 
-            raise Exception(f'||ERROR|| When calculating asset operation, \'A\' and \'B\' must be specified')
-        result = 0
-        match operation:
-            case 'sum': # add across all transactions on this asset's ledger
-                for t in asset._ledger:    
-                    try: result += t.get_metric(metric) # Add to sum if it exists
-                    except: pass  
-            case 'A+B': # add two portfolio metrics
-                try: result = asset.get_metric(A) + asset.get_metric(B)
-                except: pass
-            case 'A-B': # add two portfolio metrics
-                try: result = asset.get_metric(A) - asset.get_metric(B)
-                except: pass
-            case 'A*B': # multiply two portfolio metrics
-                try: result = asset.get_metric(A) * asset.get_metric(B)
-                except: pass
-            case 'A/B': # divide one portfolio metric by another
-                try: result = asset.get_metric(A) / asset.get_metric(B)
-                except: pass
-            case '(AB)/(1+B)':
-                try: result = (asset.get_metric(A) * asset.get_metric(B)) / (1 + asset.get_metric(B))
-                except: pass
-            case '(A/B)-1':
-                try: result = (asset.get_metric(A) / asset.get_metric(B)) - 1
-                except: pass
-            case other:
-                raise Exception(f'||ERROR|| Unknown operation for calculating asset metric, \'{operation}\'')
-        asset._metrics[metric] = result
-    # Special Cases
     def calculate_percentage_of_portfolio(self, asset:str): #Calculates how much of the value of your portfolio is this asset - NOTE: must be done after total portfolio value calculated
         try:    asset._metrics['portfolio%'] = asset.get_metric('value')  / self.PORTFOLIO.get_metric('value')
         except: pass
 
     # PORTFOLIO
-    # Generic functions
-    def calculate_for_portfolio(self, metric, operation, A=None, B=None, C=None):
-        if operation != 'sum' and (not A or not B): 
-            raise Exception(f'||ERROR|| When calculating portfolio operation, \'A\' and \'B\' must be specified')
-        result = 0
-        match operation:
-            case 'sum': # add across assets
-                for a in self.PORTFOLIO.assets():    
-                    try: result += a.get_metric(metric) # Add to sum if it exists
-                    except: pass  
-            case 'A+B': # add two portfolio metrics
-                try: result = self.PORTFOLIO.get_metric(A) + self.PORTFOLIO.get_metric(B)
-                except: pass
-            case 'A-B': # add two portfolio metrics
-                try: result = self.PORTFOLIO.get_metric(A) - self.PORTFOLIO.get_metric(B)
-                except: pass
-            case 'A*B': # multiply two portfolio metrics
-                try: result = self.PORTFOLIO.get_metric(A) * self.PORTFOLIO.get_metric(B)
-                except: pass
-            case 'A/B': # divide one portfolio metric by another
-                try: result = self.PORTFOLIO.get_metric(A) / self.PORTFOLIO.get_metric(B)
-                except: pass
-            case 'A/(B-C)':
-                try: result = self.PORTFOLIO.get_metric(A) / (self.PORTFOLIO.get_metric(B) - self.PORTFOLIO.get_metric(C))
-                except: pass
-            case '(A/B)-1':
-                try: result = (self.PORTFOLIO.get_metric(A) / self.PORTFOLIO.get_metric(B)) - 1
-                except: pass
-            case other:
-                raise Exception(f'||ERROR|| Unknown operation for calculating portfolio metric, \'{operation}\'')
-        self.PORTFOLIO._metrics[metric] = result
-    # Special Cases
     def calculate_portfolio_value_by_wallet(self):    #Calculates the current market value held within each wallet, across all assets
-        wallets = {wallet:0 for wallet in self.PORTFOLIO.all_wallet_names()}  #Creates a dictionary of wallets, defaulting to 0$ within each
+        wallets = {wallet.name():0 for wallet in self.PORTFOLIO.wallets()}  #Creates a dictionary of wallets, defaulting to 0$ within each
         for asset in self.PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
             for wallet in asset.get_metric('wallets'):
                 # Asset wallet list is total units by wallet, multiply by asset price to get value

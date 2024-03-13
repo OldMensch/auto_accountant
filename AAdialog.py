@@ -7,35 +7,40 @@ class DateEntry(QDateTimeEdit): # For entering datetimes in the ISO format yyyy-
     def __init__(self, text:str, *args, **kwargs):
         super().__init__(displayFormat='yyyy-MM-dd hh:mm:ss', dateTime=datetime.fromisoformat(text), *args, **kwargs)
     
-    def setReadOnly(self, val:bool) -> None: 
+    def setReadOnly(self, val:bool): 
         if val: self.setStyleSheet(style('disabledEntry'))
         else:   self.setStyleSheet(style('entry'))
         super().setReadOnly(val)     
         
     def entry(self) -> str:             return self.text()
-    def set(self, text:str) -> None:    self.setDateTime(datetime.fromisoformat(text))
+    def set(self, text:str):    self.setDateTime(datetime.fromisoformat(text))
 
 class Entry(QLineEdit): # For entering text, floats, and positive-only floats
-    def __init__(self, text:str, format:str=None, maxLength:int=-1, *args, **kwargs):
+    def __init__(self, text:str, format:str=None, maxLength:int=-1, capsLock=False, *args, **kwargs):
         super().__init__(text=text, maxLength=maxLength, *args, **kwargs)
         self.format = format
+        self.capsLock=capsLock
         
         # Input restriction
         if format == 'float':       self.setValidator(QDoubleValidator())
         if format == 'pos_float':   self.setValidator(QDoubleValidator(bottom=0))
 
-    def setReadOnly(self, val:bool) -> None: 
+    def changeEvent(self, e):
+        if hasattr(self, 'capsLock') and self.capsLock: self.set(self.text().upper())
+        super().changeEvent(e)
+
+    def setReadOnly(self, val:bool): 
         if val: self.setStyleSheet(style('disabledEntry'))
         else:   self.setStyleSheet(style('entry'))
         super().setReadOnly(val)     
     def entry(self) -> str:
-        toReturn = self.text().rstrip().lstrip()
+        toReturn = self.text().strip().replace(',','')
         if self.format in ('float', 'pos_float') and toReturn in ('','.','-'):
                 return '0'
         else:   return toReturn
     def entry_decimal(self) -> Decimal:
         return Decimal(self.entry())
-    def set(self, text) -> None:      self.setText(str(text))
+    def set(self, text):      self.setText(str(text))
     
     # Makes it so that unfocusing out of the entry box set the cursor position back to the beginning
     def focusOutEvent(self, e):
@@ -46,12 +51,12 @@ class DescEntry(QPlainTextEdit): # For entering lots of text
     def __init__(self, text:str, *args, **kwargs):
         super().__init__(text, *args, **kwargs)
 
-    def setReadOnly(self, val:bool) -> None: 
+    def setReadOnly(self, val:bool): 
         if val: self.setStyleSheet(style('disabledEntry'))
         else:   self.setStyleSheet(style('entry'))
         super().setReadOnly(val)     
     def entry(self) -> str:             return self.toPlainText().rstrip().lstrip()
-    def set(self, text:str) -> None:  self.setPlainText(text)
+    def set(self, text:str):  self.setPlainText(text)
     
 
 class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a ListEntry
@@ -69,7 +74,7 @@ class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a Li
             def send_current_item():    selectCommand(self.entry())
             self.activated.connect(send_current_item)
     
-    def setReadOnly(self, val:bool) -> None: 
+    def setReadOnly(self, val:bool): 
         '''Toggles appearance and ability to use the dropdown'''
         if val: self.setStyleSheet(style('disabledEntry'))
         else:   self.setStyleSheet(style('entry'))
@@ -78,11 +83,11 @@ class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a Li
         '''returns the selected item, or None if the default item is selected'''
         if self.currentText()==self.default:        return None
         return self.lookup_dict[self.currentText()]
-    def set(self, item) -> None:    
+    def set(self, item):    
         '''The currently selected item is set to this.\n
         It must be the value which will be selected, NOT THE DISPLAY TEXT'''
         self.setCurrentText({value:key for key,value in self.lookup_dict.items()}[item])
-    def update_dict(self, dictionary:dict=None) -> None: 
+    def update_dict(self, dictionary:dict=None): 
         '''Deletes all previous items, adds in new items\n
         Dict keys must be display names, values are the actual objects which the .entry() command returns'''
 
@@ -128,7 +133,7 @@ class ListEntry(QListWidget): # Single- or multi-item selection list
             return self.lookup_dict[self.currentItem().text()]
         else:
             return [self.lookup_dict[item.text()] for item in self.selectedItems()]
-    def set(self, current:list) -> None:
+    def set(self, current:list):
         '''Sets the selection to specified items'''
         # De-selects previously selected items
         for itemindex in self.selectionModel().selectedIndexes():
@@ -140,7 +145,7 @@ class ListEntry(QListWidget): # Single- or multi-item selection list
         for i in range(self.count()):   # Iterates through QListWidget's QListWidgetItem's, activating the ones we want
             if self.item(i).text() in current:    self.item(i).setSelected(True)
     
-    def update_dict(self, dictionary:dict=None) -> None: 
+    def update_dict(self, dictionary:dict=None): 
         '''Deletes all previous items, adds in new items\n
         Dict keys must be display names, values are what the the .entry() command returns for that key'''
 
@@ -227,12 +232,12 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'].addWidget(label, row, column, rowspan, columnspan)
         return label
 
-    def add_entry(self, text, column, row, columnspan=1,rowspan=1, format=None, maxLength=-1, *args, **kwargs):
+    def add_entry(self, text, column, row, columnspan=1,rowspan=1, format=None, maxLength=-1, capsLock=False, *args, **kwargs):
         '''A box for entering text.\n
         Format can be 'description', 'date', 'float', or 'pos_float' to restrict entry formatting'''
         if format == 'description':     box = DescEntry(text, styleSheet=style('entry'), *args, **kwargs)
         elif format == 'date':          box = DateEntry(text, styleSheet=style('entry'), *args, **kwargs)
-        else:                           box = Entry(text, format, maxLength=maxLength, styleSheet=style('entry'), *args, **kwargs)
+        else:                           box = Entry(text, format, maxLength=maxLength, styleSheet=style('entry'), capsLock=capsLock, *args, **kwargs)
         
         self.GUI['primaryLayout'].addWidget(box, row, column, rowspan, columnspan)
         return box
@@ -243,7 +248,7 @@ class Dialog(QDialog):
         self.GUI['primaryLayout'].addWidget(dropdown, row, column, rowspan, columnspan)
         return dropdown
 
-    def add_menu_button(self, text, command=None, spacer='  ', *args, **kwargs) -> None:
+    def add_menu_button(self, text, command=None, spacer='  ', *args, **kwargs):
         '''Adds a button to the menu at the bottom of the dialog
         \nNOTE: Spaces are added to the button title for a better look
         '''

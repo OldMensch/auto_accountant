@@ -173,8 +173,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # submenu - TIMEZONE
         def set_timezone(tz:str, *args, **kwargs):
             set_setting('timezone', tz)                         # Change the timezone setting itself
-            for transaction in self.PORTFOLIO.transactions():   # Recalculate the displayed ISO time on all of the transactions
-                transaction.calc_iso_date()
+            for transaction in self.PORTFOLIO.transactions():   # Recalculate the formatted timestamp on all of the transactions with new timezone
+                transaction.recalc_iso_date()
             metric_formatting_lib['date']['name'] = metric_formatting_lib['date']['headername'] = metric_formatting_lib['date']['name'].split('(')[0]+'('+tz+')'
             self.render()   #Only have to re-render w/o recalculating metrics, since metrics is based on the UNIX time
         timezonemenu = self.TASKBAR['timezone'] = QMenu('Timezone')
@@ -790,10 +790,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                     item_state = item.get_metric(METRIC)
                 else: # numeric metrics 
                     item_state = item.get_metric(METRIC) 
+                
+                if item_state is None: continue # Missing/empty data not filtered out
 
                 match RELATION:
                     case '<':   
                         if item_state >= STATE: blacklist.add(item)
+                    case '!=':   
+                        if item_state == STATE: blacklist.add(item)
                     case '=':   
                         if item_state != STATE: blacklist.add(item)
                     case '>':   
@@ -1090,7 +1094,7 @@ if __name__ == '__main__':
 
     #Applies more stylish darkmode to the rest of the application
     import qdarkstyle
-    qdarkstyle.load_stylesheet_pyside2() #~50ms on startup
+    qdarkstyle._load_stylesheet(qt_api='pyside6') #~50ms on startup
     app.setStyleSheet(AAstylesheet.get_custom_qdarkstyle())
     app.setFont(QFont('Calibri', 10))
 

@@ -9,6 +9,7 @@ import sys, os
 import textwrap
 import math
 from functools import partial as p
+from typing import List, Dict, Any
 
 
 
@@ -685,7 +686,7 @@ def timezone_to_unix(iso:str, tz_override:str=None) -> int:
 # ASSETS WHICH HAVE CHANGED TICKERS OVER TIME
 forks_and_duplicate_tickers_lib = { #If your purchase was before this date, it converts the ticker upon loading the JSON file. Its possible a new asset took the ticker since.
     'c':{ 
-        'CGLDzc':   ('CELO', timezone_to_unix('9999-12-31 00:00:00', 'UTC')), # Ticker is different on certain platforms
-        'LUNAzc':   ('LUNC', timezone_to_unix('2022-05-28 00:00:00', 'UTC')), # LUNA crash event, May 28 2022, "Terra 2.0"
+        'CGLD':   ('CELO', timezone_to_unix('9999-12-31 00:00:00', 'UTC')), # Ticker is different on certain platforms
+        'LUNA':   ('LUNC', timezone_to_unix('2022-05-28 00:00:00', 'UTC')), # LUNA crash event, May 28 2022, "Terra 2.0"
         }, 
 }

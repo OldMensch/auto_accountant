@@ -50,7 +50,7 @@ class Wallet():
     def desc(self) -> str:      return self._description
 
     #JSON Function
-    def toJSON(self) -> dict:   return {'name':self._name, 'description':self._description}
+    def toJSON(self) -> Dict[str,str]:   return {'name':self._name, 'description':self._description}
 
 class Transaction():
     def __init__(self, raw_data:dict):
@@ -249,6 +249,8 @@ class Transaction():
     #Access functions for basic information
     def unix_date(self) -> int:         return self._data['date']
     def iso_date(self) -> str:          return self._formatted['date']
+    def recalc_iso_date(self) -> str:   
+        self._formatted['date'] = format_metric(self._data['date'], metric_formatting_lib['date']['format'],metric_formatting_lib['date']['color'])
     def type(self) -> str:              return self._data['type']
     def wallet(self) -> str:            return self._data['wallet']
     def desc(self) -> str:              return self._data['description']
@@ -279,7 +281,7 @@ class Transaction():
         return MISSINGDATA
 
     #JSON Functions
-    def toJSON(self) -> dict: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
+    def toJSON(self) -> Dict[str,Any]: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
         return {data:self._data[data] for data in trans_type_minimal_set[self._data['type']] if self._data[data] != None}
    
 class Asset():  
@@ -304,6 +306,37 @@ class Asset():
     #Modification functions
     def add_transaction(self, transaction_obj:Transaction): self._ledger[transaction_obj.get_hash()] = transaction_obj
     def delete_transaction(self, transaction_obj:Transaction): self._ledger.pop(transaction_obj.get_hash())
+    def calculate_metric(self, metric, operation, A=None, B=None):
+        """Calculates and sets metric for asset, based on given data"""
+        if not A or not B: 
+            raise Exception(f'||ERROR|| When calculating asset operation, \'A\' and \'B\' must be specified')
+        result = 0
+        match operation:
+            case 'sum': # add across all transactions on this asset's ledger
+                for t in self._ledger:    
+                    try: result += t.get_metric(metric) # Add to sum if it exists
+                    except: pass  
+            case 'A+B': # add two portfolio metrics
+                try: result = self.get_metric(A) + self.get_metric(B)
+                except: pass
+            case 'A-B': # add two portfolio metrics
+                try: result = self.get_metric(A) - self.get_metric(B)
+                except: pass
+            case 'A*B': # multiply two portfolio metrics
+                try: result = self.get_metric(A) * self.get_metric(B)
+                except: pass
+            case 'A/B': # divide one portfolio metric by another
+                try: result = self.get_metric(A) / self.get_metric(B)
+                except: pass
+            case '(AB)/(1+B)':
+                try: result = (self.get_metric(A) * self.get_metric(B)) / (1 + self.get_metric(B))
+                except: pass
+            case '(A/B)-1':
+                try: result = (self.get_metric(A) / self.get_metric(B)) - 1
+                except: pass
+            case other:
+                raise Exception(f'||ERROR|| Unknown operation for calculating asset metric, \'{operation}\'')
+        self._metrics[metric] = result
 
     # Comparison functions
     def __eq__(self, __o: object) -> bool:
@@ -338,7 +371,7 @@ class Asset():
         return format_metric(self.get_metric(info), metric_formatting_lib[info]['format'], metric_formatting_lib[info]['color'], charlimit=charlimit, newline=newline)
     
     #JSON functions
-    def toJSON(self) -> dict:
+    def toJSON(self) -> Dict[str,str]:
         toReturn = {
             'ticker':self._ticker, 
             'class':self._class, 
@@ -430,6 +463,37 @@ class Portfolio():
     def delete_filter(self, filter:Filter):            self._filters.pop(filter.get_hash())
 
 
+    def calculate_metric(self, metric, operation, A=None, B=None, C=None):
+        if operation != 'sum' and (not A or not B): 
+            raise Exception(f'||ERROR|| When calculating portfolio operation, \'A\' and \'B\' must be specified')
+        result = 0
+        match operation:
+            case 'sum': # add across assets
+                for a in self.assets():    
+                    try: result += a.get_metric(metric) # Add to sum if it exists
+                    except: pass  
+            case 'A+B': # add two portfolio metrics
+                try: result = self.get_metric(A) + self.get_metric(B)
+                except: pass
+            case 'A-B': # add two portfolio metrics
+                try: result = self.get_metric(A) - self.get_metric(B)
+                except: pass
+            case 'A*B': # multiply two portfolio metrics
+                try: result = self.get_metric(A) * self.get_metric(B)
+                except: pass
+            case 'A/B': # divide one portfolio metric by another
+                try: result = self.get_metric(A) / self.get_metric(B)
+                except: pass
+            case 'A/(B-C)':
+                try: result = self.get_metric(A) / (self.get_metric(B) - self.get_metric(C))
+                except: pass
+            case '(A/B)-1':
+                try: result = (self.get_metric(A) / self.get_metric(B)) - 1
+                except: pass
+            case other:
+                raise Exception(f'||ERROR|| Unknown operation for calculating portfolio metric, \'{operation}\'')
+        self._metrics[metric] = result
+
     #JSON functions
     def loadJSON(self, JSON:dict, merge=False, overwrite=False): #Loads JSON data, erases any existing data first
         
@@ -490,7 +554,7 @@ class Portfolio():
                         self.wallet(NAME)._description = DESC
   
 
-    def toJSON(self) -> dict:
+    def toJSON(self) -> Dict[str,pd.DataFrame]:
         # Up to this point we store information as dictionaries
         # Now, we convert each list of assets/transactions/wallets and their respective properties into a dataframe, 
         # then into a CSV to save a TON of disk space. The CSV is stored as a string.
@@ -513,12 +577,10 @@ class Portfolio():
     def transaction(self, transaction_hash:int) -> Transaction:  return self._transactions[transaction_hash]
     def wallet(self, wallet_name:str) -> Wallet:            return self._wallets[hash(wallet_name)]
 
-    def assets(self) -> list:                               return self._assets.values()
-    def transactions(self) -> list:                         return self._transactions.values()
-    def wallets(self) -> list:                              return self._wallets.values()
-    def filters(self) -> list:                              return self._filters.values()
-
-    def all_wallet_names(self) -> list:                     return [w.name() for w in self._wallets.values()]
+    def assets(self) -> List[Asset]:                        return self._assets.values()
+    def transactions(self) -> List[Transaction]:            return self._transactions.values()
+    def wallets(self) -> List[Wallet]:                      return self._wallets.values()
+    def filters(self) -> List[Filter]:                      return self._filters.values()
 
 
     def get_metric(self, info:str, *args, **kwargs):
@@ -545,9 +607,9 @@ class ViewState():
     def getDefHeader(self):
         try:        return default_headers[self.getState()]
         except:     raise KeyError(f'||ERROR|| getDefHeader not implemented for unknown ViewState {self.getState()}')
-    def getHeaderID(self) -> list:
+    def getHeaderID(self) -> str:
         return 'header_'+self.getState()
-    def getHeaders(self) -> list:
+    def getHeaders(self) -> List[str]:
         return setting('header_'+self.getState())
     def getAsset(self) -> str:
         return self.asset
@@ -577,7 +639,7 @@ class GRID_HEADER(QPushButton):
         self.info = ''
     
 
-    def mouseReleaseEvent(self, e: QMouseEvent) -> None: # We basically just run our own filter, then run the base QPushButton command
+    def mouseReleaseEvent(self, e: QMouseEvent): # We basically just run our own filter, then run the base QPushButton command
         #If mouse release is not over the button, release button without running command
         if e.pos().x() < 0 or e.pos().x() > self.width() or e.pos().y() < 0 or e.pos().y() > self.height(): 
             return super().mouseReleaseEvent(e)
@@ -591,7 +653,7 @@ class GRID_HEADER(QPushButton):
         
         return super().mouseReleaseEvent(e)
     
-    def mouseMoveEvent(self, e: QMouseEvent) -> None:
+    def mouseMoveEvent(self, e: QMouseEvent):
         if not self.isDragging:
             if e.pos().x() < 0 or e.pos().x() > self.width() or e.pos().y() < 0 or e.pos().y() > self.height(): 
                 self.isDragging = True
@@ -606,15 +668,15 @@ class GRID_HEADER(QPushButton):
 
         return super().mouseMoveEvent(e)
     
-    def leaveEvent(self, e: QMouseEvent) -> None:
+    def leaveEvent(self, e: QMouseEvent):
         self.isDragging = False
         return super().leaveEvent(e)
     
-    def dragEnterEvent(self, e: QDragEnterEvent) -> None:
+    def dragEnterEvent(self, e: QDragEnterEvent):
         if e.mimeData().hasFormat("AAheader"):
             e.acceptProposedAction()
         return super().dragEnterEvent(e)
-    def dropEvent(self, e: QDropEvent) -> None:
+    def dropEvent(self, e: QDropEvent):
         this_header, header_being_dropped = self.info, e.mimeData().headerID
         if this_header != header_being_dropped: 
             self.upper.upper.move_header(header_being_dropped, this_header)
@@ -631,7 +693,7 @@ class GRID_ROW(QFrame): # One of the rows in the GRID, which can be selected, co
         self.hover_state = False
         self.select_state = False
         self.error_state = False
-    
+        
     def hover(self, state):    # Toggles hover state
         recolor = self.hover_state != state
         self.hover_state = state
