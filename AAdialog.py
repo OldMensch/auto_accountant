@@ -40,7 +40,9 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
         else:   return toReturn
     def entry_decimal(self) -> Decimal:
         return Decimal(self.entry())
-    def set(self, text):      self.setText(str(text))
+    def set(self, text): # setting text resets cursor position
+        self.setCursorPosition(0)
+        self.setText(str(text))
     
     # Makes it so that unfocusing out of the entry box set the cursor position back to the beginning
     def focusOutEvent(self, e):

@@ -128,6 +128,11 @@ class Transaction():
                 d = self._data[data]
                 if d:   self._metrics[data] = Decimal(d)
 
+        # ALL ASSETS - quick access list for all assets related to this transaction
+        self._metrics['all_assets'] = list(set((self._data[metric+'ticker'],self._data[metric+'class']) 
+                                               for metric in ('loss_','fee_','gain_') 
+                                               if self._data[metric+'ticker'] is not None and self._data[metric+'class'] is not None))
+
         if self.ERROR: return # DONT CALCULATE if there is any errors: this stuff can wait for now
         # NEW CALCULATED STUFF
         # ==================
@@ -155,9 +160,6 @@ class Transaction():
         # PRICE QUANTITY VALUE - The price, quantity, and value, displayed on asset panes
         LT,FT,GT = self._data['loss_ticker'],self._data['fee_ticker'],self._data['gain_ticker']
         LC,FC,GC = self._data['loss_class'],self._data['fee_class'],self._data['gain_class']
-        self._metrics['all_assets'] = list(set((self._data[metric+'ticker'],self._data[metric+'class']) 
-                                               for metric in ('loss_','fee_','gain_') 
-                                               if self._data[metric+'ticker'] is not None))
         for t,c in self._metrics['all_assets']:
             P,Q,V = 0,0,0
             if t==LT and c==LC:
@@ -219,14 +221,15 @@ class Transaction():
                 if metric_value:    formatted_metric = format_metric(metric_value, textFormat, colorFormat)
             self._formatted[metric] = formatted_metric
     def calc_correct_bad_tickers(self):
+        fixed_any_tickers=False
         for part in ('loss_','fee_','gain_'):
-            t,c,d = self._data[part+'ticker'],self._data[part+'class'],self._data['date']
-            if c and d and t in forks_and_duplicate_tickers_lib[c] and forks_and_duplicate_tickers_lib[c][t][1] < d:
-                self._data[part+'ticker'] = forks_and_duplicate_tickers_lib[c][t][0]
-                break
-        else: return # no assets replace
-        self.precalculate()
-        self.calc_formatting()
+            TICKER,CLASS,DATE = self._data[part+'ticker'],self._data[part+'class'],self._data['date']
+            if CLASS in forks_and_duplicate_tickers_lib and TICKER in forks_and_duplicate_tickers_lib[CLASS]:
+                new_ticker, flip_if_before_this_date  = forks_and_duplicate_tickers_lib[CLASS][TICKER]
+                if DATE < flip_if_before_this_date:
+                    self._data[part+'ticker'] = new_ticker
+                    fixed_any_tickers = True
+        if fixed_any_tickers: self.precalculate()
         
     #Comparison operator overrides
     def __eq__(self, __o: object) -> bool:

@@ -92,9 +92,9 @@ class metrics:
 
         # ACCOUNTING
         # Link transfer_out's with transfer_in's where possible (sets dest_wallet hidden metric)
-        self.automatically_link_transfers() 
+        self.link_transfers() 
         # Beating heart: processes all transaction data
-        self.perform_automatic_accounting(tax_report) # TODO: Laggiest part of the program! (~116ms for ~12000 transactions)
+        self.auto_account(tax_report) # TODO: Laggiest part of the program! (~116ms for ~12000 transactions)
 
         # ERROR SETTING - set asset/wallet error to true if they contain bad transactions
         for t in self.PORTFOLIO.transactions():
@@ -152,7 +152,7 @@ class metrics:
     # ACCOUNTING
     ########################################
     # Link TRANSFER_OUTs with TRANSFER_INs
-    def automatically_link_transfers(self):
+    def link_transfers(self):
         """Market-independent. Links TRANSFER_OUTs with TRANSFER_INs via dest_wallet variable, to allow for cross-platform, cross-wallet accounting.
         \nLinks transactions if: 
         \n    - Same asset ticker
@@ -185,7 +185,7 @@ class metrics:
         
         # If unlinked, ERROR!!!
         transfer_IN.update(transfer_OUT) # merge dictionaries
-        for t in transfer_IN:
+        for t in transfer_IN.values():
             t.ERROR,t.ERROR_TYPE = True,'transfer'
             if t.type() == 'transfer_in':
                 t.ERR_MSG = f'Failed to automatically find a \'Transfer Out\' transaction under {t.get_raw('gain_ticker')} that pairs with this \'Transfer In\'.'
@@ -194,9 +194,9 @@ class metrics:
                         
     # "Holy Grail" of the program
     # Calculates all metrics dependent on the order of transactions, regulated by the accounting method
-    def perform_automatic_accounting(self, tax_report:str=''):   #Dependent on the Accounting Method, calculates the Holdings per Wallet, Total Holdings, Average Buy Price, Real P&L (Capital Gains)
+    def auto_account(self, tax_report:str=''):   #Dependent on the Accounting Method, calculates the Holdings per Wallet, Total Holdings, Average Buy Price, Real P&L (Capital Gains)
         """Market-independent. Calculates all metrics dependent on the particular order of transactions"""
-        #Creates a list of all transactions, sorted chronologically #NOTE: Lag is ~18ms for ~12000 transactions
+        #Creates a list of all transactions, sorted chronologically first, then by transaction type second #NOTE: Lag is ~18ms for ~12000 transactions
         transactions = list(self.PORTFOLIO.transactions()) #0ms
         transactions.sort()
 
@@ -360,7 +360,8 @@ class metrics:
         except: pass
 
     # PORTFOLIO
-    def calculate_portfolio_value_by_wallet(self):    #Calculates the current market value held within each wallet, across all assets
+    # NOTE: store this function's data in _metrics for WALLETs
+    def calculate_portfolio_value_by_wallet(self):    #Calculates total value per wallet, across the whole portfolio
         wallets = {wallet.name():0 for wallet in self.PORTFOLIO.wallets()}  #Creates a dictionary of wallets, defaulting to 0$ within each
         for asset in self.PORTFOLIO.assets():       #Then, for every asset, we look at its 'wallets' dictionary, and sum up the value of each wallet's tokens by wallet
             for wallet in asset.get_metric('wallets'):

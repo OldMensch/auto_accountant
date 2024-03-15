@@ -153,13 +153,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         file.addAction('Merge Portfolio',   self.merge)
         importmenu = QMenu('Import')
         file.addMenu(importmenu)
-        importmenu.addAction('Import Binance History',      self.import_binance)
-        importmenu.addAction('Import Coinbase History',     self.import_coinbase)
-        importmenu.addAction('Import Coinbase Pro History', self.import_coinbase_pro)
-        importmenu.addAction('Import Etherscan History',    self.import_etherscan)
-        importmenu.addAction('Import Gemini History',       self.import_gemini)
-        importmenu.addAction('Import Gemini Earn History',  self.import_gemini_earn)
-        importmenu.addAction('Import Yoroi Wallet History', self.import_yoroi)
+        for src in third_party_source_lib:
+            importmenu.addAction(f'Import {src} History', p(self.import_3rd_party_data, source=src))
         file.addSeparator()
         file.addAction('QUIT', self.quit)
 
@@ -234,7 +229,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             submenu.addAction(reset)
             submenu.addSeparator()
             self.metricactions[state] = {
-                header:QAction(metric_formatting_lib[header]['name'], parent=submenu, triggered=p(self.toggle_header, header), 
+                header:QAction(metric_formatting_lib[header]['name'], parent=submenu, triggered=p(self._header_left_click, header), 
                                checkable=True, checked=header in setting('header_'+state)) for header in default_headers[state]
                 }
             for action in self.metricactions[state].values():   submenu.addAction(action)
@@ -276,50 +271,38 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     def DEBUG_report_staking_interest(self):
         DEBUGStakingReportDialog(self)
 
-    def import_binance(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_binance, 'Binance Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Binance Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if dir == '':   return
-            AAimport.binance(self, dir, wallet.name())
-    def import_coinbase(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_coinbase, 'Coinbase Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if dir == '':   return
-            AAimport.coinbase(self, dir, wallet.name())
-    def import_coinbase_pro(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_coinbase_pro, 'Coinbase Pro Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Coinbase Pro Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if dir == '':   return
-            AAimport.coinbase_pro(self, dir, wallet.name())
-    def import_etherscan(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_etherscan, 'Ethereum Wallet') 
-        else:
-            ETHdir = QFileDialog.getOpenFileName(self, 'Import Etherscan ETH Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if ETHdir == '':   return
-            ERC20dir = QFileDialog.getOpenFileName(self, 'Import Etherscan ERC-20 Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if ERC20dir == '':   return
-            AAimport.etherscan(self, ETHdir, ERC20dir, wallet.name())
-    def import_gemini(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_gemini, 'Gemini Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Gemini Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
-            if dir == '':   return
-            AAimport.gemini(self, dir, wallet.name())
-    def import_gemini_earn(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_gemini_earn, 'Gemini Earn Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Gemini Earn Transaction History', setting('lastSaveDir'), "XLSX Files (*.xlsx)")[0]
-            if dir == '':   return
-            AAimport.gemini_earn(self, dir, wallet.name())
-    def import_yoroi(self, wallet=None):
-        if wallet == None:    ImportationDialog(self, self.import_yoroi, 'Yoroi Wallet') 
-        else:
-            dir = QFileDialog.getOpenFileName(self, 'Import Yoroi Wallet Transaction History', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
-            if dir == '':   return
-            AAimport.yoroi(self, dir, wallet.name())
+    def import_3rd_party_data(self, wallet=None, source=None):
+        # Query user to specify wallet to import into
+        if wallet == None:    
+            ImportationDialog(self, source, self.import_3rd_party_data, f'{source} Wallet') 
+            return
+        
+        # Data dependent on 3rd party platform
+        fileFormat = third_party_source_lib[source]['openFileFormat']
+        twoFiles = 'twoFileAddendum' in third_party_source_lib[source]
+        twoFileAddendums = ('','')
+        if twoFiles: twoFileAddendums = third_party_source_lib[source]['twoFileAddendum']
+
+        # Query user for file directory(ies) to import data from
+        dir = QFileDialog.getOpenFileName(self, f'Import {source}{twoFileAddendums[0]} Transaction History', setting('lastSaveDir'), fileFormat)[0]
+        if dir == '':   
+            Message(self, 'Import Cancelled')
+            return
+        if twoFiles:
+            dir2 = QFileDialog.getOpenFileName(self, f'Import {source}{twoFileAddendums[1]} Transaction History', setting('lastSaveDir'), fileFormat)[0]
+            if dir2 == '':   
+                Message(self, 'Import Cancelled')
+                return
+
+        match source:
+            case 'Binance':             AAimport.binance(self, dir, wallet.name())
+            case 'Coinbase':            AAimport.coinbase(self, dir, wallet.name())
+            case 'Coinbase Pro':        AAimport.coinbase_pro(self, dir, wallet.name())
+            case 'Etherscan':           AAimport.etherscan(self, dir, dir2, wallet.name()) # ETH history, then ERC-20 history
+            case 'Gemini':              AAimport.gemini(self, dir, wallet.name())
+            case 'Gemini Earn/Grow':    AAimport.gemini_earn(self, dir, wallet.name())
+            case 'Yoroi':               AAimport.yoroi(self, dir, wallet.name())
+            case other:                 raise Exception(f'||ERROR|| Unrecognized transaction history source, \'{source}\'.')
 
     def save(self, saveAs=False, *args, **kwargs):
         if saveAs or not os.path.isfile(setting('lastSaveDir')):
@@ -434,7 +417,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['info'] = QPushButton(icon=icon('info'), iconSize=icon('size'),  clicked=self.portfolio_stats_and_info)
         self.GUI['edit'] = QPushButton(icon=icon('settings'), iconSize=icon('size'))
         #contains the list of assets/transactions
-        self.GUI['GRID'] = GRID(self, self.set_sort, self._header_menu, self._left_click_row, self._right_click_row)
+        self.GUI['GRID'] = GRID(self, self.set_sort, self._header_right_click, self._row_left_click, self._row_right_click)
         #The little bar on the bottom
         self.GUI['bottomLayout'] = QHBoxLayout()
         self.GUI['bottomFrame'] = QFrame(layout=self.GUI['bottomLayout'])
@@ -490,22 +473,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         }
         for widget in tooltips:     self.MENU[widget].setToolTip(tooltips[widget])
 
-# GRID column header functions
-    def _header_menu(self, col, event=None):
-        header = self.view.getHeaderID()
-        info = setting(header)[col]
-        m = QMenu(parent=self)
-        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[self.view.getState()][info].trigger)
-        m.exec(event.globalPos())
-    def move_header(self, info, other_header):
-        header = self.view.getHeaderID()
-        new = setting(header)
-        index_to_insert_at = setting(header).index(other_header) # must calculate this BEFORE length of setting(header) is changed
-        new.remove(info)
-        new.insert(index_to_insert_at, info)
-        set_setting(header, new)
-        self.render()
-    def toggle_header(self, info, *args, **kwargs):
+    # GRID column header functions
+    def _header_left_click(self, info, *args, **kwargs):
+        """On header left-click: Triggers re-sort"""
         header = self.view.getHeaderID()
         
         current_headers = setting(header)
@@ -513,10 +483,31 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         else:                           current_headers.insert(0, info)
         set_setting(header, current_headers)
         self.render()
+    def _header_right_click(self, col, event=None):
+        """On header right-click: Triggers menu popup, based on metric"""
+        header = self.view.getHeaderID()
+        info = setting(header)[col]
+        m = QMenu(parent=self)
+        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[self.view.getState()][info].trigger)
+        m.exec(event.globalPos())
+    def move_header(self, metric, other_metric):
+        """Places header \'metric\' at position of other header \'other_metric\'"""
+        header = self.view.getHeaderID()
+        new = setting(header)
+        index_to_insert_at = setting(header).index(other_metric) # must calculate this BEFORE length of setting(header) is changed
+        new.remove(metric)
+        new.insert(index_to_insert_at, metric)
+        set_setting(header, new)
+        self.render()
 
-# GRID row functions
-    def _left_click_row(self, GRID_ROW:int, event=None):
-        """Opens asset view or transaction editor, when left-clicking a GRID row the second time"""
+    # GRID row functions
+    def _row_left_click(self, GRID_ROW:int, event=None):
+        """Controlled by GRID:
+        \n - On row left-click: Select/deselect item at index GRID_ROW
+        \n - On row shift-left-click: Select all items between GRID_ROW and prev.-selected index, or reset selection to GRID_ROW
+        \nThis function:
+        \n - On row double-left-click: Open asset ledger, wallet ledger, or transaction editor
+        """
         i = self.page*setting('itemsPerPage')+GRID_ROW
         if i + 1 > len(self.sorted):  return  #Can't select something if it doesn't exist!
         self.GUI['GRID'].set_selection()
@@ -524,8 +515,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.view.setAsset(self.sorted[i].ticker(), self.sorted[i].class_code())
             self.render(state=self.view.ASSET, sort=True)
         else:                               TransEditor(self, self.sorted[i])
-    def _right_click_row(self, highlighted:int, selection1:int, selection2:int, event=None): # Opens up a little menu of stuff you can do to this asset/transaction
-        """Opens a little menu, when you right click on a GRID row"""
+    def _row_right_click(self, highlighted:int, selection1:int, selection2:int, event=None): # Opens up a little menu of stuff you can do to this asset/transaction
+        """On row right-click: Triggers menu popup, based on row content"""
         #we've right clicked with a selection of multiple items
         m = QMenu(parent=self)
         if selection1 != selection2:
@@ -554,7 +545,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         m.exec(event.globalPos())
     def delete_selection(self, GRID_ROW1:int, GRID_ROW2:int=None):
-        """Deletes the specified items on the GRID"""
+        """Deletes all items, from GRID_ROW1 to GRIDROW_2"""
         if self.view.isPortfolio(): return # Deletion CURRENTLY only applies to the transaction views
 
         I1 = self.page*setting('itemsPerPage')+GRID_ROW1
@@ -578,8 +569,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 # RENDERING: STATIC WIDGET LAYOUT
 #=============================================================
     def __init_place_gui__(self):#Self - The main QApplication
+        """Places QT widgets, for the overarching GUI"""
+        #Master Frame - Contains EVERYTHING
         self.setCentralWidget(self.GUI['masterFrame']) #Makes the master frame fill the entire main window
-        #Master Frame - Contains everything
         self.GUI['masterLayout'].setRowStretch(1, 1) # The side panel and GRID absorb vertical stretching
         self.GUI['masterLayout'].setColumnStretch(1, 1) # The GRID absorbs horizontal stretching
         self.GUI['masterLayout'].addWidget(self.GUI['menuFrame'], 0, 0, 1, 2)
@@ -620,6 +612,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         self.GUI['sidePanelFrame'].raise_()
     def __init_place_menu__(self):
+        """Places QT widgets, for the Menu Bar at the top of the screen"""
         self.GUI['menuLayout'].addWidget(self.MENU['new'])
         self.GUI['menuLayout'].addWidget(self.MENU['load'])
         self.GUI['menuLayout'].addWidget(self.MENU['save'])
@@ -639,12 +632,40 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 # RENDERING: DYNAMIC WIDGETS
 #=============================================================
-    def set_state(self, state):
-        """Prepares buttons/labels in side panel for new render state"""
-        self.page = 0 #We return to the first page if changing rendering states
+    def set_view(self, state):
+        """On view change: Re-renders view-dependent GUI elements, sets view state"""
+        self.page = 0 # Always return to first page when view-state triggered
         self.GUI['info'].clicked.disconnect()
         self.view.state = state
-        
+
+        self.update_side_panel_widgets()
+         
+    def render(self, state:str=None, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
+        '''Re-renders: Side panel and GRID
+        \n If called without any variables, only GRID is re-rendered
+        \n - state: sets view to specified state
+        \n - sort: re-filters & re-sorts displayed items
+        '''
+        # Re-render misc GUI elements when state is changed
+        if state and self.view.getState() != state:
+            self.set_view(state)
+
+        #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
+        if not self.view.getState() or (self.view.isAsset() and not self.PORTFOLIO.hasAsset(self.view.getAsset()[0], self.view.getAsset()[1])):   
+            self.render(state=self.view.PORTFOLIO, sort=True)
+            return
+
+        # WORST OFFENDER for rendering:
+        if sort:  self.filter_and_sort()     # Sorts the assets/transactions (10.9900ms for ~5300 transactions, when re-sorting in grand-ledger view).
+
+        self.update_side_panel_stats()     # Updates lefthand side panel metrics (basically 0)
+        self.update_page_buttons()  # Enables/disables page flipping buttons (0.04540 when buttons are enabled/disabled)
+
+        # Fills in the GRID with metrics
+        self.GUI['GRID'].grid_render(self.view, self.sorted, self.page) # (1.4930ms for ~5300 transactions, switching panes (portfolio/grandledger))
+    
+    def update_side_panel_widgets(self):
+        """On view change: Updates widgets to be displayed on the lefthand side panel"""
         if self.view.isPortfolio() or self.view.isGrandLedger():
             if self.view.isPortfolio():
                 self.GUI['title'].setText('Portfolio View')
@@ -676,31 +697,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.GUI['edit'].show()
             self.GUI['grand_ledger'].hide()
             self.GUI['back'].show()
-        
-    def render(self, state:str=None, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
-        '''Re-renders: Side panel and GRID
-        \nRefreshes page if called without any input.
-        \nRe-sorts/filters assets/transactions when "sort" called'''
-        # Re-render misc GUI elements when state is changed
-        if state and self.view.getState() != state:
-            self.set_state(state)
-
-        #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
-        if not self.view.getState() or (self.view.isAsset() and not self.PORTFOLIO.hasAsset(self.view.getAsset()[0], self.view.getAsset()[1])):   
-            self.render(state=self.view.PORTFOLIO, sort=True)
-            return
-
-        # WORST OFFENDOR for rendering:
-        if sort:  self.sort()     # Sorts the assets/transactions (10.9900ms for ~5300 transactions, when re-sorting in grand-ledger view).
-
-        self.update_side_panel()     # Updates lefthand side panel metrics (basically 0)
-        self.update_page_buttons()  # Enables/disables page flipping buttons (0.04540 when buttons are enabled/disabled)
-
-        # Fills in the GRID with metrics
-        self.GUI['GRID'].grid_render(self.view, self.sorted, self.page) # (1.4930ms for ~5300 transactions, switching panes (portfolio/grandledger))
-    
-    def update_side_panel(self):
-        """Updates brief summary stats to be displayed in the lefthand side panel"""
+    def update_side_panel_stats(self): # Separate from 'update_side_panel_widgets', so that side panel metrics update whenever metrics change. 
+        """On re-render: Updates stats to be displayed on the lefthand side panel"""
         textbox = self.GUI['info_pane']
         toDisplay = '<meta name="qrichtext" content="1" />'
         
@@ -754,7 +752,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if setting('sort_grand_ledger')[0] == info:    set_setting('sort_grand_ledger',[info, not setting('sort_grand_ledger')[1]])
             else:                                   set_setting('sort_grand_ledger',[info, False])
         self.render(sort=True)
-    def sort(self): #Sorts the assets or transactions by the metric defined in settings
+    def filter_and_sort(self): #Sorts the assets or transactions by the metric defined in settings
         '''Sorts AND FILTERS the assets or transactions by the metric defined in settings'''
         #########################
         # SETUP
@@ -825,9 +823,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if toReturn:    return toReturn
             else:           return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
 
-        if   info == 'date':                        pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
-        elif metric_formatting_lib[info]['format'] == 'alpha':      filtered_unsorted.sort(reverse=not reverse, key=alpha_key)
-        else:                                                       filtered_unsorted.sort(reverse=not reverse, key=numeric_key)
+        if   info == 'date': pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
+        elif metric_formatting_lib[info]['format'] in ('alpha','type','desc','class'):      
+            filtered_unsorted.sort(reverse=reverse, key=alpha_key)
+        else:                                                       
+            filtered_unsorted.sort(reverse=not reverse, key=numeric_key)
 
         # Applies the sorted & filtered results, to be used in the rendering pipeline
         self.sorted = filtered_unsorted  
@@ -882,7 +882,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT)+ ' USD<br>'
 
         # MASS INFORMATION
-        for data in ('cash_flow', 'day_change','day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
+        for data in ('cash_flow', 'day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
             textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['color']
             if colorFormat:     S = style('info')
             else:               S = DEFAULT_FORMAT
@@ -925,7 +925,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(quantity*value, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
 
         # MASS INFORMATION
-        for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day_change', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
+        for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['color']
             if colorFormat:     S = style('info')
             else:               S = DEFAULT_FORMAT

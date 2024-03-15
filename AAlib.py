@@ -9,8 +9,8 @@ import sys, os
 import textwrap
 import math
 from functools import partial as p
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Tuple
+import requests
 
 
 from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar,
@@ -116,6 +116,10 @@ class InvokeMethod(QObject): # Credit: Tim Woocker from on StackOverflow. Allows
         # trigger garbage collector
         self.setParent(None)
 
+def isValidURL(URL) -> bool:
+    """Returns true if pinged URL returns \'200\' status code, false otherwise"""
+    toReturn = requests.request('GET', URL).status_code == 200
+    return toReturn
 
 def HTMLify(text, styleSheet:str=''): # Uses a styleSheet to format HTML text
     '''Given text and style sheet, returns string with HTML formatting. QT automatically applies HTML formatting.'''
@@ -346,6 +350,7 @@ class_lib = {
     }
 }
 
+# DEFAULT TRANSACTION DATA
 # Copy of default values for Transaction object stored to improve efficiency
 default_trans_data = {
     'date' :            None,
@@ -383,16 +388,17 @@ default_trans_metrics.update({
     'dest_wallet':      None, # Re-calculated for transfers on metric calculation
 })
 
+# METRICS
 # These are all of the available metrics to be displayed in the GRID for each display mode
 default_headers = {
     'portfolio' : (
         "name","balance","ticker","price","average_buy_price",
         "portfolio%","marketcap","volume24h","day%","week%","month%",
         "cash_flow","value","projected_cash_flow",
-        "unrealized_profit_and_loss%","realized_profit_and_loss",
+        'unrealized_profit_and_loss',"unrealized_profit_and_loss%","realized_profit_and_loss",
         "cost_basis",
         # Ones I will want to hide
-        'class','day_change','tax_capital_gains','tax_income','unrealized_profit_and_loss',
+        'class',
         ),
     'asset': ('date', 'type', 'wallet', 'balance', 'quantity', 'value', 'price','description'),
     'grand_ledger': ('date','type','wallet',
@@ -403,22 +409,18 @@ default_headers = {
         ),
 }
 
-
 metric_formatting_lib = { # Includes formatting information for every metric in the program
     # Shared by portfolios, assets, and transactions
     'value':{                       'asset_specific':True, 'format': 'penny',      'color' : None,             'name':'Value',             'headername':'Value'},
     'description':{                 'asset_specific':False,'format': 'desc',       'color' : None,             'name':'Description',       'headername':'Description'},
 
     #Unique to portfolios and assets
-    'day_change':{                  'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'24-Hour Δ',         'headername':'24-Hr Δ'},
     'day%':{                        'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'24-Hour %',         'headername':'24-Hr %'},
     'week%':{                       'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'7-Day %',           'headername':'7-Day %'},
     'month%':{                      'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'30-Day %',          'headername':'30-Day %'},
     'cash_flow':{                   'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Cash Flow',         'headername':'Cash\nFlow'},
     'projected_cash_flow':{         'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Projected Cash Flow',     'headername':'Projected\nCash Flow'},
     'realized_profit_and_loss':{    'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Realized P&L',      'headername':'Real\nP&L'},
-    'tax_capital_gains':{           'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Capital Gains',     'headername':'Capital\nGains'},
-    'tax_income':{                  'asset_specific':False,'format': 'penny',      'color' : None,             'name':'Income',            'headername':'Taxable\nIncome'},
     'unrealized_profit_and_loss':{  'asset_specific':False,'format': 'penny',      'color' : 'profitloss',     'name':'Unrealized P&L',    'headername':'Unreal\nP&L'},
     'unrealized_profit_and_loss%':{ 'asset_specific':False,'format': 'percent',    'color' : 'profitloss',     'name':'Unrealized P&L %',  'headername':'Unreal\nP&L %'},
     'number_of_transactions': {     'asset_specific':False,'format': 'integer',    'color' : None,             'name':'# Transactions',    'headername':'# Transactions'},
@@ -474,14 +476,11 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on the
 
         #Unique to portfolios and assets
         'value': "The USD value of all assets at current market prices.",
-        'day_change': "The USD value gained/lost over the past day.",
         'day%': "The relative change in value over the past day.",
         'week%': "The relative change in value over the past week.",
         'month%': "The relative change in value over the past month.",
         'cash_flow': "The total USD which has gone in/out of all assets. 0$ is breakeven.",
         'projected_cash_flow': "Cash Flow + Value = Net Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
-        'tax_capital_gains': "The total value taxable as capital gains.",
-        'tax_income': "The total value taxable as income.",
         'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
         'unrealized_profit_and_loss': "Measures the USD gained on unsold assets since their purchase.",
         'unrealized_profit_and_loss%': "The relative unrealized P&L of your asset. A basic measure of performance since purchasing the asset.",
@@ -489,14 +488,11 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on the
     'asset':{
         #Unique to portfolios and assets
         'value': "The USD value of this asset at current market price.",
-        'day_change': "The absolute change in value over the past day.",
         'day%': "The relative change in value over the past day.",
         'week%': "The relative change in value over the past week.",
         'month%': "The relative change in value over the past month.",
         'cash_flow': "The total USD which has gone in/out of this asset. 0$ is breakeven.",
         'projected_cash_flow': "Cash Flow + Value = Proj. Cash Flow. This is how much profit/loss you would have ever made, if you sold everything you own right now.",
-        'tax_capital_gains': "The total value taxable as capital gains.",
-        'tax_income': "The total value taxable as income.",
         'realized_profit_and_loss': "Measures the USD gained/lost on sold assets. Comparable to cash flow. ",
         'unrealized_profit_and_loss': "Value - Cost Basis = Unreal P&L. Total unrealized P&L for current balance.",
         'unrealized_profit_and_loss%': "Value / Cost Basis = Unreal P&L %. Basic indicator of asset performance. Green means in-profit, red not in-profit.",
@@ -539,7 +535,7 @@ metric_desc_lib = { # Includes descriptions for all metrics: this depends on the
     }
 }
 
-
+# TRANSACTION TYPE
 #Dictionary that sorts simultaneous transactions by what makes sense
 trans_type_formatting_lib = {  
     'purchase':             {'priority':0,  'name':'Purchase',},#In only
@@ -586,6 +582,16 @@ trans_type_minimal_set = {
     'income':               ('type', 'date', 'wallet', 'description',                                                                                                                     'gain_ticker', 'gain_class', 'gain_quantity', 'gain_price'),
 }
 
+# THIRD PARTY DATA
+third_party_source_lib = {
+    'Binance' :          {'openFileFormat':'CSV Files (*.csv)'},
+    'Coinbase' :         {'openFileFormat':'CSV Files (*.csv)'},
+    'Coinbase Pro' :     {'openFileFormat':'CSV Files (*.csv)'},
+    'Etherscan' :        {'openFileFormat':'CSV Files (*.csv)', 'twoFileAddendum':(' ETH', ' ERC-20')},
+    'Gemini' :           {'openFileFormat':"XLSX Files (*.xlsx)"},
+    'Gemini Earn/Grow' : {'openFileFormat':"XLSX Files (*.xlsx)"},
+    'Yoroi' :            {'openFileFormat':'CSV Files (*.csv)'},
+}
 
 # SETTINGS
 settingslib = { # A library containing all of the default settings

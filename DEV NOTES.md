@@ -32,6 +32,22 @@
 
 ### User-Friendliness
 
+* HEADER COLORING
+	- Make it more obvious which metric we're sorting by, and the direction it's sorting in.
+	- Something like a light blue shade when sorting by it. and an up/down arrow based on direction
+	- re-coloring/-formatting of header title controlled by GRID
+
+* WEBSITE LINKS FOR MORE INFO
+	- When in "Portfolio_Assets" view, right clicking on a row will give you the option to:
+		- Go to YahooFinance.com for stocks/fiats
+		- Go to StockAnalysis.com for stocks/fiats/cryptocurrencies
+		- Go to CoinMarketCap.com for cryptocurrencies <- this requires knowing CMC's special long name for the crypto, retrievable from market data library
+	- Then, it's as easy as:
+		```python
+		import webbrowser
+		webbrowser.open("http://THE_WEBSITE.com")
+		```
+
 * HELP BUTTONS
 	- Provide detailed information about metric calculation
 	- Provide detailed information in the transaction editor about transactions 
@@ -76,7 +92,7 @@
 
 * DESTROY METRICS CLASS
 	- most methods are specific to assets, portfolios, even wallets. these methods should be moved to their respective object classes
-	- the only method that should remain is perform_automatic_accounting, which when given a portfolio object will do its thing
+	- the only method that should remain is auto_account, which when given a portfolio object will do its thing
 
 * IMPROVE ERROR HANDLING:
 	- Transactions/Assets need to have new functions:
@@ -136,7 +152,7 @@ This allows us to create, say dict['key']['subkey'] even if 'key' doesn't curren
 
 
 ### Multi-Threading
-- AAmetrics: perform_automatic_accounting
+- AAmetrics: auto_account
 	Modify it such that it takes advantage of multithreading to improve performance.
 	This will be tricky :
 	- figuring out how to divvy up the transactions to be processed

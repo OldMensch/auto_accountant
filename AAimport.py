@@ -6,7 +6,7 @@ from AAobjects import *
 from AAdialogs import Message
 from AAmarketData import getMissingPrice
 
-def trans_from_raw(portfolio, date_unix=None,type=None,wallet=None,description='',loss=(None,None,None),fee=(None,None,None),gain=(None,None,None)):
+def trans_from_raw(date_unix=None,type=None,wallet=None,description='',loss=(None,None,None),fee=(None,None,None),gain=(None,None,None)):
     raw_data = { # RAW STRING DATA
         'date' :            date_unix,
         'type' :            type,
@@ -26,6 +26,14 @@ def trans_from_raw(portfolio, date_unix=None,type=None,wallet=None,description='
         'fee_price' :       fee[2],
         'gain_price' :      gain[2],
     }
+    # Replace NA pandas data with None
+    for metric,data in raw_data.items():
+        if pd.isna(data): raw_data[metric] = None
+    if raw_data['description'] == None: raw_data['description']=''
+    # Clear class data if ticker is None: otherwise this causes errors
+    for part in ('loss_','fee_','gain_'):
+        if raw_data[f'{part}ticker'] is None:
+            raw_data[f'{part}class'] = None
     # Clean data (just in case! should be unneccessary)
     if type:    raw_data = {metric:raw_data[metric] for metric in trans_type_minimal_set[type]}
     return Transaction(raw_data)
@@ -49,15 +57,20 @@ def isEtherscanERC20(data): # Returns true if this is a Etherscan ERC-20 tokens 
     else:                       return False
 
 def loadCoinbaseFile(fileDir):
-    #I have to do this malarkey, since Coinbase's CSV file is missing delimiters, which messes up Pandas.
-    #It cuts out the first 6 rows/lines from the CSV file, since they're just useless
-    #But I don't want to modify the original file, so we use StringIO to pretend the string we create is a file and 'trick' pandas into parsing it.
-    raw = open(fileDir, 'r').readlines()[7:]
-    data = ''
-    for line in raw: data += line + '\n'
-    return pd.read_csv(StringIO(data), dtype='string') #We read the data all as strings to preserve accuracy
-def loadEtherscanFile(fileDir):
-    #Etherscan's CSV file is fucky and has an extra column for every transaction, but not an extra row. We have to fix that by adding in another column.
+    """Removes whitespace rows at the top of Coinbase CSV. Returns user's username and DataFrame"""
+    #CUTS OUT the FIRST THREE ROWS from the CSV file, since they're just useless
+    raw = open(fileDir, 'r').readlines()
+    for i in range(len(raw)):
+        if raw[i][0:5] == 'User,':
+            username = raw[i].split(',')[1]
+        if raw[i][0:10] == 'Timestamp,':
+            firstindex = i
+            break
+    data = ''.join([line for line in raw[firstindex:]])
+    return username, pd.read_csv(StringIO(data), dtype='string') #We read the data all as strings to preserve accuracy
+def loadEtherscanFile(fileDir) -> pd.DataFrame:
+    """Fixes Etherscan CSV missing delimiters issue"""
+    #Etherscan's CSV file is fucky, and sometimes has more delimiters in the headers than the rows
     raw = open(fileDir, 'r').readlines()
     data = ''
     if raw[0].count(',') < raw[1].count(','):   #We can tell how many columns of data there are by the number of delimiters. If too few columns, add more empty columns
@@ -67,6 +80,9 @@ def loadEtherscanFile(fileDir):
 
 
 
+# IMPORT FUNCTIONS
+
+# NOTE: needs to check this works still
 def binance(mainAppREF, fileDir, wallet):   #Imports Binance transaction history
     '''Reads the CSV file you downloaded from Binance tax transaction history, imports it into your portfolio'''
     data = pd.read_csv(fileDir, dtype='string')
@@ -76,33 +92,40 @@ def binance(mainAppREF, fileDir, wallet):   #Imports Binance transaction history
     print('||WARNING|| Also I may have messed up how the dates were saved in my copy of the Binance CSV file.... so it might be very broken...')
 
     for t in data.iterrows():
+        # 0-5   User_Id, Time, Category, Operation, Order_Id, Transaction_Id,
+        # 6-8   Primary_Asset, Realized_Amount_For_Primary_Asset, Realized_Amount_For_Primary_Asset_In_USD_Value,
+        # 9-11  Base_Asset, Realized_Amount_For_Base_Asset, Realized_Amount_For_Base_Asset_In_USD_Value,
+        # 12-14 Quote_Asset, Realized_Amount_For_Quote_Asset, Realized_Amount_For_Quote_Asset_In_USD_Value,
+        # 15-17 Fee_Asset, Realized_Amount_For_Fee_Asset, Realized_Amount_For_Fee_Asset_In_USD_Value,
+        # 18-20 Payment_Method, Withdrawal_Method, Additional_Note
+
         #This is still here in case I actually broke the date when I re-saved the CSV file
-        #date =      t[1].iloc[1].replace('-','/')
-        date = t[1].iloc[1].replace('/',' ').replace(':',' ').split(' ')
+        #date =      t[1]['Time'].replace('-','/')
+        date = t[1]['Time'].replace('/',' ').replace(':',' ').split(' ')
         date = date[2]+' '+date[0]+' '+date[1]+' '+date[3]+' '+date[4]+' '+date[5] #TODO TODO TODO: This date might be wrong! I probably messed up my copy of the binance CSV file.
         date = timezone_to_unix(date, 'UTC')
-        category =  t[1].iloc[2]
-        operation = t[1].iloc[3]
-        PA, PQ, PV = t[1].iloc[6], t[1].iloc[7], t[1].iloc[8]  #Primary Asset
+        category =  t[1]['Category']
+        operation = t[1]['Operation']
+        PA, PQ, PV = t[1]['Primary_Asset'], t[1]['Realized_Amount_For_Primary_Asset'], t[1]['Realized_Amount_For_Primary_Asset_In_USD_Value']  #Primary Asset
         try:    PP = str(Decimal(PV.replace('$',''))/Decimal(PQ))
         except: pass
-        BA, BQ, BV = t[1].iloc[9], t[1].iloc[10],t[1].iloc[11] #Base Asset
+        BA, BQ, BV = t[1]['Base_Asset'], t[1]['Realized_Amount_For_Base_Asset'], t[1]['Realized_Amount_For_Base_Asset_In_USD_Value'] #Base Asset
         try:    BP = str(Decimal(BV.replace('$',''))/Decimal(BQ))
         except: pass
-        QA, QQ, QV = t[1].iloc[12],t[1].iloc[13],t[1].iloc[14] #Quote Asset
+        QA, QQ, QV = t[1]['Quote_Asset'], t[1]['Realized_Amount_For_Quote_Asset'], t[1]['Realized_Amount_For_Quote_Asset_In_USD_Value'] #Quote Asset
         try:    QP = str(Decimal(QV.replace('$',''))/Decimal(QQ))
         except: pass
-        FA, FQ, FV = t[1].iloc[15],t[1].iloc[16],t[1].iloc[17] #Fee Asset
+        FA, FQ, FV = t[1]['Fee_Asset'], t[1]['Realized_Amount_For_Fee_Asset'], t[1]['Realized_Amount_For_Fee_Asset_In_USD_Value'] #Fee Asset
         try:    FP = str(Decimal(FV.replace('$',''))/Decimal(FQ))
         except: pass
 
         if operation == 'USD Deposit':  continue
         elif operation == 'Staking Rewards':
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'income', wallet, operation, gain=[PA, PQ, PP])
+            trans = trans_from_raw(date, 'income', wallet, operation, gain=[PA, PQ, PP])
         elif category == 'Quick Buy': #For quick buys, the base_asset is the USD loss, the quote_asset is the crypto gain, fee is USD fee
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'purchase', wallet, operation, [None, BQ, None], [None, FQ, None], [QA, QQ, QP])
+            trans = trans_from_raw(date, 'purchase', wallet, operation, [None, BQ, None], [None, FQ, None], [QA, QQ, QP])
         elif category == 'Spot Trading' and operation == 'Buy' and QA == 'USD': #For spot buys, base_asset is the gain, quote_asset is the loss, fee is crypto fee
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'purchase_crypto_fee', wallet, operation, [None, QQ, None], [FA, FQ, FP], [BA, BQ, None])
+            trans = trans_from_raw(date, 'purchase_crypto_fee', wallet, operation, [None, QQ, None], [FA, FQ, FP], [BA, BQ, None])
 
         else:
             Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import unknown Binance wallet transaction type: ' + category + ' - ' + operation + '.')
@@ -111,7 +134,6 @@ def binance(mainAppREF, fileDir, wallet):   #Imports Binance transaction history
         PORTFOLIO_TO_MERGE.import_transaction(trans)
     
     finalize_import(mainAppREF, PORTFOLIO_TO_MERGE)
-
 
 def coinbase_pro(mainAppREF, fileDir, wallet):    #Imports Coinbase Pro transaction history
     '''Reads the CSV file you downloaded from Coinbase Pro, imports it into your portfolio'''
@@ -127,17 +149,18 @@ def coinbase_pro(mainAppREF, fileDir, wallet):    #Imports Coinbase Pro transact
 
     # BASIC TRANSACTIONS - Scans all the transactions, adds some of the basic ones like deposits/withdrawals
     for t in data.iterrows():
-        ID = t[1].iloc[2] #The date but more specific
-        date = timezone_to_unix(t[1].iloc[2], 'UTC') #Coinbase Pro time is UTC by default
-        type = t[1].iloc[1]
-        asset = t[1].iloc[5]
-        quantity = t[1].iloc[3].removeprefix('-')
-        isLoss = t[1].iloc[3][0]=='-' #True if the first character of the 
+        # portfolio,type,time,amount,balance,amount/balance unit,transfer id,trade id,order id
+        ID = t[1]['time']
+        date = timezone_to_unix(t[1]['time'], 'UTC') #Coinbase Pro time is UTC by default
+        type = t[1]['type']
+        asset = t[1]['amount/balance unit']
+        quantity = t[1]['amount'].removeprefix('-')
+        isLoss = t[1]['amount'][0]=='-' # True if amount is negative
 
         # First, simple transactions are completed
         if asset == 'USD' and type in ('deposit','withdrawal'): continue
-        elif type == 'deposit':    PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, gain=[asset,quantity,None]))
-        elif type == 'withdrawal': PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_out', wallet, loss=[asset,quantity,None]))
+        elif type == 'deposit':    PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(date, 'transfer_in', wallet, gain=[asset,quantity,None]))
+        elif type == 'withdrawal': PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(date, 'transfer_out', wallet, loss=[asset,quantity,None]))
 
         #Not simple. Ok, add it to the list of losses/fees/gains
         elif type == 'fee':     fees[ID] = [asset, quantity, None]
@@ -155,8 +178,8 @@ def coinbase_pro(mainAppREF, fileDir, wallet):    #Imports Coinbase Pro transact
         for a in (L,F,G): 
             if a[0]=='USD': a[0]=None #Get rid of USD's
         
-        if L[0] == None:    PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, date, 'purchase', wallet, '', L, F, G))
-        else:               PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, date, 'sale', wallet, '', L, F, G))
+        if L[0] == None:    PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(date, 'purchase', wallet, '', L, F, G))
+        else:               PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(date, 'sale', wallet, '', L, F, G))
         
     finalize_import(mainAppREF, PORTFOLIO_TO_MERGE)
 
@@ -166,74 +189,80 @@ def coinbase(mainAppREF, fileDir, wallet):    #Imports Coinbase transaction hist
         Message(mainAppREF, 'IMPORT ERROR!','This is Coinbase Pro history, not Coinbase history.')
         return 
     PORTFOLIO_TO_MERGE = Portfolio()
-    data = loadCoinbaseFile(fileDir)
+    username, data = loadCoinbaseFile(fileDir)
 
     mainAppREF.show_progress()
     mainAppREF.set_progress_range(0,len(data.count(axis=0)))
     i = 0
     for t in data.iterrows():
+        # Timestamp,Transaction Type,Asset,Quantity Transacted,Spot Price Currency,Spot Price at Transaction,Subtotal,Total (inclusive of fees),Fees,Notes
         i+=1
         mainAppREF.set_progress(i)
         #INFORMATION GATHERING
-        date = timezone_to_unix(t[1].iloc[0].replace('T',' ').replace('Z',''), 'UTC')
-        trans_type = t[1].iloc[1]
-        asset = t[1].iloc[2]
-        quantity = t[1].iloc[3]
-        fee = t[1].iloc[8]  #The fee (USD)
-        spot_price = t[1].iloc[5]
+        date = timezone_to_unix(t[1]['Timestamp'].replace('T',' ').replace('Z',''), 'UTC')
+        TYPE = t[1]['Transaction Type']
+        asset = t[1]['Asset']
+        quantity = t[1]['Quantity Transacted']
+        fee = t[1]['Fees and/or Spread']  #The fee (USD)
+        spot_price = t[1]['Spot Price at Transaction']
         ############################
         # Patch to fix issue of innaccurate spot prices, fees, ans subtotals
         # if Decimal(spot_price) < 0.10:
         #     print('||WARNING|| Transaction found for which Coinbase has inaccurate price data!')
-        #     spot_price = getMissingPrice(t[1].iloc[0], asset, 'c')
+        #     spot_price = getMissingPrice(t[1]['Timestamp'], asset, 'c')
         #     subtotal = str((Decimal(quantity) * Decimal(spot_price)) + Decimal(fee))
         # else:
-        #     subtotal = t[1].iloc[6]  #The profit before the fee
+        #     subtotal = t[1]['Subtotal']  #The profit before the fee
         if Decimal(spot_price) < 0.10:
             print('||WARNING|| Transaction found for which Coinbase has inaccurate price data! AUTOMATIC PRICE CORRECTION DISABLED!')
-        subtotal = t[1].iloc[6]  #The profit before the fee
+        subtotal = t[1]['Subtotal']  #The profit before the fee
         ############################
-        desc = t[1].iloc[9]
-        loss_ticker, fee_ticker, gain_ticker = None, None, None
-        if trans_type in ('Advanced Trade Buy','Advanced Trade Sell'): #Getting the second asset of the market pair for trades
-            market_pair = desc.split(' ').pop().split('-')
-            fee_ticker = market_pair[1] #Fee asset, like in Gemini, is always the second asset in the market pair
-            if trans_type == 'Advanced Trade Buy':
-                gain_ticker = t[1].iloc[2]
-                if market_pair[0] == gain_ticker:    loss_ticker = market_pair[1]
-                else:                               loss_ticker = market_pair[0]
+        desc = t[1]['Notes']
+        loss_ticker, gain_ticker = None,None
+        if TYPE in ('Advance Trade Buy', 'Advance Trade Sell'):
+            if TYPE == 'Advance Trade Buy':
+                gain_ticker =   desc.split(' on ')[1].split('-')[0] # Bought this,
+                loss_ticker =   desc.split(' on ')[1].split('-')[1] # With this
             else:
-                loss_ticker = t[1].iloc[2]
-                if market_pair[0] == loss_ticker:    gain_ticker = market_pair[1]
-                else:                               gain_ticker = market_pair[0]
-        elif trans_type == 'Convert': #Description is of format "convert quantity thing, to quantity thing"
-            loss_quantity = desc.split(' to ')[0].split(' ')[1]
-            loss_ticker =    desc.split(' to ')[0].split(' ')[2]
-            gain_quantity = desc.split(' to ')[1].split(' ')[0]
-            gain_ticker =    desc.split(' to ')[1].split(' ')[1]
+                loss_ticker =   desc.split(' on ')[1].split('-')[0] # Sold this,
+                gain_ticker =   desc.split(' on ')[1].split('-')[1] # and got this
+            
+            fee_ticker = desc.split('-')[1]
 
-        if   trans_type == 'Buy' or loss_ticker == 'USD': # Buy and "advanced trade buy" with a -USD market pair
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'purchase', wallet, desc, [None,subtotal,None],[None,fee,None],[asset,quantity,None])
-        elif trans_type == 'Sell' or gain_ticker == 'USD': # Sell and "advanced trade sell" with a -USD market pair
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'sale', wallet, desc, [asset,quantity,None],[None,fee,None],[None,subtotal,None])
-        elif trans_type == 'Receive' and desc[-13:] == 'Coinbase Card':     #Card reward is card reward
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'card_reward', wallet, desc, gain=[asset,quantity,spot_price])
-        elif trans_type == 'Receive':
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, desc, gain=[asset,quantity,None])
-        elif trans_type == 'Send':
-            if not pd.isna(fee): Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import \'Send\' transaction, because it had a fee, and that is currently an unimplemented feature.')
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_out', wallet, desc, loss=[asset,quantity,None])
-        elif trans_type in ('Learning Reward', 'Coinbase Earn', 'Rewards Income') or trans_type == 'Receive':   #Coinbase Learn & Earn treated as income by the IRS, according to Coinbase
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'income', wallet, desc, gain=[asset,quantity,spot_price])
-        elif trans_type == 'Advanced Trade Buy': #Trades.... even worse than Gemini! Missing quantity recieved data.
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'trade', wallet, desc, [loss_ticker,None,None],[fee_ticker,None,None],[gain_ticker,quantity,None])
-        elif trans_type == 'Advanced Trade Sell':
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'trade', wallet, desc, [loss_ticker,quantity,spot_price],[fee_ticker,None,None],[gain_ticker,None,None])
-        elif trans_type == 'Convert':
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'trade', wallet, desc, [loss_ticker,loss_quantity,spot_price],[None,fee,None],[gain_ticker,gain_quantity,None])
+        # Advance Trade Buy
+        # Advance Trade Sell
 
+        if asset=='USD': continue # Ignore USD withdrawals/deposits
+        elif   TYPE == 'Buy' or loss_ticker == 'USD': # Buy and "advanced trade buy" with a -USD market pair
+            trans = trans_from_raw(date, 'purchase', wallet, desc, [None,subtotal,None],[None,fee,None],[asset,quantity,None])
+        elif TYPE == 'Sell' or gain_ticker == 'USD': # Sell and "advanced trade sell" with a -USD market pair
+            trans = trans_from_raw(date, 'sale', wallet, desc, [asset,quantity,None],[None,fee,None],[None,subtotal,None])
+        elif TYPE == 'Receive' and desc.split(' from ')[1]:
+            match desc.split(' from ')[1]:
+                # Recieved is a transfer_in
+                case 'GDAX'|'an external account':
+                    trans = trans_from_raw(date, 'transfer_in', wallet, desc, gain=[asset,quantity,None])
+                # Recieved is an income event
+                case ''|'Coinbase'|'Coinbase Earn'|'Coinbase Card'|'Coinbase Rewards':
+                    trans = trans_from_raw(date, 'income', wallet, desc, gain=[asset,quantity,spot_price])
+                # Username ones are duplicates....
+                case str(username): continue 
+                case other:
+                    Message(mainAppREF, 'IMPORT ERROR!', f'Failed to import due to unknown \'Recieve\' type, {other}')
+                    return
+        elif TYPE == 'Receive':
+            trans = trans_from_raw(date, 'income', wallet, desc, gain=[asset,quantity,spot_price])
+        elif TYPE == 'Send':
+            if desc.split(' to ')[1] == username: continue # Username ones are duplicates....
+            trans = trans_from_raw(date, 'transfer_out', wallet, desc, loss=[asset,quantity,None])
+        elif TYPE in ('Learning Reward', 'Staking Income', 'Inflation Reward'):   #Coinbase Learn & Earn treated as income by the IRS, according to Coinbase
+            trans = trans_from_raw(date, 'income', wallet, desc, gain=[asset,quantity,spot_price])
+        elif TYPE in 'Advance Trade Buy': #Trades.... even worse than Gemini! Missing quantity/price data...
+            trans = trans_from_raw(date, 'trade', wallet, desc, [loss_ticker,None,None],[fee_ticker,None,None],[gain_ticker,quantity,None])
+        elif TYPE == 'Advance Trade Sell':
+            trans = trans_from_raw(date, 'trade', wallet, desc, [loss_ticker,quantity,spot_price],[fee_ticker,None,None],[gain_ticker,None,None])
         else:
-            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Coinbase history due to unimplemented transaction type, \'' + TYPE + '\'')
             return
 
         PORTFOLIO_TO_MERGE.import_transaction(trans)
@@ -266,68 +295,106 @@ def etherscan(mainAppREF, ethFileDir, erc20FileDir, wallet):      #Imports the E
     eth_data.fillna('', inplace=True)
     erc20_data.fillna('', inplace=True)
 
+    # ETH Transactions
     # Indexed by txhash:    Unixtime, from, to, value_in, value_out, fee, price, error_code, method
-    eth_trans = {t[1].iloc[0]:(int(t[1].iloc[2]), # Unix time
-                               t[1].iloc[4], # from
-                               t[1].iloc[5], # to
-                               t[1].iloc[7], # value_in
-                               t[1].iloc[8], # value_out
-                               t[1].iloc[10], # fee
-                               t[1].iloc[12], # price
-                               t[1].iloc[14], # error code
-                               t[1].iloc[15]) # method
-                               for t in eth_data.iterrows()}
+    eth_trans = {t[1]['Txhash']:{
+        'unix':int(t[1]['UnixTimestamp']),
+        'from':t[1]['From'],
+        'to':t[1]['To'],
+        'eth_in':t[1]['Value_IN(ETH)'],
+        'eth_out':t[1]['Value_OUT(ETH)'],
+        'eth_fee':t[1]['TxnFee(ETH)'],
+        'eth_price':t[1]['Historical $Price/Eth'],
+        'err':t[1]['ErrCode'], # error, if there is one
+        'method':t[1]['Method'] # "transaction type" more or less, on their end
+        } for t in eth_data.iterrows()}
 
+    # ERC-20 Transactions
     # Indexed by txhash:    Unixtime, from, to, value, ticker
-    #NOTE: The 'value' has commas in it, like for '75,688.999011', gotta remove those
-    erc20_trans = {}
-    for t in erc20_data.iterrows():
-        erc20_trans[t[1].iloc[0]] = (int(t[1].iloc[1]), # Unixtime
-                                     t[1].iloc[3], #from
-                                     t[1].iloc[4], #to
-                                     t[1].iloc[5].replace(',',''), #value
-                                     t[1].iloc[8]) #token symbol
+    erc20_trans = {t[1]['Txhash']:{
+        'unix':int(t[1]['UnixTimestamp']),
+        'from':t[1]['From'],
+        'to':t[1]['To'],
+        'quantity':t[1]['TokenValue'].replace(',',''), #value #NOTE: Can have commas in it, gotta remove those
+        'ticker':t[1]['TokenSymbol']
+        } for t in erc20_data.iterrows()}
         
-
-    for t in list(erc20_trans): #Transfer_in of ERC-20 tokens, from an external wallet
-        if t not in eth_trans:
-            trans = erc20_trans.pop(t)
-            this_wallet_address = trans[2]
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_in', wallet, gain=[trans[4],trans[3],None]))
-    for t in list(eth_trans):
-        trans = eth_trans[t]
-        if not pd.isna(trans[7]):      #There is an error - just an expense of the fee, then.
-            eth_trans.pop(t)
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'expense', wallet, loss=['ETH',trans[5],trans[6]]))
-        elif trans[2] == this_wallet_address:  #If its TO this wallet, then it's a transfer_in of ETH. Possibly a gift_in, but that's up to the user to correct. No fees.
-            eth_trans.pop(t)
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_in', wallet, gain=['ETH',trans[3],None]))
-        elif trans[8]=='Swap Exact ETH For Tokens': #A swap! A Trade! This is only for swapping ETH to something, not anything to anything.
-            erc20 = erc20_trans.pop(t)
-            eth_trans.pop(t)
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'trade', wallet, '', ['ETH',trans[4],trans[6]],['ETH',trans[5],trans[6]],[erc20[4],erc20[3],None]))
-    for t in list(eth_trans):       #Independent expenses, probably related to staking
-        if t not in erc20_trans:
-            trans = eth_trans.pop(t)
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'expense', wallet, loss=['ETH',trans[5],trans[6]]))
-    for t in list(erc20_trans):     #Transfers of ERC-20 tokens, assumed to be for staking or something similar
-        trans = erc20_trans.pop(t)
-        try: eth = eth_trans.pop(t) # there should be a corresponding ETH transaction. If not... we're missing data. this is an issue
-        except: break
-        if trans[1] == this_wallet_address:
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_out', wallet, '', [trans[4],trans[3],None],['ETH',eth[5],eth[6]]))
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_in', None, gain=[trans[4],trans[3],None]))
-        else:
-            #This is like, the only case where a transfer_in has a fee. This is since the fee to unstake assets is applied to the Metamask wallet,
-            #While the transfer_out happens in the staking pool 
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_in', wallet, gain=[trans[4],trans[3],None],fee=['ETH',eth[5],eth[6]]))
-            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(PORTFOLIO_TO_MERGE, trans[0], 'transfer_out', None, loss=[trans[4],trans[3],None]))
+    # 1) FIND WALLET ADDRESS
+    # This wallet's address will be present in EVERY transaction
+    # Intersection of four sets of from/to/from/to data will return this wallet's address
+    if len(eth_trans) + len(erc20_trans) < 2:
+        Message(mainAppREF, 'Import Error', 'Could not import data from etherscan: with less than 2 transactions, the wallet\'s address cannot be determined.')
+    eth_from =      {  eth_trans[txhash]['from'] for txhash in eth_trans}
+    eth_to =        {  eth_trans[txhash]['to']   for txhash in eth_trans}
+    erc20_from =    {erc20_trans[txhash]['from'] for txhash in erc20_trans}
+    erc20_to =      {erc20_trans[txhash]['to']   for txhash in erc20_trans}
+    this_wallet_address = eth_from.intersection(eth_to).intersection(erc20_from).intersection(erc20_to).pop()
     
-    if len(eth_trans) > 0: print('||IMPORT ERROR|| '+str(len(eth_trans)+len(erc20_trans)) + ' ETH transactions failed to parse.')
-    if len(erc20_trans) > 0: print('||IMPORT ERROR|| '+str(len(eth_trans)+len(erc20_trans)) + ' ERC-20 transactions failed to parse.')
+    # 2) TRANSACTIONS IN BOTH RECORDS
+    # Records:
+    #   - Trades (swaps)
+    #   - Transfer_in of ERC-20 tokens WITH FEE
+    #   - Transfer_out of ERC-20 tokens WITH FEE
+    for txhash in set(eth_trans.keys()).intersection(set(erc20_trans.keys())):
+        eth,erc20 = eth_trans[txhash],erc20_trans[txhash]
+        if eth['method'] == 'Swap Exact ETH For Tokens':
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'trade', wallet,
+                                                                 loss=['ETH',eth['eth_out'],eth['eth_price']],
+                                                                 fee=['ETH',eth['eth_fee'],eth['eth_price']],
+                                                                 gain=[erc20['ticker'],erc20['quantity'],None]))
+        elif erc20['from'] == this_wallet_address: # transfer of non-ETH, OUT of this wallet
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'transfer_out', wallet,
+                                                                 loss=[erc20['ticker'],erc20['quantity'],None], # loss
+                                                                 fee=['ETH',eth['eth_fee'],eth['eth_price']]))
+        elif erc20['to'] == this_wallet_address: # transfer of non-ETH, IN to this wallet
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'transfer_in', wallet,
+                                                                 gain=[erc20['ticker'],erc20['quantity'],None], # gain
+                                                                 fee=['ETH',eth['eth_fee'],eth['eth_price']]))
+
+        eth_trans.pop(txhash)
+        erc20_trans.pop(txhash)
+
+    # 3) REMAINING ERC-20 TRANSACTIONS
+    # Records:
+    #   - Transfer_in of ERC-20 tokens NO FEE
+    #   - Transfer_out of ERC-20 tokens NO FEE
+    for txhash in list(erc20_trans):
+        erc20 = erc20_trans[txhash]
+        if erc20['from'] == this_wallet_address: # transfer of non-ETH, OUT of this wallet
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(erc20['unix'], 'transfer_out', wallet, loss=[erc20['ticker'],erc20['quantity'],None])) # loss
+        elif erc20['to'] == this_wallet_address: # transfer of non-ETH, IN to this wallet
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(erc20['unix'], 'transfer_in',  wallet, gain=[erc20['ticker'],erc20['quantity'],None])) # gain
+
+        erc20_trans.pop(txhash)
+
+
+    # 4) REMAINING ETH TRANSACTIONS
+    # Records:
+    #   - Expenses, due to failed transactions
+    #   - Transfer_in of ETH tokens NO FEE (fee paid by sender)
+    #   - Transfer_out of ETH tokens WITH FEE
+    #   - Expenses, due to approvals and other such things
+    for txhash in list(eth_trans):
+        eth = eth_trans[txhash]
+
+        # Expenses, due to failed transactions
+        if eth['err']!='':
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'expense', wallet, f'ETH fee due to error, \'{eth['err']}\'', 
+                                                                 loss=['ETH',eth['eth_fee'],eth['eth_price']]))
+        # Transfer_in of ETH tokens NO FEE (fee paid by sender)
+        elif Decimal(eth['eth_in'])>0 and Decimal(eth['eth_out'])==0:
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'transfer_in',  wallet, gain=['ETH',eth['eth_in'],None])) # gain
+        # Transfer_out of ETH tokens WITH FEE
+        elif Decimal(eth['eth_in'])==0 and Decimal(eth['eth_out'])>0:
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'transfer_out', wallet, loss=['ETH',eth['eth_out'],None], fee=['ETH',eth['eth_fee'],eth['eth_price']])) # loss
+        # Expenses, due to approvals and other such things
+        else: # eth_in == eth_out == 0: only fee, and fee not associated with anything on erc20 ledger
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'expense', wallet, f'ETH fee due to \'{eth['method']}\'', 
+                                                                 loss=['ETH',eth['eth_fee'],eth['eth_price']]))
+
+        eth_trans.pop(txhash)
         
     finalize_import(mainAppREF, PORTFOLIO_TO_MERGE)
-
 
 
 def gemini_earn(mainAppREF, fileDir, wallet):   #Imports Gemini Earn transaction history
@@ -363,9 +430,9 @@ def gemini_earn(mainAppREF, fileDir, wallet):   #Imports Gemini Earn transaction
         price = data[ 'Price USD '+  asset_ticker][t[0]]
 
         # TRANSACTION HANDLING - Handles the three different transaction types within Gemini Earn Reports: Deposit, Redeem, Interest Credit
-        if trans_type == 'Deposit':             trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, '', gain=[asset, quantity, None])
-        elif trans_type == 'Redeem':            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_out', wallet, '', loss=[asset, quantity, None])
-        elif trans_type == 'Interest Credit':   trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'income', wallet, '', gain=[asset, quantity, price])
+        if trans_type == 'Deposit':             trans = trans_from_raw(date, 'transfer_in', wallet, gain=[asset, quantity, None])
+        elif trans_type == 'Redeem':            trans = trans_from_raw(date, 'transfer_out', wallet, loss=[asset, quantity, None])
+        elif trans_type == 'Interest Credit':   trans = trans_from_raw(date, 'income', wallet, gain=[asset, quantity, price])
         elif trans_type == 'Administrative Debit': # MUST RE-IMPLEMENT once assets are transferred back to Gemini proper
             print("||WARNING|| Gemini Earn transaction \'Administrative Debit\' currently not supported until Genesis bankruptcy case is over")
             continue
@@ -391,35 +458,38 @@ def gemini(mainAppREF, fileDir, wallet):   #Imports Gemini transaction history
         if t[1].iloc[3] in ('USD', ''):  continue
 
         #INFORMATION GATHERING
-        date = timezone_to_unix(t[1].iloc[0], 'UTC')
-        trans_type = t[1].iloc[2]
-        spec = t[1].iloc[4] #The 'specification' of the transaction. 'Earn Redemption', 'Gemini Pay', etc.
-        desc = trans_type+' - '+spec
-        LA = t[1].iloc[3]    #Loss asset
-        FA = ''         #Fee asset
-        GA = ''         #Gain asset
+        DATE = timezone_to_unix(t[1]['Date'], 'UTC')
+        TYPE = t[1]['Type']
+        SYMBOL = t[1]['Symbol'] # ticker or market pair
+        spec = t[1]['Specification'] #The 'specification' of the transaction. 'Earn Redemption', 'Gemini Pay', etc.
+        LA = t[1]['Symbol'] #Loss asset - initialized as market pair or ticker (can be either)
+        FA = ''             #Fee asset
+        GA = ''             #Gain asset
         for i in range(3,len(LA)-2): #t[1].iloc[3] is the asset debted/credited, or for sales/buys, its the market pair, like USDGUSD. Here, we split that between asset_1 and asset_2
             try:
                 a1,a2 = LA[:i],LA[i:]
                 FA = a2 #Second of the two is always the fee asset
-                FQ = data['Fee (' + a2 + ') ' + a2][t[0]].removeprefix('-') #Fee quantity. [1:] removes the - sign
-                if data[a1 + ' Amount ' + a1][t[0]][0] == '-':      LA,GA = a1,a2    #If the first character is -, then a1 is the loss asset, otherwise its the other way around
-                elif data[a2 + ' Amount ' + a2][t[0]][0] == '-':    LA,GA = a2,a1
-                GQ = data[GA + ' Amount ' + GA][t[0]]  # Gain quantity
+                FQ = t[1][f'Fee ({a2}) {a2}'].removeprefix('-') #Fee quantity. [1:] removes the - sign
+                if t[1][f'{a1} Amount {a1}'][0] == '-':      LA,GA = a1,a2    #If the first character is -, then a1 is the loss asset, otherwise its the other way around
+                else:                                        LA,GA = a2,a1
+                GQ = t[1][f'{GA} Amount {GA}']  # Gain quantity
                 break
             except: continue
-        LQ = data[LA + ' Amount ' + LA][t[0]].removeprefix('-') # Loss quantity, or the only quantity. negative sign removed``
+        LQ = t[1][f'{LA} Amount {LA}'].removeprefix('-') # Loss quantity, or the only quantity. negative sign removed``
 
         # TRANSACTION HANDLING
-        if spec == 'Gemini Pay':        trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'expense', wallet, desc, loss=[LA,LQ,None]) #Gemini Pay Expense... MISSING PRICE DATA
-        elif trans_type == 'Credit':    trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, desc, gain=[LA,LQ,None])
-        elif trans_type == 'Debit':     trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_out', wallet, desc, loss=[LA,LQ,None])
-        elif LA == 'USD':             trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'purchase', wallet, desc, [None,LQ,None],[None,FQ,None],[GA,GQ,None])
-        elif GA == 'USD':             trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'sale', wallet, desc, [LA,LQ,None],[None,FQ,None],[None,GQ,None])
-        elif trans_type in ('Buy','Sell'):   #Trades.... we have NO price information! :( BIG sad. Nothing but the crypto-crypto conversion rate.
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'trade', wallet, desc, [LA,LQ,None],[FA,FQ,None],[GA,GQ,None])
+        if SYMBOL == 'USD':                     continue # Ignore USD deposits/withdrawals
+        elif spec == 'Gemini Pay':              trans = trans_from_raw(DATE, 'expense', wallet, loss=[LA,LQ,None]) #Gemini Pay Expense... MISSING PRICE DATA
+        elif TYPE == 'Credit':                  trans = trans_from_raw(DATE, 'transfer_in', wallet, gain=[LA,LQ,None])
+        elif TYPE == 'Debit':                   trans = trans_from_raw(DATE, 'transfer_out', wallet, loss=[LA,LQ,None])
+        # Buys/sales using USD
+        elif TYPE == 'Buy' and LA == 'USD':     trans = trans_from_raw(DATE, 'purchase', wallet, '', [None,LQ,None],[None,FQ,None],[GA,GQ,None])
+        elif TYPE == 'Sell' and GA == 'USD':    trans = trans_from_raw(DATE, 'sale', wallet, '', [LA,LQ,None],[None,FQ,None],[None,GQ,None])
+        # Buys/sales using crypto
+        elif TYPE in ('Buy','Sell'):   #Trades.... we have NO price information! :( BIG sad. Nothing but the crypto-crypto conversion rate.
+            trans = trans_from_raw(DATE, 'trade', wallet, '', [LA,LQ,None],[FA,FQ,None],[GA,GQ,None])
         else:
-            Message(mainAppREF, 'IMPORT ERROR!', 'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'' + trans_type + '\'')
+            Message(mainAppREF, 'IMPORT ERROR!', f'Couldn\'t import Gemini (Normal Gemini) history due to unimplemented transaction type, \'{TYPE}\'')
             return
 
         PORTFOLIO_TO_MERGE.import_transaction(trans)
@@ -427,7 +497,7 @@ def gemini(mainAppREF, fileDir, wallet):   #Imports Gemini transaction history
 
     finalize_import(mainAppREF, PORTFOLIO_TO_MERGE)
 
-
+# NOTE: needs to check this works still
 def yoroi(mainAppREF, fileDir, wallet): #Imports Yoroi Wallet transaction history
     '''Reads the CSV file you downloaded from your Yoroi wallet, imports it into your portfolio'''
     data = pd.read_csv(fileDir, dtype='string')
@@ -452,11 +522,11 @@ def yoroi(mainAppREF, fileDir, wallet): #Imports Yoroi Wallet transaction histor
         # Unfortunately their report gives us NO price information at all! At least I can automatically get this from YahooFinance...
 
         if trans_type == 'Deposit' and not pd.isna(comment) and 'Staking Reward' in comment: #Staking reward
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'income', wallet, gain=[gain_ticker, gain_quantity, None])    #Missing price date
+            trans = trans_from_raw(date, 'income', wallet, gain=[gain_ticker, gain_quantity, None])    #Missing price date
         elif trans_type == 'Deposit':   #Transfer of crypto into the wallet
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'transfer_in', wallet, gain=[gain_ticker, gain_quantity, None])
+            trans = trans_from_raw(date, 'transfer_in', wallet, gain=[gain_ticker, gain_quantity, None])
         elif trans_type == 'Withdrawal' and loss_quantity == '0.0':
-            trans = trans_from_raw(PORTFOLIO_TO_MERGE, date, 'expense', wallet, loss=[fee_ticker, fee_quantity, None])    #Missing price date
+            trans = trans_from_raw(date, 'expense', wallet, loss=[fee_ticker, fee_quantity, None])    #Missing price date
         
         else:
             Message(mainAppREF, 'IMPORT ERROR!', 'Failed to import unknown Yoroi wallet transaction type: ' + trans_type + '.')

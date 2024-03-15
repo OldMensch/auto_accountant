@@ -10,11 +10,12 @@ class Message(Dialog): #Simple text popup, can add text with colors to it
     \nbig - when true, window set to 75% of the user's monitor size vertically/horizontally
     \ntabStopWidth - size of tab intentation in characters
     """
-    def __init__(self, upper, title, message, closeMenuButtonTitle='Ok', scrollable=False, size=None, tabStopWidth=None, wordWrap=True, *args, **kwargs):
+    def __init__(self, upper, title, message='', closeMenuButtonTitle='Ok', scrollable=False, size=None, tabStopWidth=None, wordWrap=True, *args, **kwargs):
         super().__init__(upper, title)
 
-        if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
-        else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
+        if message:
+            if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
+            else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
 
         if size is not None:         
             availableSpace = QGuiApplication.primaryScreen().availableGeometry()
@@ -25,8 +26,6 @@ class Message(Dialog): #Simple text popup, can add text with colors to it
 
         self.add_menu_button(closeMenuButtonTitle, self.close)
         self.show()
-    
-    def setText(self, text): self.text.setText(text)
 
 
 class AssetEditor(Dialog):    #For editing an asset's name and description ONLY. The user NEVER creates assets, the program does this automatically
@@ -505,7 +504,8 @@ class FilterEditor(Dialog): #For creating/editing filters
         self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
         if len(self.filterManager.upper.PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet('') #Turn off filtering indicator
-        self.upper.upper.render(sort=True) # Always re-render when filters are applied/removed
+        self.upper.upper.page = 0 # adding filter resets rendered page to 0
+        self.upper.upper.render(sort=True) # Always re-render and re-sort when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
 
@@ -556,6 +556,7 @@ class FilterEditor(Dialog): #For creating/editing filters
         if self.filter_to_edit: self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)
         
         self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
+        self.upper.upper.page = 0 # adding filter resets rendered page to 0
         self.upper.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
         self.upper.refresh_filters()
         self.close()
@@ -563,21 +564,22 @@ class FilterEditor(Dialog): #For creating/editing filters
 
 class ImportationDialog(Dialog): #For selecting wallets to import transactions to
     '''Opens dialog for specifying one or two wallets to which transactions will be imported, for Gemini, Gemini Earn, Coinbase, etc.'''
-    def __init__(self, upper, continue_command, wallet_name):
+    def __init__(self, upper, source, import_command, wallet_name):
         super().__init__(upper, 'Import to Wallet')
+        self.source = source
         self.add_label(wallet_name,0,0)
         self.wallet_to_edit_dropdown = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Import', p(self.complete, continue_command, wallet_name), styleSheet=style('new'))
+        self.add_menu_button('Import', p(self.complete, import_command, wallet_name), styleSheet=style('new'))
         self.show()
     
-    def complete(self, continue_command, wallet_name, *args, **kwargs):
-        result = self.wallet_to_edit_dropdown.entry()
-        if result == None:   
+    def complete(self, import_command, wallet_name, *args, **kwargs):
+        wallet_for_import = self.wallet_to_edit_dropdown.entry()
+        if wallet_for_import == None:   
             self.display_error('[ERROR] Must select a '+wallet_name+'.')
             return
         self.close()
-        continue_command(result)   #Runs the importGemini or importCoinbase, or whatever command again, but with wallet data
+        import_command(wallet_for_import, self.source)   #Runs the importGemini or importCoinbase, or whatever command again, but with wallet data
 
 class DEBUGStakingReportDialog(Dialog):
     '''Opens dialog for reporting my current interest quantity of AMP/ALCX without having to do math'''
