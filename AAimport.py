@@ -38,11 +38,16 @@ def trans_from_raw(date_unix=None,type=None,wallet=None,description='',loss=(Non
     if type:    raw_data = {metric:raw_data[metric] for metric in trans_type_minimal_set[type]}
     return Transaction(raw_data)
 
-def finalize_import(mainAppREF, PORTFOLIO_TO_MERGE):
-    mainAppREF.PORTFOLIO.loadJSON(PORTFOLIO_TO_MERGE.toJSON(), merge=True, overwrite=False)   # Imports new transactions, doesn't overwrite duplicates (to preserve custom descriptions, type changes, etc.)
+def finalize_import(mainAppREF, PORTFOLIO_TO_MERGE:Portfolio):
+    # List of all transactions NOT currently present in the portfolio (prevent overwriting)
+    new_transactions = [t for t in PORTFOLIO_TO_MERGE.transactions() 
+                        if not mainAppREF.PORTFOLIO.hasTransaction(t.get_hash())]
+    # Add all new transactions to the portfolio
+    for trans in new_transactions:
+        mainAppREF.PORTFOLIO.add_transaction(trans)
     mainAppREF.metrics()
     mainAppREF.render(sort=True)
-    mainAppREF.undo_save()
+    mainAppREF.create_memento(None, new_transactions, 'Import transactions') # Imported new transactions - this is a list of all new transaction objects
     mainAppREF.hide_progress()
 
 

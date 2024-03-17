@@ -3,18 +3,6 @@ from AAlib import *
 
 
 
-class DateEntry(QDateTimeEdit): # For entering datetimes in the ISO format yyyy-MM-dd hh:mm:ss
-    def __init__(self, text:str, *args, **kwargs):
-        super().__init__(displayFormat='yyyy-MM-dd hh:mm:ss', dateTime=datetime.fromisoformat(text), *args, **kwargs)
-    
-    def setReadOnly(self, val:bool): 
-        if val: self.setStyleSheet(style('disabledEntry'))
-        else:   self.setStyleSheet(style('entry'))
-        super().setReadOnly(val)     
-        
-    def entry(self) -> str:             return self.text()
-    def set(self, text:str):    self.setDateTime(datetime.fromisoformat(text))
-
 class Entry(QLineEdit): # For entering text, floats, and positive-only floats
     def __init__(self, text:str, format:str=None, maxLength:int=-1, capsLock=False, *args, **kwargs):
         super().__init__(text=text, maxLength=maxLength, *args, **kwargs)
@@ -49,6 +37,18 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
         self.setCursorPosition(0)
         super().focusOutEvent(e)
 
+class DateEntry(QDateTimeEdit): # For entering datetimes in the ISO format yyyy-MM-dd hh:mm:ss
+    def __init__(self, text:str, *args, **kwargs):
+        super().__init__(displayFormat='yyyy-MM-dd hh:mm:ss', dateTime=datetime.fromisoformat(text), *args, **kwargs)
+    
+    def setReadOnly(self, val:bool): 
+        if val: self.setStyleSheet(style('disabledEntry'))
+        else:   self.setStyleSheet(style('entry'))
+        super().setReadOnly(val)     
+        
+    def entry(self) -> str:             return self.text()
+    def set(self, text:str):    self.setDateTime(datetime.fromisoformat(text))
+
 class DescEntry(QPlainTextEdit): # For entering lots of text
     def __init__(self, text:str, *args, **kwargs):
         super().__init__(text, *args, **kwargs)
@@ -60,7 +60,6 @@ class DescEntry(QPlainTextEdit): # For entering lots of text
     def entry(self) -> str:             return self.toPlainText().rstrip().lstrip()
     def set(self, text:str):  self.setPlainText(text)
     
-
 class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a ListEntry
     def __init__(self, dictionary:dict, default:str=None, current=None, selectCommand=None, sortOptions=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -105,8 +104,6 @@ class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a Li
             self.addItems(to_sort)                # Adds all the other items you can select
         else:
             self.addItems(dictionary.keys())                # Adds all the other items you can select
-
-
 
 class ListEntry(QListWidget): # Single- or multi-item selection list
     def __init__(self, dictionary:dict=None, current:list=None, mode='single', selectCommand=None, sortOptions=False, *args, **kwargs):
@@ -163,6 +160,7 @@ class ListEntry(QListWidget): # Single- or multi-item selection list
         for key in to_display: # Add new items 
             self.addItem(QListWidgetItem(key))
          
+
 
 class Dialog(QDialog):
     def __init__(self, upper, title='', errormsg='', styleSheet=style('dialog')):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 

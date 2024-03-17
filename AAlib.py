@@ -11,6 +11,7 @@ import math
 from functools import partial as p
 from typing import List, Dict, Any, Tuple
 import requests
+import copy
 
 
 from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar,
@@ -44,7 +45,8 @@ global iconlib
 
 TEMP = { #Universal temporary data dictionary
         'metrics' : {},
-        'undo' : [] # List of saves we can revert to if we make mistakes
+        'undo' : [], # List of mementos we can go back to
+        'redo' : [], # List of mementos: only filled when we've gone back a few steps, and haven't created a new memento yet
         } 
 
 MISSINGDATA = '???'
@@ -148,7 +150,7 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charlimit:int=0, s
     """
     # ~450ms across 230000 cycles
     if data==None: return ''
-    ttt('start')
+    
     match textFormat:
         # Input should be int
         case 'date':        toReturn = unix_to_local_timezone(data) # data is an int
@@ -597,7 +599,7 @@ third_party_source_lib = {
 settingslib = { # A library containing all of the default settings
     'font_size': 16,                            # Used to determine the scale of several GUI features in the program
     'itemsPerPage':30,                          # Number of items to display on one page
-    'max_undo_saves': 100,                      # Maximum # of saved progress points, before we start deleting the oldest ones 
+    'max_mementos': 100,                      # Maximum # of saved progress points, before we start deleting the oldest ones 
     'startWithLastSaveDir': True,               # Whether to start with our last opened portfolio, or always open a new one by default
     'lastSaveDir': '',                          # Our last opened portfolio's filepath
     'is_offline': True,                         # Whether or not to start in offline/online mode

@@ -32,10 +32,30 @@
 
 ### User-Friendliness
 
+* EASIER IMPORTING
+	- Current problems:
+		- Gemini Earn "admin" withdrawals to nowhere (must wait for case to end)
+		- Gemini Earn -> Gemini "tardy transfers": several times, transfers fail to link because they are recorded days apart by each side of Gemini
+		- Lack of transaction data to import:
+			- Old Electrum Wallet
+			- Alchemix Farm
+			- FTX
+			- Flexa Capacity
+		- Coinbase data has duplicate transactions, and cut-off descriptions for newer transactions, making it needlessly difficult to remove the bad transactions. I can remove most, but there are two (under ADA) which have to be manually removed. 
+	- Consider implementing a way for users to more easily manually link unlinked transfers
+		- or instead, maybe, after failing to link normally, it "tries harder" and expands the time-delay bubble to like 3 days or smthg
+
+* AUTOFIND PRICE FOR TRANSACTION EDITOR
+	- Button next to loss/fee/gain price, which automatically estimates the price based on what the user put in for the respective asset/class
+
 * HEADER COLORING
 	- Make it more obvious which metric we're sorting by, and the direction it's sorting in.
 	- Something like a light blue shade when sorting by it. and an up/down arrow based on direction
 	- re-coloring/-formatting of header title controlled by GRID
+
+* NEW TRANSACTION COLORING
+	- After creating/importing transactions, they are highlighted green or smthg
+	- Need to decide: how does "new" color state clear? should user press a button?
 
 * WEBSITE LINKS FOR MORE INFO
 	- When in "Portfolio_Assets" view, right clicking on a row will give you the option to:
@@ -63,14 +83,14 @@
 - AUTOSAVES: Automatically save the portfolio every minute, or maybe every so many changes, to a "temp" file. The file is deleted if the program terminates normally. If not, the file is automatically loaded and a prompt pops up, "the program was terminated abnormally, load autosave file?"
 	- DON'T save UNDO saves to disk: this would be a huge waste of processing power
 	
-- SAVE FILES OPEN PROGRAM: Have windows open Auto-Accountant w/ the save file loaded when you double-click on one of these save files. This means 
-	having a custom file extension associated with my program, and having the program recognize that it is receiving a file to load in.
+- SAVE FILES OPEN PROGRAM: Have windows open Auto-Accountant w/ the save file loaded when you double-click on one of these save files. This means having a custom file extension associated with my program, and having the program recognize that it is receiving a file to load in.
 
 * SHORTCUTS - more keyboard shortcuts? Intuitive functionality? Drag&Drop?
-	Ctrl-Shift-S: Save as
-	Ctrl-O: Open/Load
-	
-	... others?
+	- Ctrl-Shift-S: Save as
+	- Ctrl-O: Open/Load
+	- Ctrl-C: Copy transactions
+	- Ctrl-V: paste transactions
+	- ... others?
 
 * FEWER POPUP MENUS
 	
@@ -84,10 +104,6 @@
 	- clean based on trans. type if type is defined
 	- if type undefined, clean based on default_trans_data
 
-- TRANSACTION CHECKS CONSISTENCY
-	- Use Transaction(raw_data).get_metric('missing') as much as possible to determine when raw data are missing, instead of doing needless extra checks
-	- Mainly this will affect the Transaction Editor
-
 - DESTROY "TEMP", make its variables part of AutoAccountant class
 
 * DESTROY METRICS CLASS
@@ -98,33 +114,56 @@
 	- Transactions/Assets need to have new functions:
 		- .add_error(type, msg)
 		- .clear_error(type)
+		- .clear_non_data_errors()
+	- type/msg will just be a dict of errors now: {type:msg}
 
 # Performance Improvements
 
 * PRE-FORMATTING - consider above, "destroy metrics class", before this
-	- pre-format asset metrics
-	- pre-format wallet metrics
-	- pre-format portfolio metrics?
+	- calc_formatting called after .metric():
+		- pre-format portfolio metrics?
+	- calc_formatting called after .metric():
+		- pre-format asset metrics
+		- pre-format wallet metrics
+	- after edit asset/wallet, re-calc formatting
 
 * FORMAT NUMBER PERFORMANCE FIX
 	- format_number currently performs like ass: 450ms for 200,000 iterations!!! 
 	- that's half a second of load time each time you load a 5300-transaction portfolio!!!! Not horrible... yet.
 	- I should test whether this is O(n) or something worse (should be O(n) where n = # of transactions)
 
-* FASTER UNDO/REDO SAVES (Maybe rename these to "statesaves", indicating they save a change of state)
+* MEMENTOS (instead of "undoredo save"... crap name)
+	- ORIGINATOR: the type of object to be saved
+	- MEMENTO: the saved state of the object
+	- CARETAKER: Manages the mementos, enabling undo/redo functionality
 	- Instead of saving a copy of the entire portfolio to memory, just save the part whose state changed before/after
 	- maybe add statesave function to Portfolio: statesave always triggers whenever transaction/asset/wallet is added/removed from the portfolio, unless it is told not to.
 		- now "new portfolio" and "load portfolio" will erase all statesave history. "
+	- Consider moving "mementos" over to the portfolio object.. maybe, maybe not
 
 - SAVE COMPRESSION: Compress the JSON files before saving them, with a custom file extension. 
+
+### Multi-Threading
+- MULTI-THREADED METRICS
+	- Difficulties:
+		- figuring out how to divvy up the transactions among threads
+		- figuring out where the split occurs
+		- Having to synchronize multiple threads
+		- how many threads to create? Answer: os.cpu_count()
+		- It seems that the auto_accounting function cannot be multithreaded
+- MULTI-THREADED OBJECT INSTANTIATION
+	- This affects only large loads:
+		- Loading portfolio for the first time
+		- Importing transactions from CSV/XLSX
+	- Thought: Divide instantiation of transactions into multiple threads. For each transaction in the JSON, throw that transaction into the instantiation stack of another thread. Threads do hard work of creating Transaction objects, then pass these objects back to the main thread's execution stack, to be added to the MAIN_PORTFOLIO object 
 
 # Bugs and Issues
 
 * THE IMPORT DUPLICATION ISSUE: Some kind of way to prevent transactions with missing data from re-importing	
 	- If an imported transaction was missing data, then we fill out that data, the transaction's hash code changes. Then, if we import the same transaction again, a duplicate of this transaction is added to our porfolio. This is an issue!
-		SOLUTION 2: if a newly imported transaction has an error, it is permanently saved to the JSON in a new category "import_errors"
+		- SOLUTION 2: if a newly imported transaction has an error, it is permanently saved to the JSON in a new category "import_errors"
 			This is good since we only really care about transactions we fixed
-		SOLUTION 3: all transactions have "origin" variable,
+		- SOLUTION 3: all transactions have "origin" variable,
 			Origin tag denotes: when they were imported (and to what wallet), or that the user made it
 			EX:		origin: imported12-12-2024 12:13:23binance
 			problem: user might totally change transaction when editing, and it should not preserve the ID after that
@@ -150,18 +189,6 @@ This allows us to create, say dict['key']['subkey'] even if 'key' doesn't curren
 	
 
 
-
-### Multi-Threading
-- AAmetrics: auto_account
-	Modify it such that it takes advantage of multithreading to improve performance.
-	This will be tricky :
-	- figuring out how to divvy up the transactions to be processed
-	- Having to synchronize multiple threads
-	- ensuring that the HIFO/LIFO/FIFO results are always the same: no race condition
-	- figuring out how many threads to create
-	- avoiding race conditions
-- Loading JSON data
-	Thought: Divide instantiation of transactions into multiple threads. For each transaction in the JSON, throw that transaction into the instantiation stack of another thread. Threads do hard work of creating Transaction objects, then pass these objects back to the main thread's execution stack, to be added to the MAIN_PORTFOLIO object
 
 
 	

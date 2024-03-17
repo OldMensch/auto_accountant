@@ -30,29 +30,29 @@ class Message(Dialog): #Simple text popup, can add text with colors to it
 
 class AssetEditor(Dialog):    #For editing an asset's name and description ONLY. The user NEVER creates assets, the program does this automatically
     '''Opens dialog for editing assets' name/description. Asset creation/deletion is managed by the program automatically.'''
-    def __init__(self, upper, asset:Asset):
-        self.asset = asset
+    def __init__(self, upper, old_asset:Asset):
+        self.old_asset = old_asset
 
-        super().__init__(upper, 'Edit ' + asset.ticker())
+        super().__init__(upper, 'Edit ' + old_asset.ticker())
 
         # FAKE entry box for displaying the ticker
         self.add_label('Ticker',0,0)
-        self.ENTRY_ticker =     self.add_entry(self.asset.ticker(),1,0,maxLength=24,)
+        self.ENTRY_ticker =     self.add_entry(self.old_asset.ticker(),1,0,maxLength=24,)
         self.ENTRY_ticker.setReadOnly(True)
 
         # Entry box to write the name
         self.add_label('Name',0,1)
-        self.ENTRY_name =       self.add_entry(self.asset.name(),1,1,maxLength=24)
+        self.ENTRY_name =       self.add_entry(self.old_asset.name(),1,1,maxLength=24)
 
         # FAKE entry box for displaying the asset class
         self.add_label('Class',0,2)
-        self.ENTRY_class =     self.add_entry(class_lib[self.asset.class_code()]['name'],1,2,maxLength=24,)
+        self.ENTRY_class =     self.add_entry(class_lib[self.old_asset.class_code()]['name'],1,2,maxLength=24,)
         self.ENTRY_class.setReadOnly(True)
 
         # Entry box to write a description
         self.add_label('Description',0,3)
         self.ENTRY_desc =       self.add_entry('',1,3, format='description')
-        if asset:               self.ENTRY_desc.set(self.asset.desc())
+        if old_asset:           self.ENTRY_desc.set(self.old_asset.desc())
 
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
@@ -60,6 +60,8 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
         self.show()
 
     def save(self):
+        TICKER = self.ENTRY_ticker.entry()
+        CLASS = self.ENTRY_class.entry()
         NAME = self.ENTRY_name.entry()
         DESC = self.ENTRY_desc.entry()
 
@@ -70,21 +72,23 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
 
         #ASSET SAVING AND OVERWRITING
         #==============================
-        self.asset._name = NAME # Set existing asset name to saved name
-        self.asset._description = DESC # Set existing asset description to saved description
-
+        new_asset = Asset(TICKER, CLASS, NAME, DESC)
+        if self.old_asset: self.upper.PORTFOLIO.delete_asset(self.old_asset)
+        self.upper.PORTFOLIO.add_asset(new_asset)
+        
+        self.upper.create_memento(self.old_asset, new_asset, 'Modify asset') # Modified asset
         self.upper.render(sort=True)
-        self.upper.undo_save()
         self.close()
 
 class TransEditor(Dialog):    #The most important, and most complex editor. For editing transactions' date, type, wallet, second wallet, tokens, price, usd, and description.
     """Opens dialog for creating/editing transactions"""
-    def __init__(self, upper, transaction:Transaction=None, copy=False, *args, **kwargs):
-        if not transaction or copy:     self.t = None
-        else:                           self.t = transaction
+    def __init__(self, upper, old_transaction:Transaction=None, copy=False, *args, **kwargs):
+        # self.old_transaction is used for finally saving the transaction
+        if copy:    self.old_transaction = None
+        else:       self.old_transaction = old_transaction
 
         # DIALOGUE INITIALIZATION
-        if not transaction:     super().__init__(upper, 'Create Transaction')
+        if not old_transaction:     super().__init__(upper, 'Create Transaction')
         elif copy:              super().__init__(upper, 'Edit Copied Transaction')
         else:                   super().__init__(upper, 'Edit Transaction')
 
@@ -122,10 +126,10 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         self.ENTRIES['description'] = self.add_entry('', 1, 6, columnspan=4, format='description')
 
         # ENTRY BOX DATA - If editing, fills entry boxes with existing transaction data
-        if transaction:
-            for metric,data in transaction._data.items():
+        if old_transaction:
+            for metric,data in old_transaction._data.items():
                 # Ignore missing/irrelevant data
-                if metric not in trans_type_minimal_set[transaction.type()] or data is None: continue
+                if metric not in trans_type_minimal_set[old_transaction.type()] or data is None: continue
                 #Update entry box with known data.
                 if metric == 'date':  self.ENTRIES[metric].set(unix_to_local_timezone(data))
                 else:               self.ENTRIES[metric].set(data)
@@ -142,12 +146,11 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         #Menu buttons
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if transaction and not copy: self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        if old_transaction and not copy: self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
 
         self.update_entry_interactability()
         self.show()
     
-
     def update_entry_interactability(self, *args, **kwargs):
         '''Appropriately sets the color and functionality of all entry boxes/labels, depending on what is selected'''
         TYPE,WALLET = self.ENTRIES['type'].entry(), self.ENTRIES['wallet'].entry()
@@ -201,7 +204,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
 
     def delete(self):
-        self.upper.PORTFOLIO.delete_transaction(self.t)  #deletes the transaction
+        self.upper.PORTFOLIO.delete_transaction(self.old_transaction)  #deletes the transaction
 
         # Remove assets that no longer have transactions
         for a in list(self.upper.PORTFOLIO.assets()):
@@ -209,7 +212,7 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
                 print("deleted asset",a)
                 self.upper.PORTFOLIO.delete_asset(a)
 
-        self.upper.undo_save()          #creates a savepoint after deleting this
+        self.upper.create_memento(self.old_transaction, None, 'Delete transaction') # Deleted transaction
         self.upper.metrics()            #recalculates metrics for this asset w/o this transaction
         self.upper.render(sort=True)    #re-renders the main portfolio w/o this transaction
         self.close()
@@ -301,30 +304,25 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         #==============================
         #Creates the new transaction or overwrites the old one
         NEWHASH = Transaction.calc_hash(None, TO_SAVE)
-        if self.t:      OLDHASH = self.t.get_hash()
+        if self.old_transaction:      OLDHASH = self.old_transaction.get_hash()
         else:           OLDHASH = None
 
         # FINAL CHECK - transaction will be unique?
         #transaction already exists if: 
         #   hash already in transactions - and we're not just saving an unmodified transaction over itself!
         has_hash = self.upper.PORTFOLIO.hasTransaction(NEWHASH)
-        if has_hash and not (self.t and NEWHASH == OLDHASH):
+        if has_hash and not (self.old_transaction and NEWHASH == OLDHASH):
             self.display_error('[ERROR] This is too similar to an existing transaction!')
             return
 
         # ACTUALLY SAVING THE TRANSACTION
         TO_SAVE = {metric:TO_SAVE[metric] for metric in trans_type_minimal_set[TYPE]} # Clean the transaction of useless data
-        self.upper.PORTFOLIO.add_transaction(Transaction(TO_SAVE))           # Add the new transaction, or overwrite the old
-        if OLDHASH != None and NEWHASH != OLDHASH:
-            self.upper.PORTFOLIO.delete_transaction(self.t)      # Delete the old transaction if it's hash will have changed
+        new_transaction = Transaction(TO_SAVE)
+        if self.old_transaction: self.upper.PORTFOLIO.delete_transaction(self.old_transaction)  # Delete the old version, if there is one
+        self.upper.PORTFOLIO.add_transaction(new_transaction)     # Save the new version
         
-        # Remove assets that no longer have transactions
-        for a in list(self.upper.PORTFOLIO.assets()):
-            if len(a._ledger) == 0:
-                self.upper.PORTFOLIO.delete_asset(a)
-
-
-        self.upper.undo_save()
+    
+        self.upper.create_memento(self.old_transaction, new_transaction, 'Create/modify transaction') # Created/modified transaction
         self.upper.metrics()
         self.upper.render(sort=True)
         self.close()
@@ -350,7 +348,7 @@ class WalletManager(Dialog): #For selecting wallets to edit
         
 class WalletEditor(Dialog): #For creating/editing Wallets
     """Opens dialog for creating/editing wallets"""
-    def __init__(self, walletManager, wallet_to_edit:Wallet=None):
+    def __init__(self, walletManager:WalletManager, wallet_to_edit:Wallet=None):
         self.wallet_to_edit = wallet_to_edit
         self.walletManager = walletManager
         if wallet_to_edit == None: #New wallet
@@ -369,28 +367,12 @@ class WalletEditor(Dialog): #For creating/editing Wallets
 
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if wallet_to_edit != None:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        # No delete button: empty wallets are deleted when the program starts.
         self.show()
-
-    def delete(self):
-        # Only possible when editing an existing wallet
-        # CHECK - Make sure this wallet has no transactions under it
-        for t in self.walletManager.upper.PORTFOLIO.transactions():
-            if t.wallet() == self.wallet_to_edit.name():   #is the wallet you're deleting used anywhere in the portfolio?
-                self.display_error('[ERROR] You cannot delete this wallet, as it is used by existing transactions.') # If so, you can't delete it. 
-                return
-
-        self.walletManager.upper.PORTFOLIO.delete_wallet(self.wallet_to_edit)  #destroy the old wallet
-        #Don't need to recalculate metrics or rerender AA, since you can only delete wallets if they're not in use
-        self.upper.refresh_wallets()
-        self.upper.upper.undo_save()
-        self.close()
 
     def save(self):
         NAME = self.ENTRY_name.entry()
         DESC = self.ENTRY_desc.entry()
-
-        new_wallet = Wallet(NAME, DESC)
 
         # CHECKS
         #==============================
@@ -405,24 +387,30 @@ class WalletEditor(Dialog): #For creating/editing Wallets
 
         #WALLET SAVING AND OVERWRITING
         #==============================
-        self.walletManager.upper.PORTFOLIO.add_wallet(new_wallet)   #Creates the new wallet, or overwrites the existing one's description
+        if self.wallet_to_edit == None: # Creating whole new wallet
+            new = Wallet(NAME, DESC)
+            self.walletManager.upper.PORTFOLIO.add_wallet(new)
+            self.walletManager.upper.create_memento(None, new, 'Create wallet') # Created wallet
+        else:
+            old_name, old_desc = self.wallet_to_edit.name(),self.wallet_to_edit.desc()
+            if old_name != NAME or old_desc != DESC:   # NAME/DESCRIPTION modified
+                if old_name != NAME:
+                    # Create new, delete old wallet (part of "rename_wallet" function), and...
+                    # ...Rename wallet for all relevant transactions
+                    old, new = self.walletManager.upper.PORTFOLIO.rename_wallet(old_name, NAME)
+                if old_desc != DESC:
+                    old = self.walletManager.upper.PORTFOLIO.wallet(old_name)
+                    new = Wallet(NAME, DESC)
+                    self.walletManager.upper.PORTFOLIO.delete_wallet(old)
+                    self.walletManager.upper.PORTFOLIO.add_wallet(new)
 
-        if self.wallet_to_edit != None and self.wallet_to_edit.name() != NAME:   #WALLET RE-NAMED
-            #destroy the old wallet
-            self.walletManager.upper.PORTFOLIO.delete_wallet(self.wallet_to_edit) 
-            for t in list(self.walletManager.upper.PORTFOLIO.transactions()):   #sets wallet name to the new name for all relevant transactions
-                if t.wallet() == self.wallet_to_edit.name():      
-                    new_trans = t.toJSON()
-                    self.walletManager.upper.PORTFOLIO.delete_transaction(t) #Changing the wallet name changes the transactions HASH, so we HAVE to remove and re-add it
-                    new_trans['wallet'] = NAME 
-                    self.walletManager.upper.PORTFOLIO.add_transaction(Transaction(new_trans))
-        
-            #Only reload metrics and rerender, if we rename a wallet
-            self.upper.upper.metrics()
-            self.upper.upper.render(sort=True)
+                self.walletManager.upper.create_memento(old, new, 'Modify wallet') # Modified wallet
+                #Only reload metrics and rerender, if we rename a wallet
+                self.walletManager.upper.metrics()
+                self.walletManager.upper.render(sort=True)
 
-        self.upper.refresh_wallets()
-        self.upper.upper.undo_save()
+
+        self.walletManager.refresh_wallets()
         self.close()
 
 # Filters are in-memory only
@@ -447,7 +435,7 @@ class FilterManager(Dialog): #For selecting filter rules to edit
         
 class FilterEditor(Dialog): #For creating/editing filters
     """Opens dialog for creating/editing filters"""
-    def __init__(self, filterManager, filter_to_edit:Filter=None):
+    def __init__(self, filterManager:FilterManager, filter_to_edit:Filter=None):
         self.filter_to_edit = filter_to_edit
         self.filterManager = filterManager
         if filter_to_edit == None: #New filter
@@ -504,9 +492,9 @@ class FilterEditor(Dialog): #For creating/editing filters
         self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
         if len(self.filterManager.upper.PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet('') #Turn off filtering indicator
-        self.upper.upper.page = 0 # adding filter resets rendered page to 0
-        self.upper.upper.render(sort=True) # Always re-render and re-sort when filters are applied/removed
-        self.upper.refresh_filters()
+        self.filterManager.upper.page = 0 # adding filter resets rendered page to 0
+        self.filterManager.upper.render(sort=True) # Always re-render and re-sort when filters are applied/removed
+        self.filterManager.refresh_filters()
         self.close()
 
     def save(self):
@@ -555,10 +543,10 @@ class FilterEditor(Dialog): #For creating/editing filters
         self.filterManager.upper.PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
         if self.filter_to_edit: self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)
         
-        self.upper.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
-        self.upper.upper.page = 0 # adding filter resets rendered page to 0
-        self.upper.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
-        self.upper.refresh_filters()
+        self.filterManager.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
+        self.filterManager.upper.page = 0 # adding filter resets rendered page to 0
+        self.filterManager.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
+        self.filterManager.refresh_filters()
         self.close()
 
 
@@ -644,7 +632,7 @@ class DEBUGStakingReportDialog(Dialog):
                                       )
         self.upper.PORTFOLIO.add_transaction(new_transaction)
 
-        self.upper.undo_save()
+        self.upper.create_memento(None, new_transaction, 'Automatically create staking transaction') # Added staking transaction
         self.upper.metrics()
         self.upper.render(sort=True)
         self.close()

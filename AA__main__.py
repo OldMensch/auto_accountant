@@ -20,6 +20,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     page = 0 #This indicates which page of data we're on. If we have 600 assets and 30 per page, we will have 20 pages.
     sorted = [] # List of sorted and filtered assets
     market_data = {class_code:{} for class_code in class_lib.keys()} # Used in AAmetrics to update asset market info
+    UNDO = [] # Undo memento stack
+    REDO = [] # Redo memento stack
+    loaded_data_hash = None # Reduces performance: if our current portfolio's hash is equal to this, then we haven't modified our data at all.
 
     def __init__(self):
         super().__init__()
@@ -39,7 +42,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # LOAD MOST RECENT SAVE - must be loaded BEFORE market data 
         if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'))
-        else:                                                                           self.new(first=True)
+        else:                                                                           self.new()
 
         self.__init_market_data__() # Loads market data from file or internet - NOTE: Must be before first .metrics() calculation or market data will be missing
 
@@ -71,10 +74,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         """Initializes keyboard bindings for the main program window."""
         self.wheelEvent = self._mousewheel                                          # Last/Next page
         QShortcut(QKeySequence(self.tr("Ctrl+S")), self, self.save)                 # Save
-        QShortcut(QKeySequence(self.tr("Ctrl+Shift+S")), self, p(self.save, True))        # Save As
+        QShortcut(QKeySequence(self.tr("Ctrl+Shift+S")), self, p(self.save, True))  # Save As
         QShortcut(QKeySequence(self.tr("Ctrl+A")), self, self._ctrl_a)              # Select all rows of data
-        QShortcut(QKeySequence(self.tr("Ctrl+Y")), self, self._ctrl_y)              # Undo
-        QShortcut(QKeySequence(self.tr("Ctrl+Z")), self, self._ctrl_z)              # Redo
+        QShortcut(QKeySequence(self.tr("Ctrl+Z")), self, p(self.load_memento, 'undo'))  # Undo
+        QShortcut(QKeySequence(self.tr("Ctrl+Y")), self, p(self.load_memento, 'redo'))  # Redo
         QShortcut(QKeySequence(self.tr("Esc")), self, self._esc)                    # Unselect, close window
         QShortcut(QKeySequence(self.tr("Del")), self, self._del)                    # Delete selection
         QShortcut(QKeySequence(self.tr("F11")), self, self._f11)                    # Fullscreen
@@ -314,15 +317,18 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             return
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         with open(dir, 'w') as file:
-            json.dump(self.PORTFOLIO.toJSON(), file, sort_keys=True)
+            current_to_JSON = self.PORTFOLIO.toJSON()
+            self.loaded_data_hash = hash(json.dumps(current_to_JSON, sort_keys=True))
+            json.dump(current_to_JSON, file, sort_keys=True)
         if saveAs:      set_setting('lastSaveDir', dir)
-    def new(self, first=False, *args, **kwargs):
+    def new(self, *args, **kwargs):
         set_setting('lastSaveDir', '')
         self.PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
         self.render(state=self.view.PORTFOLIO, sort=True)
-        if not first:   self.undo_save()
+        self.loaded_data_hash = None
+        self.clear_mementos()
     def load(self, dir=None, *args, **kwargs):
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':   return
@@ -331,14 +337,15 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 decompile = json.load(file)    #Attempts to load the file
         except:
             Message(self, 'Error!', 'File couldn\'t be loaded. Probably corrupt or something.' )
-            self.new(first=True)
+            self.new()
             return
         self.PORTFOLIO.loadJSON(decompile)
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         set_setting('lastSaveDir', dir)
         self.metrics()
         self.render(state=self.view.PORTFOLIO, sort=True)
-        self.undo_save()  
+        self.loaded_data_hash = hash(json.dumps(decompile, sort_keys=True))
+        self.clear_mementos()  
     def merge(self): #Doesn't overwrite current portfolio by default.
         dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':
@@ -354,7 +361,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.setWindowTitle('Portfolio Manager')
         self.metrics()
         self.render(state=self.view.PORTFOLIO, sort=True)
-        self.undo_save()
+        # Merge doesn't modify loaded_data_hash:
+        # Merge doesn't clear mementos
 
     def quit(self, event=None):
         if event: event.ignore() # Prevents program from closing if you hit the main window's 'X' button, instead I control whether it closes here.
@@ -371,20 +379,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             app.exit()
 
     def isUnsaved(self):
-        lastSaveDir = setting('lastSaveDir')
-        if self.PORTFOLIO.isEmpty(): #there is nothing to save, thus nothing is unsaved     
-            return False
-        elif lastSaveDir == '': 
-            return True     #If you haven't saved anything yet, then yes, its 100% unsaved
-        elif not os.path.isfile(lastSaveDir):
-            return True     #Only happens if you deleted the file that the program was referencing, while using the program
-        with open(lastSaveDir, 'r') as file:
-            lastSaveHash = hash(json.dumps(json.load(file))) #hash for last loaded file
-        currentDataHash = hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True))
-        if currentDataHash == lastSaveHash:
-            return False    #Hashes are the same, file is most recent copy
-        else:
-            return True     #Hashes are different, file is modified
+        # Check if hash of current data different from old hash
+        if hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True)) == self.loaded_data_hash:
+                return False    #Hashes are the same, file is most recent copy
+        else:   return True     #Hashes are different, file is modified
 
 
 # RENDERING: WIDGET INSTANTIATION
@@ -437,15 +435,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         """Initializes the main menu bar at the top of the window, with common-use buttons like save, load, undo, redo, filter, etc."""
         self.MENU = {}
 
-        self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.new, False))
+        self.MENU['new'] = QPushButton(icon=icon('new'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self.new)
         self.MENU['load'] = QPushButton(icon=icon('load'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load, None))
         self.MENU['save'] = QPushButton(icon=icon('save'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.save, False))
         self.MENU['settings'] = QPushButton(icon=icon('settings'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(Message, self, 'whoop',  'no settings menu implemented yet!'))
 
-        self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self._ctrl_z)
-        self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=self._ctrl_y)
+        self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load_memento, 'undo'))
+        self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load_memento, 'redo'))
 
-        self.MENU['new_transaction'] = QPushButton('New\n  Transaction  ', clicked=p(TransEditor, self), fixedHeight=icon('size2').height())
+        def new_trans(*args, **kwargs):
+            TransEditor(self)
+        self.MENU['new_transaction'] = QPushButton('New\n  Transaction  ', clicked=new_trans, fixedHeight=icon('size2').height())
         self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
@@ -536,8 +536,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 m.addAction(f'Edit {item.ticker()}', p(AssetEditor, self, item))
             else:
                 trans_title = item.iso_date() + ' ' + item.type()
-                m.addAction('Edit ' + trans_title, p(TransEditor, self, item))
-                m.addAction('Copy ' + trans_title, p(TransEditor, self, item, True))
+                m.addAction('Edit ' + trans_title, p(TransEditor, self, old_transaction=item, copy=False))
+                m.addAction('Copy ' + trans_title, p(TransEditor, self, old_transaction=item, copy=True))
                 m.addAction('Delete ' + trans_title, p(self.delete_selection, highlighted))
                 if item.ERROR:
                     m.addSeparator()
@@ -553,6 +553,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         else:                   I2 = self.page*setting('itemsPerPage')+GRID_ROW2
         if I1 > len(self.sorted)-1: return
         if I2 > len(self.sorted)-1: I2 = len(self.sorted)-1
+
+        transactions_to_delete = self.sorted[I1:I2+1] # for memento
         for item in range(I1,I2+1):
             self.PORTFOLIO.delete_transaction(self.sorted[item])
 
@@ -562,7 +564,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 self.PORTFOLIO.delete_asset(a)
 
         self.GUI['GRID'].set_selection()
-        self.undo_save()
+        self.create_memento(transactions_to_delete, None, f'Delete {I2-I1+1} transactions') # Delete list of transactions
         self.metrics()
         self.render(sort=True)
 
@@ -990,62 +992,154 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['GRID'].set_selection(0, self.GUI['GRID'].pagelength-1)
         self.render()
 
-# UNDO REDO
+# UNDO/REDO CARETAKER
 #=============================================================
-    def load_undo_save(self, index):
-        # Can't load a save that doesn't exist! Also skips if index equal to currently loaded index.
-        if index < 0 or index > len(TEMP['undo'])-1 or self.current_undosave_index == index:
-            return
+    def load_memento(self, undo_or_redo:str, *args, **kwargs):
+        ttt('start')
+        # Retrieves memento from undo or redo stack
+        if undo_or_redo == 'undo':
+            if len(self.UNDO) == 0: return # can't undo if there's nothing to go to 
+            memento = self.UNDO.pop() # retrieve memento
+            self.REDO.append(memento) # add memento to 'redo' stack
+        elif undo_or_redo == 'redo':
+            if len(self.REDO) == 0: return # can't redo if there's nothing to go to 
+            memento = self.REDO.pop() # retrieve memento
+            self.UNDO.append(memento) # add memento to 'undo' stack
+        else: Exception(f'||ERROR|| Unknown undo/redo setting, \'{undo_or_redo}\'. Must specify \'undo\' or \'redo\'.')
 
-        self.current_undosave_index = index # Updates current_undosave_index to the currently loaded index
+        # Converts before/after state into to_add/to_delete. Undo and redo are opposite of eachother
+        if undo_or_redo == 'undo':
+            to_add,to_delete,message = memento[0],memento[1],memento[2]
+        else:
+            to_delete,to_add,message = memento[0],memento[1],memento[2]
+        
+        if undo_or_redo == "undo":  print(f'||MEMENTO|| UN-did: \"{message}\"')
+        else:                       print(f'||MEMENTO|| RE-did: \"{message}\"')
+        
+        # Gets the type of object we're dealing with
+        if to_add is not None:  obj_type = type(to_add)
+        else:                   obj_type = type(to_delete)
 
-        # Actually loads the save and refreshes all visual elements
-        self.PORTFOLIO.loadJSON(TEMP['undo'][index])
+        # Intuitive booleans
+        is_creation, is_deletion, is_modification = False,False,False
+        if to_delete == None:   is_creation = True # undo/redo only creates smthg
+        elif to_add == None:    is_deletion = True # undo/redo only creates smthg
+        else:                   is_modification = True # undo/redo only creates smthg
+
+        # DETERMINE ORIGINATOR: (the type of object created/modified/deleted)
+        # ASSET (modification ONLY)
+        if obj_type == Asset:
+            if is_modification:
+                self.PORTFOLIO.delete_asset(to_delete)
+                self.PORTFOLIO.add_asset(to_add)
+            else: raise Exception(f'||ERROR|| Mementos for creation/deletion of assets unsupported')
+        # WALLET (creation/deletion/modification)
+        elif obj_type == Wallet:
+            if is_creation:
+                self.PORTFOLIO.add_wallet(to_add)
+            elif is_deletion:
+                self.PORTFOLIO.delete_wallet(to_delete)
+            elif is_modification:
+                # Names different: have to rename all transactions
+                if to_delete.name() != to_add.name():
+                    # Automatically adds/deletes wallets for us
+                    self.PORTFOLIO.rename_wallet(to_delete.name(), to_add.name())
+                else:
+                    self.PORTFOLIO.delete_wallet(to_delete)
+                    self.PORTFOLIO.add_wallet(to_add)
+        # TRANSACTION (creation/deletion/modification)
+        elif obj_type == Transaction:
+            if is_creation:
+                self.PORTFOLIO.add_transaction(to_add)
+            elif is_deletion:
+                self.PORTFOLIO.delete_transaction(to_delete)
+            elif is_modification:
+                self.PORTFOLIO.delete_transaction(to_delete)
+                self.PORTFOLIO.add_transaction(to_add)
+        # TRANSACTION - MULTIPLE AT ONCE (creation/deletion ONLY)
+        elif obj_type == list:
+            if is_creation:
+                for transaction in to_add:
+                    self.PORTFOLIO.add_transaction(transaction)
+            elif is_deletion:
+                for transaction in to_delete:
+                    self.PORTFOLIO.delete_transaction(transaction)
+            else: raise Exception(f'||ERROR|| Mementos for modification of multiple transactions unsupported')
+        # UNKNOWN MEMENTO TYPE
+        else: raise TypeError(f'||ERROR|| Invalid memento type \'{obj_type}\'')
+        
+        ttt('avg_end')
         self.metrics()
         self.render(sort=True)
 
-        self.undo_redo_vfx() # Adds/removes star, updates undo/redo button functionality
-    def _ctrl_z(self):      self.load_undo_save(self.current_undosave_index-1)    #Undo your last action
-    def _ctrl_y(self):      self.load_undo_save(self.current_undosave_index+1)    #Redo your last action
-    def undo_save(self):        #Create a savepoint which can be returned to
-        '''Saves current portfolio in the memory should the user wish to undo their last modification'''
+        self.memento_vfx() # Adds/removes star, undo/redo button functionality
+    def create_memento(self, obj_before:None|Asset|Wallet|Transaction|List[Transaction], obj_after:None|Asset|Wallet|Transaction|List[Transaction], message:str):
+        '''Save copy of object before/after it was changed.
+        \nSupports saving: Asset, Wallet, Transaction, or a list of Transactions
+        \nMust specify message, indicating what changed during this memento.
+        '''
         #######################################
-        #NOTE: Undo savepoints are triggered when:
+        #NOTE: Memento savepoints are triggered when:
         # Loading a portfolio, creating a new portfolio, or merging portfolios causes an undosave
             # However, these major operations also delete all prior undosaves!
         # Importing transaction histories
-        # Modifying/Creating/Deleting an: Address, Asset, Transaction, Wallet
+        # ONLY Modifying an: Asset
+        # Modifying/Creating/Deleting an: Transaction, Wallet
+        # Creating/Deleting: Imported transactions (multiple at once)
         #######################################
 
+        # DETERMINE ORIGINATOR: (the type of object created/modified/deleted)
+
+        # CHECK - before/after cannot BOTH be "None" type
+        if obj_before==obj_after==None:
+            raise TypeError(f'||ERROR|| Invalid memento type: Memento before/after cannot both be \'{type(None)}\'')
+        # CHECK - before/after must be same type, unless one type is "None" (None if object created/deleted)
+        if type(None) not in (type(obj_before), type(obj_after)) and type(obj_before) != type(obj_after):
+            raise TypeError(f'||ERROR|| Invalid memento type: Memento before/after are not the same type: \'{type(obj_before)}\' and \'{type(obj_after)}\'')
+        # CHECK - type must be a supported type
+        for obj in (obj_before, obj_after):
+            obj_classes = [type(None),Asset,Wallet,Transaction,list]
+            if type(obj) == list: # Lists invalid if: empty, or contain non-transactions
+                if len(obj) == 0:
+                    raise TypeError(f'||ERROR|| Invalid memento type: Empty list')
+                for item in obj:
+                    if type(item) != Transaction: 
+                        raise TypeError(f'||ERROR|| Invalid memento type: List contains \'{type(item)}\', and should only contain Transaction objects.')
+            if type(obj) not in obj_classes:
+                raise TypeError(f'||ERROR|| Invalid memento type: Unsavable memento type: \'{type(obj)}\'')
+        
         # Technical changes
-        TEMP['undo'] = TEMP['undo'][0:self.current_undosave_index+1]      # Deletes all undosaves AFTER the currently loaded one, if we went back a bit. Does nothing if we haven't undone at all.
-        TEMP['undo'].append(self.PORTFOLIO.toJSON())        # Adds current savedata to a new save in the list
-        if len(TEMP['undo'])>setting('max_undo_saves'):     TEMP['undo'].pop(0) # Remove oldest save, if we have too many saves
-        
-        self.current_undosave_index = len(TEMP['undo'])-1 # Sets this to the index of the most recent save
-        
+        self.UNDO.append((obj_before, obj_after, message))
+        self.REDO = [] # When a new memento is created, delete all redo history
+
         # Visual changes
-        self.undo_redo_vfx()
-    
-    def undo_redo_vfx(self):
+        self.memento_vfx() # Adds/removes star, undo/redo button functionality
+    def clear_mementos(self):
+        """For new/load/merge operations: Clears whole memento history"""
+        self.UNDO = []
+        self.REDO = []
+        self.memento_vfx()
+
+    def memento_vfx(self):
         '''Puts a star in front of the window title, if the portfolio has been edited\n
-        Enables/disables undo/redo buttons, if there are available saves to switch to'''
-        saved = not self.isUnsaved()
+        Enables/disables undo/redo buttons appropriately'''
+        # Add/remove star if the portfolio has been modified
+        is_same_as_local_file = not self.isUnsaved()
         has_star = self.windowTitle()[0] == '*'
-        if saved and has_star: # Remove star if this undosave matches the actual save
+        if is_same_as_local_file and has_star: # Remove star if unmodified
             self.setWindowTitle(self.windowTitle()[1:])
-        elif not saved and not has_star: # Add star if this undosave differs from the actual save
+        elif not is_same_as_local_file and not has_star: # Add star if modified
             self.setWindowTitle('*'+self.windowTitle())
 
         # Change whether undo/redo buttons are visually and logically enabled
-        if self.current_undosave_index == 0:
+        if len(self.UNDO) == 0:
             self.MENU['undo'].setEnabled(False)
             self.MENU['undo'].setStyleSheet(style('main_menu_button_disabled'))
         else:
             self.MENU['undo'].setEnabled(True)
             self.MENU['undo'].setStyleSheet('')
 
-        if self.current_undosave_index == len(TEMP['undo'])-1:
+        if len(self.REDO) == 0:
             self.MENU['redo'].setEnabled(False)
             self.MENU['redo'].setStyleSheet(style('main_menu_button_disabled'))
         else:

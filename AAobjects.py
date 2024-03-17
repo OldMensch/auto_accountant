@@ -452,18 +452,36 @@ class Portfolio():
 
     def delete_asset(self, asset:Asset):               self._assets.pop(asset.get_hash())
     def delete_transaction(self, transaction_obj:Transaction):  
+        # Remove transaction from portfolio
+        transaction_obj = self._transactions.pop(transaction_obj.get_hash()) #Removes transaction from the portfolio itself
+        # Remove transaction from asset ledgers
+        for t,c in transaction_obj.get_metric('all_assets'): 
+            if t and c: self.asset(t,c).delete_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
         # Automatically remove assets
         for t,c in transaction_obj.get_metric('all_assets'):
             a_obj = self.asset(t,c)
             if len(a_obj._ledger) == 0:
                 self.delete_asset(a_obj)
-        # Automatically add/remove assets
-        transaction_obj = self._transactions.pop(transaction_obj.get_hash()) #Removes transaction from the portfolio itself
-        #Removes transaction from relevant asset ledgers
-        for t,c in transaction_obj.get_metric('all_assets'): 
-            if t and c: self.asset(t,c).delete_transaction(transaction_obj) #Adds this transaction to loss asset's ledger
     def delete_wallet(self, wallet:Wallet):            self._wallets.pop(wallet.get_hash())
     def delete_filter(self, filter:Filter):            self._filters.pop(filter.get_hash())
+
+    def rename_wallet(self, current_name:str, new_name:str) -> Tuple[Wallet,Wallet]:
+        """Annoying operation. Have to delete ALL transactions under this wallet and re-instantiate them.
+        \nThe problem: transactions' hash is dependent on their wallet. Changing wallet name changes hash, 
+        \nthus we have to re-calculate transaction and re-place them into portfolio
+        \nReturns the old and new wallet objects
+        """
+        old_wallet = self.wallet(current_name)
+        new_wallet = Wallet(new_name, old_wallet.desc())
+        self.delete_wallet(self.wallet(current_name)) 
+        self.add_wallet(new_wallet) # add wallet here, so it keeps its description
+        for t in list(self.transactions()):   #sets wallet name to the new name for all relevant transactions
+            if t.wallet() == old_wallet.name():      
+                t_raw = t.toJSON()
+                t_raw['wallet'] = new_name
+                self.delete_transaction(t) #Changing the wallet name changes the transactions HASH: its key in the portfolio dict will change 
+                self.add_transaction(Transaction(t_raw))
+        return old_wallet, new_wallet
 
 
     def calculate_metric(self, metric, operation, A=None, B=None, C=None):
