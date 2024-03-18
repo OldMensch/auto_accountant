@@ -13,9 +13,10 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
         if format == 'float':       self.setValidator(QDoubleValidator())
         if format == 'pos_float':   self.setValidator(QDoubleValidator(bottom=0))
 
-    def changeEvent(self, e):
-        if hasattr(self, 'capsLock') and self.capsLock: self.set(self.text().upper())
-        super().changeEvent(e)
+        def forceToCaps(): self.set(self.text().upper())
+        if self.capsLock:
+            self.textChanged.connect(forceToCaps)
+            forceToCaps()
 
     def setReadOnly(self, val:bool): 
         if val: self.setStyleSheet(style('disabledEntry'))

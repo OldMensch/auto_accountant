@@ -3,13 +3,13 @@ import json
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 import time
-from yahooquery import Ticker
+
+import threading
+from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 
-from threading import Thread
-
 import yahoofinancials as yf2
-import threading
+from yahooquery import Ticker
 
 from AAdialogs import Message
 from AAlib import *
@@ -23,7 +23,7 @@ class market_data_thread:
     ###Two independent threads which re-load market data every 5 minutes:
     ###=================================================
     def start_threads(self):
-        """Starts two independent threads which """
+        """Starts stock/crypto market data gathering threads"""
         Thread(target=self.StockDataLoop, daemon=True).start()
         Thread(target=self.CryptoDataLoop, daemon=True).start()
 

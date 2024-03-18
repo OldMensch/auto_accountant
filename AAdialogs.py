@@ -60,8 +60,6 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
         self.show()
 
     def save(self):
-        TICKER = self.ENTRY_ticker.entry()
-        CLASS = self.ENTRY_class.entry()
         NAME = self.ENTRY_name.entry()
         DESC = self.ENTRY_desc.entry()
 
@@ -72,11 +70,16 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
 
         #ASSET SAVING AND OVERWRITING
         #==============================
-        new_asset = Asset(TICKER, CLASS, NAME, DESC)
-        if self.old_asset: self.upper.PORTFOLIO.delete_asset(self.old_asset)
-        self.upper.PORTFOLIO.add_asset(new_asset)
+        old_asset = copy.deepcopy(self.old_asset) # copy for memento
+        # we just overwrite data of current asset, then recalc static formatting
+        # this preserves metrics calculations so we don't have to run that again
+        self.old_asset._data['name'] = NAME
+        self.old_asset._data['description'] = DESC
+        self.old_asset.calc_formatting_static()
+        new_asset = copy.deepcopy(self.old_asset) # copy for memento
         
-        self.upper.create_memento(self.old_asset, new_asset, 'Modify asset') # Modified asset
+        self.upper.create_memento(old_asset, new_asset, 'Modify asset') # Modified asset
+        self.upper.update_side_panel_widgets()
         self.upper.render(sort=True)
         self.close()
 
@@ -577,7 +580,7 @@ class DEBUGStakingReportDialog(Dialog):
         self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24, capsLock=True)
         self.add_label('Staking Wallet',0,1)
         self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
-        self.add_label('Crypto Ticker',0,2)
+        self.add_label('Quantity',0,2)
         self.ENTRY_quantity = self.add_entry('', 1, 2, format='pos_float')
         self.add_menu_button('Cancel', self.close)
         self.add_menu_button('Report', self.report, styleSheet=style('new'))

@@ -24,36 +24,45 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     REDO = [] # Redo memento stack
     loaded_data_hash = None # Reduces performance: if our current portfolio's hash is equal to this, then we haven't modified our data at all.
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self): # 681ms w/ 5600
+        # NOTE: LAG PROFILE:::
+        # __init_place_gui__: 159 ms ALWAYS due to QScrollArea... unknown cause
+        # self.load(): 283 ms w/ 5600, due to transactions, ~50% due to [FORMAT_METRIC]
+        # self.metrics(): 40ms w/ 5600, 20ms due to auto_account(), 20ms due to reformat_all() [FORMAT_METRIC]
+        # self.showMaximized(): 175ms w/ 5600... unknown cause
+        super().__init__(windowIcon=icon('icon'), windowTitle='Portfolio Manager') # NOTE: 2ms ALWAYS
         
-        self.setWindowIcon(icon('icon'))
-        self.setWindowTitle('Portfolio Manager')
-        
-        #Sets the labels for timezone based on the timezone (So you will see Date (EST) instead of just Date)
+        # Changes timezone labels from 'Date' to 'Date (Your Timezone)' NOTE: 0ms ALWAYS
         metric_formatting_lib['date']['name'] = metric_formatting_lib['date']['headername'] = metric_formatting_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
-        self.__init_gui__() # Most GUI elements
-        self.__init_place_gui__()
-        self.__init_taskbar__() # Taskbar dropdown menus and options
-        self.__init_menu__() # GUI elements for the main menu bar (underneath the taskbar)
-        self.__init_place_menu__()
-        self.__init_bindings__() # Key/mouse bindings for the program
+        # GUI init: NOTE: 171ms ALWAYS
+        self.__init_gui__()         # NOTE: 8ms ALWAYS
+        self.__init_place_gui__()   # NOTE: 159ms ALWAYS
+        self.__init_taskbar__()     # NOTE: 4ms ALWAYS
+        self.__init_menu__()        # NOTE: 1ms ALWAYS
+        self.__init_place_menu__()  # NOTE: 0ms ALWAYS
+        self.__init_bindings__()    # NOTE: 0ms ALWAYS
 
         # LOAD MOST RECENT SAVE - must be loaded BEFORE market data 
-        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'))
-        else:                                                                           self.new()
+        # NOTE: 2ms for new, 283ms for load w/ 5300
+        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'), suppressMetricsAndRendering=True)
+        else:                                                                           self.new(suppressMetricsAndRendering=True)
 
-        self.__init_market_data__() # Loads market data from file or internet - NOTE: Must be before first .metrics() calculation or market data will be missing
+        # NOTE: 1ms ALWAYS
+        self.__init_market_data__() # Loads market data from file or internet
+
+        # First metrics and rendering calculation.
+        self.metrics() # NOTE: 40ms w/ 5600
+        self.render(state=self.view.PORTFOLIO, sort=True) # NOTE: 8ms w/ 38 assets in portfolio view
 
         # PYINSTALLER - Closes splash screen now that the program is loaded
         try: exec("""import pyi_splash\npyi_splash.close()""") # exec() is used so that VSCode ignores the "I can't find this module error"
-        except: pass
+        except: pass   
 
-        self.render(self.view.PORTFOLIO, sort=True) # Sorts and renders portfolio for the first time
-        self.showMaximized() # Maximizes window
+        # NOTE: 60ms for new, 175 ms w/ 5300 transactions
+        self.showMaximized() # Pops up window as maximized
 
-        # AUTOMATIC GRID RESIZING FUNCTION
+        # AUTOMATIC GRID RESIZING FUNCTION NOTE: 0ms always
         self.waiting_to_resize = False
         self.installEventFilter(self)
 
@@ -84,7 +93,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     def __init_market_data__(self):
         self.online_event = threading.Event()
         #Now that the hard data is loaded, we need market data
-        self.set_offline_mode(setting('is_offline'))
+        self.set_offline_mode(setting('is_offline'), True) # NOTE: This is 500ms!!!
 
         #We always turn on the threads for gethering market data. Even without internet, they just wait for the internet to turn on.
         self.market_data_thread = market_data_thread(self, self.PORTFOLIO, self.online_event)
@@ -92,7 +101,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
     def toggle_offline_mode(self):
         self.set_offline_mode(not setting('is_offline'))
-    def set_offline_mode(self, set_to_offline:bool):
+    def set_offline_mode(self, set_to_offline:bool, suppressMetricsAndRendering=False):
         """Attempts to set offline/online state. Defaults to online."""
 
         if set_to_offline: # Set to Offline
@@ -106,7 +115,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                             for ticker in self.market_data[class_code].keys()} 
                         for class_code in class_lib.keys()}
                     decimals_converted_to_float['_timestamp'] = self.market_data['_timestamp']
-                    json.dump(decimals_converted_to_float, file, indent=4, sort_keys=True)
+                    json.dump(decimals_converted_to_float, file, indent=4)
             try: # change to offline successful
                 with open('OfflineMarketData.json', 'r') as file:
                     offline_market_data = json.load(file)
@@ -131,8 +140,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.online_event.set()
             self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
         
-        self.metrics()
-        self.render()
+        if not suppressMetricsAndRendering:
+            self.market_metrics()
+            self.render(sort=True)
         set_setting('is_offline', set_to_offline)
         self.offlineMode.setChecked(set_to_offline)
     
@@ -267,12 +277,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             DATE = t.iso_date()
             MISSING = t.get_metric('missing')
             for part in ('loss_','fee_','gain_'):
-                if part+'price' in MISSING:   t._data[part+'price'] = getMissingPrice(DATE, t.get_raw(part+'ticker'), t.get_raw(part+'class'))
+                if part+'price' in MISSING:   t.get_raw[part+'price'] = getMissingPrice(DATE, t.get_raw(part+'ticker'), t.get_raw(part+'class'))
             t.precalculate()
         self.metrics()
         self.render(sort=True)
-    def DEBUG_report_staking_interest(self):
-        DEBUGStakingReportDialog(self)
 
     def import_3rd_party_data(self, wallet=None, source=None):
         # Query user to specify wallet to import into
@@ -316,20 +324,21 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if dir == '':
             return
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
+        current_to_JSON = self.PORTFOLIO.toJSON()
         with open(dir, 'w') as file:
-            current_to_JSON = self.PORTFOLIO.toJSON()
-            self.loaded_data_hash = hash(json.dumps(current_to_JSON, sort_keys=True))
-            json.dump(current_to_JSON, file, sort_keys=True)
+            json.dump(current_to_JSON, file)
+        self.loaded_data_hash = hash(json.dumps(current_to_JSON, sort_keys=True))
         if saveAs:      set_setting('lastSaveDir', dir)
-    def new(self, *args, **kwargs):
+    def new(self, suppressMetricsAndRendering=False, *args, **kwargs):
         set_setting('lastSaveDir', '')
         self.PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
-        self.metrics()
-        self.render(state=self.view.PORTFOLIO, sort=True)
+        if not suppressMetricsAndRendering:
+            self.metrics()
+            self.render(state=self.view.PORTFOLIO, sort=True)
         self.loaded_data_hash = None
         self.clear_mementos()
-    def load(self, dir=None, *args, **kwargs):
+    def load(self, dir=None, suppressMetricsAndRendering=False, *args, **kwargs):
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':   return
         try:    
@@ -342,9 +351,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.PORTFOLIO.loadJSON(decompile)
         self.setWindowTitle('Portfolio Manager - ' + dir.split('/').pop())
         set_setting('lastSaveDir', dir)
-        self.metrics()
-        self.render(state=self.view.PORTFOLIO, sort=True)
-        self.loaded_data_hash = hash(json.dumps(decompile, sort_keys=True))
+        if not suppressMetricsAndRendering:
+            self.metrics()
+            self.render(state=self.view.PORTFOLIO, sort=True)
+            self.loaded_data_hash = hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True))
         self.clear_mementos()  
     def merge(self): #Doesn't overwrite current portfolio by default.
         dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -378,11 +388,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         else:
             app.exit()
 
-    def isUnsaved(self):
-        # Check if hash of current data different from old hash
-        if hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True)) == self.loaded_data_hash:
-                return False    #Hashes are the same, file is most recent copy
-        else:   return True     #Hashes are different, file is modified
+    def isUnsaved(self) -> bool:
+        """True if portfolio has not been changed from originally loaded file"""
+        return self.loaded_data_hash != hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True))
 
 
 # RENDERING: WIDGET INSTANTIATION
@@ -443,16 +451,15 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['undo'] = QPushButton(icon=icon('undo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load_memento, 'undo'))
         self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load_memento, 'redo'))
 
-        def new_trans(*args, **kwargs):
-            TransEditor(self)
+        def new_trans(*args, **kwargs):     TransEditor(self)
         self.MENU['new_transaction'] = QPushButton('New\n  Transaction  ', clicked=new_trans, fixedHeight=icon('size2').height())
         self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
         self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
 
         self.MENU['DEBUG_staking_report'] = QPushButton(':DEBUG:\nReport Staking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
-        def return_report():    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
+        def return_report(*args, **kwargs):    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
         self.MENU['DEBUG_ttt_report'] = QPushButton(':DEBUG:\nTTT Report', clicked=return_report, fixedHeight=icon('size2').height())
-        self.MENU['DEBUG_ttt_reset'] = QPushButton(':DEBUG:\nTTT Reset', clicked=self.market_metrics, fixedHeight=icon('size2').height())
+        self.MENU['DEBUG_ttt_reset'] = QPushButton(':DEBUG:\nTTT Reset', clicked=p(ttt,'reset'), fixedHeight=icon('size2').height())
 
         #MENU TOOLTIPS
         #==============================
@@ -580,7 +587,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['masterLayout'].addWidget(self.GUI['sidePanelFrame'], 1, 0)
 
         self.GUI['gridFrame'] = QWidget(layout=self.GUI['GRID'], contentsMargins=QMargins(0,0,0,0))
-        #self.GUI['GRID'].setMargin(0)
+        # NOTE: all 159ms of the lag is RIGHT FREAKIN HERE!
         self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=style('GRID'))
         # Prevents vertical scrollbar from appearing, even by accident, or while resizing the window
         self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -634,23 +641,18 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 # RENDERING: DYNAMIC WIDGETS
 #=============================================================
-    def set_view(self, state):
-        """On view change: Re-renders view-dependent GUI elements, sets view state"""
-        self.page = 0 # Always return to first page when view-state triggered
-        self.GUI['info'].clicked.disconnect()
-        self.view.state = state
-
-        self.update_side_panel_widgets()
-         
     def render(self, state:str=None, sort:bool=False, *args, **kwargs): #NOTE: Very fast! ~6.4138ms when switching panes (portfolio/grandledger), ~0.5337ms when switching pages
         '''Re-renders: Side panel and GRID
         \n If called without any variables, only GRID is re-rendered
         \n - state: sets view to specified state
         \n - sort: re-filters & re-sorts displayed items
         '''
-        # Re-render misc GUI elements when state is changed
+        # Re-render misc GUI elements when view is changed
         if state and self.view.getState() != state:
-            self.set_view(state)
+            self.page = 0 # Always return to first page when view-state triggered
+            self.GUI['info'].clicked.disconnect()
+            self.view.state = state
+            self.update_side_panel_widgets()
 
         #If we're trying to render an asset that no longer exists, go back to the main portfolio instead
         if not self.view.getState() or (self.view.isAsset() and not self.PORTFOLIO.hasAsset(self.view.getAsset()[0], self.view.getAsset()[1])):   
@@ -708,9 +710,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             colorFormat = metric_formatting_lib[metric]['color']
             if self.view.isPortfolio() or self.view.isGrandLedger():
                 if metric == 'price': continue # price doesnt exist for portfolio
-                formatted_info = self.PORTFOLIO.metric_to_str(metric)
+                formatted_info = self.PORTFOLIO.get_formatted(metric)
             elif self.view.isAsset():
-                formatted_info = self.PORTFOLIO.asset(self.view.getAsset()[0], self.view.getAsset()[1]).metric_to_str(metric)
+                formatted_info = self.PORTFOLIO.asset(self.view.getAsset()[0], self.view.getAsset()[1]).get_formatted(metric)
             else: raise Exception(f'Unknown viewState {self.view.getState()}')
             toDisplay += metric_formatting_lib[metric]['headername'].replace('\n',' ')+'<br>'
             
@@ -741,18 +743,12 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 
     def set_sort(self, col:int): #Sets the sorting mode, then sorts and rerenders everything
-        if self.view.isPortfolio():
-            info = setting('header_portfolio')[col]
-            if setting('sort_portfolio')[0] == info:    set_setting('sort_portfolio',[info, not setting('sort_portfolio')[1]])
-            else:                                   set_setting('sort_portfolio',[info, False])
-        elif self.view.isAsset():
-            info = setting('header_asset')[col]
-            if setting('sort_asset')[0] == info:    set_setting('sort_asset',[info, not setting('sort_asset')[1]])
-            else:                                   set_setting('sort_asset',[info, False])
-        elif self.view.isGrandLedger():
-            info = setting('header_grand_ledger')[col]
-            if setting('sort_grand_ledger')[0] == info:    set_setting('sort_grand_ledger',[info, not setting('sort_grand_ledger')[1]])
-            else:                                   set_setting('sort_grand_ledger',[info, False])
+        """Left-click on GRID headers."""
+        metric = self.view.getHeaders()[col]
+        view_state_code = self.view.state
+        # Reverse sort if we're currently sorting my that column, otherwise, do normal sort by metric
+        if setting(f'sort_{view_state_code}')[0] == metric:     set_setting(f'sort_{view_state_code}',[metric, not setting(f'sort_{view_state_code}')[1]])
+        else:                                                   set_setting(f'sort_{view_state_code}',[metric, False])
         self.render(sort=True)
     def filter_and_sort(self): #Sorts the assets or transactions by the metric defined in settings
         '''Sorts AND FILTERS the assets or transactions by the metric defined in settings'''
@@ -856,7 +852,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
 #STATS AND INFO SUMMARY MESSAGES
 #=============================================================
-
     def portfolio_stats_and_info(self): #A wholistic display of all relevant information to the overall portfolio 
         toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
         DEFAULT_FORMAT = style('neutral') + style('info')
@@ -865,14 +860,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         testfont.setPixelSize(20)
 
         # NUMBER OF TRANSACTIONS, NUMBER OF ASSETS
-        to_insert = self.PORTFOLIO.metric_to_str('number_of_transactions')
+        to_insert = self.PORTFOLIO.get_formatted('number_of_transactions')
         toDisplay += '• ' + HTMLify(to_insert, DEFAULT_FORMAT)
-        to_insert = self.PORTFOLIO.metric_to_str('number_of_assets')
+        to_insert = self.PORTFOLIO.get_formatted('number_of_assets')
         toDisplay += ' transactions loaded under ' + HTMLify(to_insert, DEFAULT_FORMAT) + ' assets<br>'
 
         # USD PER WALLET
         toDisplay += '• Total USD by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + HTMLify(self.PORTFOLIO.metric_to_str('value', charlimit=20), DEFAULT_FORMAT) + ' USD<br>'
+        toDisplay += '\t*TOTAL*:\t' + HTMLify(self.PORTFOLIO.get_formatted('value', charLimit=20), DEFAULT_FORMAT) + ' USD<br>'
         wallets = list(self.PORTFOLIO.get_metric('wallets'))
         def sortByUSD(w):   return self.PORTFOLIO.get_metric('wallets')[w]  #Wallets are sorted by their total USD value
         wallets.sort(reverse=True, key=sortByUSD)
@@ -881,7 +876,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if not zeroish_prec(quantity):
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
-                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT)+ ' USD<br>'
+                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charLimit=20, styleSheet=DEFAULT_FORMAT)+ ' USD<br>'
 
         # MASS INFORMATION
         for data in ('cash_flow', 'day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
@@ -891,14 +886,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             label = '• '+metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
             if width > maxWidth: maxWidth = width
-            toDisplay += label + '\t\t' + HTMLify(self.PORTFOLIO.metric_to_str(data, charlimit=20), S)
+            toDisplay += label + '\t\t' + HTMLify(self.PORTFOLIO.get_formatted(data, charLimit=20), S)
             if textFormat == 'percent':
                 toDisplay += ' %<br>'
             else:
                 toDisplay += ' USD<br>'
         
-        Message(self, 'Overall Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
-    
+        Message(self, 'Overall Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)  
     def asset_stats_and_info(self, ticker:str, class_code:str): #A wholistic display of all relevant information to an asset 
         toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
         asset = self.PORTFOLIO.asset(ticker, class_code)
@@ -910,11 +904,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # NUMBER OF TRANSACTIONS
         toDisplay += '• ' + HTMLify(str(len(asset._ledger)), DEFAULT_FORMAT) + ' transactions loaded under ' + HTMLify(asset.ticker(), DEFAULT_FORMAT) + '<br>'
         # ASSET CLASS
-        toDisplay += '• Asset Class:\t\t' + HTMLify(asset.metric_to_str('class'), DEFAULT_FORMAT) + '<br>'
+        toDisplay += '• Asset Class:\t\t' + HTMLify(asset.get_formatted('class'), DEFAULT_FORMAT) + '<br>'
 
         # UNITS PER WALLET
         toDisplay += '• Total '+asset.ticker()+' by wallet:<br>'
-        toDisplay += '\t*TOTAL*:\t' + format_metric(asset.get_metric('balance'), 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(asset.get_metric('value'), 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
+        toDisplay += '\t*TOTAL*:\t' + format_metric(asset.get_metric('balance'), 'currency', charLimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(asset.get_metric('value'), 'currency', charLimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
         wallets = list(asset.get_metric('wallets'))  
         def sortByUnits(w):   return asset.get_metric('wallets')[w]    #Wallets are sorted by their total # of units
         wallets.sort(reverse=True, key=sortByUnits)
@@ -924,7 +918,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if not zeroish_prec(quantity) and value:
                 width = QFontMetrics(testfont).horizontalAdvance(w+':') + 2
                 if width > maxWidth: maxWidth = width
-                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(quantity*value, 'currency', charlimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
+                toDisplay += '\t' + w + ':\t' + format_metric(quantity, 'currency', charLimit=20, styleSheet=DEFAULT_FORMAT) + ' '+asset.ticker() + '\t' + format_metric(quantity*value, 'currency', charLimit=20, styleSheet=DEFAULT_FORMAT) + 'USD<br>'
 
         # MASS INFORMATION
         for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
@@ -936,11 +930,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if width > maxWidth: maxWidth = width
             label += '\t\t'
             if data == 'price':
-                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'currency', colorFormat, charlimit=20), S) + ' USD/'+asset.ticker() + '<br>'
+                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'currency', colorFormat, charLimit=20), S) + ' USD/'+asset.ticker() + '<br>'
             elif textFormat == 'percent':
-                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'percent', colorFormat, charlimit=20), S) + ' %<br>'
+                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'percent', colorFormat, charLimit=20), S) + ' %<br>'
             else:
-                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'currency', colorFormat, charlimit=20), S) + ' USD<br>'
+                toDisplay += label + HTMLify(format_metric(asset.get_metric(data), 'currency', colorFormat, charLimit=20), S) + ' USD<br>'
 
         Message(self, asset.name() + ' Stats and Information', toDisplay, size=.75, scrollable=True, tabStopWidth=maxWidth)
 
@@ -949,9 +943,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 #=============================================================
     def metrics(self, tax_report:str=''): # Recalculates all dynamic metrics
         '''Calculates and renders all metrics (including market metrics) for all assets and the portfolio.'''
-        metrics(self.PORTFOLIO, TEMP, self).recalculate_all(tax_report)
+        metr = metrics(self.PORTFOLIO, TEMP, self)
+        metr.recalculate_all(tax_report) #NOTE 22ms w/ 5300
+        metr.reformat_all() # ~20ms w/ 5600 
     def market_metrics(self):   # Recalculates only all market-dependent metrics
-        metrics(self.PORTFOLIO, TEMP, self).recalculate_market_dependent()
+        metr = metrics(self.PORTFOLIO, TEMP, self)
+        metr.recalculate_market_dependent()
+        metr.reformat_all()
 
 
 #PROGRESS BAR
@@ -995,7 +993,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 # UNDO/REDO CARETAKER
 #=============================================================
     def load_memento(self, undo_or_redo:str, *args, **kwargs):
-        ttt('start')
         # Retrieves memento from undo or redo stack
         if undo_or_redo == 'undo':
             if len(self.UNDO) == 0: return # can't undo if there's nothing to go to 
@@ -1033,6 +1030,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 self.PORTFOLIO.delete_asset(to_delete)
                 self.PORTFOLIO.add_asset(to_add)
             else: raise Exception(f'||ERROR|| Mementos for creation/deletion of assets unsupported')
+            self.update_side_panel_widgets() # Name change affects side panel
+            # name/description change doesn't affect metrics
         # WALLET (creation/deletion/modification)
         elif obj_type == Wallet:
             if is_creation:
@@ -1044,6 +1043,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 if to_delete.name() != to_add.name():
                     # Automatically adds/deletes wallets for us
                     self.PORTFOLIO.rename_wallet(to_delete.name(), to_add.name())
+                    self.metrics()
                 else:
                     self.PORTFOLIO.delete_wallet(to_delete)
                     self.PORTFOLIO.add_wallet(to_add)
@@ -1056,6 +1056,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             elif is_modification:
                 self.PORTFOLIO.delete_transaction(to_delete)
                 self.PORTFOLIO.add_transaction(to_add)
+            self.metrics()
         # TRANSACTION - MULTIPLE AT ONCE (creation/deletion ONLY)
         elif obj_type == list:
             if is_creation:
@@ -1065,12 +1066,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 for transaction in to_delete:
                     self.PORTFOLIO.delete_transaction(transaction)
             else: raise Exception(f'||ERROR|| Mementos for modification of multiple transactions unsupported')
+            self.metrics()
         # UNKNOWN MEMENTO TYPE
         else: raise TypeError(f'||ERROR|| Invalid memento type \'{obj_type}\'')
         
-        ttt('avg_end')
-        self.metrics()
-        self.render(sort=True)
+        self.render(sort=True) # Always always (always!) need to re-render
 
         self.memento_vfx() # Adds/removes star, undo/redo button functionality
     def create_memento(self, obj_before:None|Asset|Wallet|Transaction|List[Transaction], obj_after:None|Asset|Wallet|Transaction|List[Transaction], message:str):

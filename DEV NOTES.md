@@ -6,6 +6,10 @@
 
 ### Design/GUI
 
+* MEMENTO CHANGE NOTIFICATION
+	- add a little text message to the bottom-bar, when undo/redo triggered, it pops up displaying a message for 5, 10 or so seconds
+	- might also be able to have other messages in it
+
 * INFO/STATS INTEGRATION: Integrate info/stats panels into the main window where the GRID is currently
 
 - NEW VIEW: WALLETS
@@ -31,6 +35,14 @@
 		- shows 
 
 ### User-Friendliness
+
+* SEAMLESS PAGES
+	- Use QScrollArea to implement "Lazy Loading"
+	- Lazy Loading:
+		- Only what's visible is rendered
+	- Upside: no more pages, user can just scroll though an entire ledger
+	- Upside: Zoom is way more flexible: no complex rescaling neccesary anymore
+	- Downside: GRID totally needs revamping: now will need to be multiple rows instead of one QLabel per column
 
 * EASIER IMPORTING
 	- Current problems:
@@ -119,43 +131,43 @@
 
 # Performance Improvements
 
-* PRE-FORMATTING - consider above, "destroy metrics class", before this
-	- calc_formatting called after .metric():
-		- pre-format portfolio metrics?
-	- calc_formatting called after .metric():
-		- pre-format asset metrics
-		- pre-format wallet metrics
-	- after edit asset/wallet, re-calc formatting
+* FORMAT_METRIC PERFORMANCE BOOST
+	- make it faster... but how???
 
-* FORMAT NUMBER PERFORMANCE FIX
-	- format_number currently performs like ass: 450ms for 200,000 iterations!!! 
-	- that's half a second of load time each time you load a 5300-transaction portfolio!!!! Not horrible... yet.
-	- I should test whether this is O(n) or something worse (should be O(n) where n = # of transactions)
+* STARTUP PERFORMANCE BOOST
+	- Figure out how to make instantiation of QScrollArea not 160ms long
+	- figure out how to make self.showMaximized() not 175ms long
 
-* MEMENTOS (instead of "undoredo save"... crap name)
-	- ORIGINATOR: the type of object to be saved
-	- MEMENTO: the saved state of the object
-	- CARETAKER: Manages the mementos, enabling undo/redo functionality
-	- Instead of saving a copy of the entire portfolio to memory, just save the part whose state changed before/after
-	- maybe add statesave function to Portfolio: statesave always triggers whenever transaction/asset/wallet is added/removed from the portfolio, unless it is told not to.
-		- now "new portfolio" and "load portfolio" will erase all statesave history. "
-	- Consider moving "mementos" over to the portfolio object.. maybe, maybe not
+* PRE-FORMATTING
+	- pre-format wallet metrics (once wallet view implemented)
 
 - SAVE COMPRESSION: Compress the JSON files before saving them, with a custom file extension. 
 
 ### Multi-Threading
-- MULTI-THREADED METRICS
-	- Difficulties:
-		- figuring out how to divvy up the transactions among threads
-		- figuring out where the split occurs
-		- Having to synchronize multiple threads
-		- how many threads to create? Answer: os.cpu_count()
-		- It seems that the auto_accounting function cannot be multithreaded
+- OFF-THREAD SAVING
+	- Saving the portfolio should be handled by another thread
+
+- MULTI-THREADED METRICS:
+	- Idea 1: Separate metric calculation onto multiple threads
+		- Difficulties:
+			- figuring out how to divvy up the transactions among threads
+			- figuring out where the split occurs
+			- Having to synchronize multiple threads
+			- how many threads to create? Answer: os.cpu_count()
+			- It seems that the auto_accounting function cannot be multithreaded
+	- Idea 2: Only one new thread. When user makes changes, metric recalculation starts but doesn't "lag" the program
+		- Calculate .metrics() on a second thread off of the main one
+			- stops if user does new/load/merge
+			- restarts when user makes more changes and metrics is called again
+		- Indicator: there should be a little icon or smthg that tells the user that the app is "re-calculating..." or "auto-accounting..."
+
 - MULTI-THREADED OBJECT INSTANTIATION
 	- This affects only large loads:
 		- Loading portfolio for the first time
 		- Importing transactions from CSV/XLSX
 	- Thought: Divide instantiation of transactions into multiple threads. For each transaction in the JSON, throw that transaction into the instantiation stack of another thread. Threads do hard work of creating Transaction objects, then pass these objects back to the main thread's execution stack, to be added to the MAIN_PORTFOLIO object 
+- MULTI-THREADED GRID COLUMN POPULATION
+	- will this work?
 
 # Bugs and Issues
 
