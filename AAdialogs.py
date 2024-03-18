@@ -578,7 +578,7 @@ class DEBUGStakingReportDialog(Dialog):
         self.add_label('Crypto Ticker',0,0)
         self.ENTRY_asset = self.add_entry('', 1, 0, maxLength=24, capsLock=True)
         self.add_label('Staking Wallet',0,1)
-        self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
+        self.DROPDOWN_wallet = self.add_dropdown_list({w.name():w.name() for w in self.upper.PORTFOLIO.wallets()}, 1, 1, default=' -SELECT WALLET- ')
         self.add_label('Quantity',0,2)
         self.ENTRY_quantity = self.add_entry('', 1, 2, format='pos_float')
         self.add_menu_button('Cancel', self.close)
@@ -614,7 +614,8 @@ class DEBUGStakingReportDialog(Dialog):
         total_staking_income_thus_far = Decimal(0)
         this_asset = self.upper.PORTFOLIO.asset(TICKER, 'c')
         for transaction in this_asset._ledger.values():
-            if transaction.type() == 'income':
+            # Only count transactions: income, from same wallet
+            if transaction.type() == 'income' and transaction.wallet() == WALLET:
                 total_staking_income_thus_far += transaction.get_metric('gain_quantity')
 
         # Quantity is < income thus far?
@@ -624,7 +625,7 @@ class DEBUGStakingReportDialog(Dialog):
         new_transaction = Transaction({
                                       'date':timezone_to_unix(str(datetime.now()).split('.')[0]), 
                                       'type':'income', 
-                                      'wallet':WALLET.name(), 
+                                      'wallet':WALLET, 
                                       'gain_ticker': TICKER, 
                                       'gain_class': 'c',
                                       'gain_quantity':str(QUANTITY-total_staking_income_thus_far), 
