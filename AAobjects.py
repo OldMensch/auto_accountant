@@ -45,6 +45,7 @@ class Wallet():
 
     #access functions
     def get_hash(self) -> int:  return self._hash
+    def deep_hash(self) -> int: return hash((self._name, self._description))
     def name(self) -> str:      return self._name
     def desc(self) -> str:      return self._description
 
@@ -268,15 +269,16 @@ class Transaction():
         if S!=O:   return trans_type_formatting_lib[S]['priority']<trans_type_formatting_lib[O]['priority']
         # Break - assume always false
         return False
-    def __hash__(self) -> str: return self._metrics['hash']
+    def __hash__(self) -> str:          return self._metrics['hash']
 
     # QUICK ACCESS
+    def get_hash(self) -> int:          return self._metrics['hash']
+    def deep_hash(self) -> int:         return hash(tuple(self._data.values()))
     def unix_date(self) -> int:         return self._data['date']
     def iso_date(self) -> str:          return self._formatted['date']
     def type(self) -> str:              return self._data['type']
     def wallet(self) -> str:            return self._data['wallet']
     def desc(self) -> str:              return self._data['description']
-    def get_hash(self) -> int:          return self._metrics['hash']
 
     # JSON
     def toJSON(self) -> Dict[str,int|str]: # Returns a dictionary of all data for this transaction. Missing/Nones are omitted
@@ -378,6 +380,7 @@ class Asset():
 
     # QUICK ACCESS
     def get_hash(self) -> int:      return self._metrics['hash']
+    def deep_hash(self) -> int:     return hash(tuple(self._data.values()))
     def ticker(self) -> str:        return self._data['ticker']
     def class_code(self) -> str:    return self._data['class']
     def name(self) -> str:          return self._data['name']
@@ -455,6 +458,13 @@ class Portfolio():
         try:    return self._formatted[metric]
         except: return MISSINGDATA
     
+    # comparison
+    def __hash__(self):
+        # Gathers all item DEEP hashes, sorts them, returns 
+        all_hashed = [a.deep_hash() for a in self.assets()]+[t.deep_hash() for t in self.transactions()]+[w.deep_hash() for w in self.wallets()]
+        all_hashed.sort()
+        return hash(tuple(all_hashed))
+
     # MODIFICATION
     def clear(self):
         """Deletes all assets, transactions, wallets, and filters"""

@@ -283,7 +283,6 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
         if 'loss_price' in valids and    zeroish(LP):                     error = 'Loss price must be non-zero.' # NOTE: See above
         # Valid fee?
         if FT: #Fee asset will be 'USDzf' for purchases and sales, until that data removed later on.
-            if        'fee_ticker' in valids  and   not self.upper.PORTFOLIO.hasAsset(FT, FC): error = 'Fee asset does not exist in portfolio.'
             if FQ and 'fee_quantity' in valids and zeroish(FQ):                     error = 'Fee quantity must be non-zero.'
             #if FP and 'fee_price' in valids and    zeroish(FP):                     error = 'Fee price must be non-zero.'
         # Valid gain?

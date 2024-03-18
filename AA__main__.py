@@ -45,8 +45,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # LOAD MOST RECENT SAVE - must be loaded BEFORE market data 
         # NOTE: 2ms for new, 283ms for load w/ 5300
-        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'), suppressMetricsAndRendering=True)
-        else:                                                                           self.new(suppressMetricsAndRendering=True)
+        if setting('startWithLastSaveDir') and os.path.isfile(setting('lastSaveDir')):  self.load(setting('lastSaveDir'), suppressMetricsAndRendering=True, ignore_sure=True)
+        else:                                                                           self.new(suppressMetricsAndRendering=True, ignore_sure=True)
 
         # NOTE: 1ms ALWAYS
         self.__init_market_data__() # Loads market data from file or internet
@@ -319,7 +319,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if saveAs or not os.path.isfile(setting('lastSaveDir')):
             dir = QFileDialog.getSaveFileName(self, 'Save Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         else:
-            if not self.isUnsaved(): return
+            if not self.isUnsaved(): return # don't bother saving if file is identical
             dir = setting('lastSaveDir')
         if dir == '':
             return
@@ -327,18 +327,33 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         current_to_JSON = self.PORTFOLIO.toJSON()
         with open(dir, 'w') as file:
             json.dump(current_to_JSON, file)
-        self.loaded_data_hash = hash(json.dumps(current_to_JSON, sort_keys=True))
+        self.loaded_data_hash = hash(self.PORTFOLIO)
         if saveAs:      set_setting('lastSaveDir', dir)
-    def new(self, suppressMetricsAndRendering=False, *args, **kwargs):
+    def new(self, suppressMetricsAndRendering=False, ignore_sure=False, *args, **kwargs):
+        if not ignore_sure and self.isUnsaved():
+            unsavedPrompt = Message(self, 'Unsaved Changes', 'Are you sure you want to create a new portfolio?\nYour changes will be lost!', closeMenuButtonTitle='Cancel')
+            def continue_new():
+                self.new(ignore_sure=True)
+                unsavedPrompt.close()
+            unsavedPrompt.add_menu_button('Create New Portfolio', continue_new, styleSheet=style('save'))
+            return
         set_setting('lastSaveDir', '')
         self.PORTFOLIO.clear()
         self.setWindowTitle('Portfolio Manager')
         if not suppressMetricsAndRendering:
             self.metrics()
             self.render(state=self.view.PORTFOLIO, sort=True)
-        self.loaded_data_hash = None
+        self.loaded_data_hash = hash(self.PORTFOLIO)
         self.clear_mementos()
-    def load(self, dir=None, suppressMetricsAndRendering=False, *args, **kwargs):
+    def load(self, dir=None, suppressMetricsAndRendering=False, ignore_sure=False, *args, **kwargs):
+        if not ignore_sure and self.isUnsaved():
+            unsavedPrompt = Message(self, 'Unsaved Changes', 'Are you sure you want to load?\nYour changes will be lost!', closeMenuButtonTitle='Cancel')
+            def continue_load():
+                self.load(ignore_sure=True)
+                unsavedPrompt.close()
+            unsavedPrompt.add_menu_button('Continue Loading', continue_load, styleSheet=style('save'))
+            return
+        
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
         if dir == '':   return
         try:    
@@ -354,7 +369,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if not suppressMetricsAndRendering:
             self.metrics()
             self.render(state=self.view.PORTFOLIO, sort=True)
-            self.loaded_data_hash = hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True))
+        self.loaded_data_hash = hash(self.PORTFOLIO) # NOTE: 2ms w/ 5600
         self.clear_mementos()  
     def merge(self): #Doesn't overwrite current portfolio by default.
         dir = QFileDialog.getOpenFileName(self, 'Load Portfolio for Merging', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -366,31 +381,34 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         except:
             Message(self, 'Error!', '\'file\' is an unparseable JSON file. Probably missing commas or brackets.' )
             return
-        self.PORTFOLIO.loadJSON(decompile, True, False)
+        TO_MERGE = Portfolio()
+        TO_MERGE.loadJSON(decompile)
+        new_transactions = [t for t in TO_MERGE.transactions() 
+                            if not self.PORTFOLIO.hasTransaction(t.get_hash())]
+        for trans in new_transactions:
+            self.PORTFOLIO.add_transaction(trans)
         set_setting('lastSaveDir', '') #resets the savedir. who's to say where a merged portfolio should save to? why should it be the originally loaded file, versus any recently merged ones?
         self.setWindowTitle('Portfolio Manager')
+        self.create_memento(None, new_transactions) # Unlike new/load, this creates a memento, instead of resetting them
         self.metrics()
         self.render(state=self.view.PORTFOLIO, sort=True)
-        # Merge doesn't modify loaded_data_hash:
-        # Merge doesn't clear mementos
 
     def quit(self, event=None):
         if event: event.ignore() # Prevents program from closing if you hit the main window's 'X' button, instead I control whether it closes here.
-        def save_and_quit():
-            self.save()
-            app.exit()
 
         if self.isUnsaved():
+            def save_and_quit():
+                self.save()
+                app.exit()
             unsavedPrompt = Message(self, 'Unsaved Changes', 'Are you sure you want to quit?\nYour changes will be lost!', closeMenuButtonTitle='Cancel')
             unsavedPrompt.add_menu_button('Quit', app.exit, styleSheet=style('delete'))
             unsavedPrompt.add_menu_button('Save and Quit', save_and_quit, styleSheet=style('save'))
-            unsavedPrompt.show()
         else:
             app.exit()
 
     def isUnsaved(self) -> bool:
         """True if portfolio has not been changed from originally loaded file"""
-        return self.loaded_data_hash != hash(json.dumps(self.PORTFOLIO.toJSON(), sort_keys=True))
+        return self.loaded_data_hash != hash(self.PORTFOLIO)
 
 
 # RENDERING: WIDGET INSTANTIATION
