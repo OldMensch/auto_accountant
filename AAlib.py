@@ -1,17 +1,19 @@
 
-import json
-import time
+# Python default libraries
+import sys, os, json, time, webbrowser, copy, requests, math, textwrap, glob
 from enum import Enum
 from datetime import datetime, timedelta, timezone
 from copy import deepcopy
-import sys, os
-import textwrap
-import math
 from functools import partial as p
 from typing import List, Dict, Any, Tuple
-import requests
-import copy
+from io import StringIO
 
+# Defines precision of DECIMAL objects in the program: specified to be 100 decimals here
+import decimal
+decimal.getcontext().prec = 100
+from decimal import Decimal
+
+# 3rd-party
 from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar,
     QApplication, QMainWindow, QDialog, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
     QComboBox, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea)
@@ -19,12 +21,9 @@ from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMo
     QDropEvent, QDragEnterEvent, QActionGroup, QAction, QShortcut, QGuiApplication, QTextOption)
 from PySide6.QtCore import (Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QPoint) 
 import pandas as pd
-from io import StringIO
+import numpy as np
 
-import decimal
-decimal.getcontext().prec = 100
-from decimal import Decimal
-
+# In-house
 import AAstylesheet
 from AAstylesheet import UNI_PALETTE
 
@@ -41,10 +40,7 @@ def zeroish_prec(x:Decimal):     return abs(x) < absolute_precision
 
 global iconlib
 
-TEMP = { } #Universal temporary data dictionary
-
 MISSINGDATA = '???'
-
 
 ### UTILITY FUNCTIONS
 ###==========================================
@@ -256,7 +252,8 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'GRID_error_none':      "background: #880000;",
     'GRID_hover':           f"background: {UNI_PALETTE.A2};",
     'GRID_selection':       f"background: {UNI_PALETTE.A1};",
-    'GRID_none':            "color: #ff0000; background: transparent;",
+    'GRID_row_even':        "background: transparent;",
+    'GRID_row_odd':         f"background: {UNI_PALETTE.B2};",
     
     'timestamp_indicator_online':   "background-color: transparent; color: #ffffff;",
     'timestamp_indicator_offline':  "background-color: #ff0000; color: #ffffff;",
@@ -308,45 +305,31 @@ def style(styleSheet:str): # returns the formatting for a given part of the GUI
 def loadIcons(): # loads the icons for the GUI
     global iconlib
     
-    #Makes the icons work when the images are stored inside the compiled EXE file
-    if hasattr(sys, "_MEIPASS"):    extra_dir = sys._MEIPASS+'/'
+    #Makes the icons work when compiled using PyInstaller
+    if hasattr(sys, "_MEIPASS"):    extra_dir = sys._MEIPASS+'\\'
     else:                           extra_dir = ''
-    iconlib = {
-        'size' : QSize(2.5*setting('font_size'), 2.5*setting('font_size')),         # Size of icons
-        'size2' : QSize(3*setting('font_size'), 3*setting('font_size')),
-
-        'icon' : QIcon(extra_dir+'icons/logo.png'),
-        'logo' : QPixmap(extra_dir+'icons/logo.png'),
-        'bullet' : QPixmap(extra_dir+'icons/bullet.png'),
-
-        'new' : QPixmap(extra_dir+'icons/new.png'),
-        'load' : QPixmap(extra_dir+'icons/load.png'),
-        'save' : QPixmap(extra_dir+'icons/save.png'),
-        'filter' : QPixmap(extra_dir+'icons/filter.png'),
-        'undo' : QPixmap(extra_dir+'icons/undo.png'),
-        'redo' : QPixmap(extra_dir+'icons/redo.png'),
-
-        'arrow_up' : QPixmap(extra_dir+'icons/arrow_up.png'),
-        'arrow_down' : QPixmap(extra_dir+'icons/arrow_down.png'),
-        
-        'settings' : QPixmap(extra_dir+'icons/settings.png'),
-        'info' : QPixmap(extra_dir+'icons/info.png'),
-    }
+    # pulls ALL icons from icons folder
+    iconlib = {icon_name.split('\\').pop().split('.')[0]:QPixmap(icon_name) for icon_name in glob.glob(f'{extra_dir}icons\\*.png')}
+    iconlib['size'] = QSize(2.5*setting('font_size'), 2.5*setting('font_size'))
+    iconlib['size2'] = QSize(3*setting('font_size'), 3*setting('font_size'))
 def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI
 
 #List of asset classes, by name tag
 class_lib = {  
     'c' : {
         'name':'Crypto',
-        'validTrans' : ('purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade')
+        'validTrans' : ('purchase','purchase_crypto_fee','sale','gift_in','gift_out','card_reward','income','expense','transfer_in','transfer_out','trade'),
+        'yahooFinanceSuffix':'-USD'
     },
     's' : {
         'name':'Stock',
-        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out')
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out'),
+        'yahooFinanceSuffix':''
     },
     'f' : {
         'name':'Fiat',
-        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out') 
+        'validTrans' : ('purchase','sale','gift_in','gift_out','transfer_in','transfer_out'),
+        'yahooFinanceSuffix':'USD=X'
     }
 }
 

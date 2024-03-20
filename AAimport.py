@@ -1,6 +1,7 @@
 
 import pandas as pd
 from io import StringIO
+import base64, hmac, hashlib # For Gemini API
 
 from AAobjects import *
 from AAdialogs import Message
@@ -540,3 +541,127 @@ def yoroi(main_app, fileDir, wallet): #Imports Yoroi Wallet transaction history
         PORTFOLIO_TO_MERGE.import_transaction(trans)
     
     finalize_import(main_app, PORTFOLIO_TO_MERGE)
+
+
+# API INTEGRATED IMPORTS
+def GeminiAPIImportTrades(main_app, wallet):
+    gemini_api_key = "master-OKnW1ZGgd2fo6ICemkbY"
+    gemini_api_secret = "347tvnrf3oPWXxPHpsnYhbg2ZNSt".encode()
+    
+    # Download previous 50 orders
+    payload = { 
+        "request": "/v1/orders/history", 
+        "nonce": time.time(), 
+        "limit_orders": 50, # Number of consecutive historical orders to retrieve. Max is 500
+        "account" : 'primary',
+        }
+    encoded_payload = base64.b64encode(json.dumps(payload).encode())
+    signature = hmac.new(gemini_api_secret, encoded_payload, hashlib.sha384).hexdigest()
+
+    request_headers = {
+        'Content-Type': "text/plain",
+        'Content-Length': "0",
+        'X-GEMINI-APIKEY': gemini_api_key,
+        'X-GEMINI-PAYLOAD': encoded_payload,
+        'X-GEMINI-SIGNATURE': signature,
+        'Cache-Control': "no-cache"
+        }
+
+    response = requests.post("https://api.gemini.com/v1/orders/history", headers=request_headers)
+    PREV_50_ORDERS = pd.DataFrame.from_dict(response.json())
+
+    # Download previous 50 transfers
+    payload = { 
+        "request": "/v1/transfers", 
+        "nonce": time.time(), 
+        "limit_orders": 50, # Number of consecutive historical orders to retrieve. Max is 500
+        "account" : 'primary',
+        }
+    encoded_payload = base64.b64encode(json.dumps(payload).encode())
+    signature = hmac.new(gemini_api_secret, encoded_payload, hashlib.sha384).hexdigest()
+
+    request_headers = {
+        'Content-Type': "text/plain",
+        'Content-Length': "0",
+        'X-GEMINI-APIKEY': gemini_api_key,
+        'X-GEMINI-PAYLOAD': encoded_payload,
+        'X-GEMINI-SIGNATURE': signature,
+        'Cache-Control': "no-cache"
+        }
+
+    response = requests.post("https://api.gemini.com/v1/transfers", headers=request_headers)
+    PREV_50_TRANSFERS = pd.DataFrame.from_dict(response.json())
+
+
+
+    # CONVERT DATA TO TRANSACTIONS
+    PORTFOLIO_TO_MERGE = Portfolio()
+
+    # Import transfers
+    for transfer in PREV_50_TRANSFERS:
+        TYPE = transfer['type']
+        DATE = transfer['timestampms']
+        TICKER = transfer['currency']
+        QUANTITY = transfer['amount']
+
+        if TICKER == 'USD': continue # ignore USD deposits/withdrawals
+
+        if 'feeCurrency' in transfer: 
+            FEE_TICKER = transfer['feeCurrency']
+            FEE_QUANTITY = transfer['feeAmount']
+        else:
+            FEE_TICKER, FEE_QUANTITY = None,None
+
+        match TYPE:
+            case 'Deposit':
+                PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(DATE, 'transfer_in', wallet, fee=[FEE_TICKER,FEE_QUANTITY,None], gain=[TICKER,QUANTITY,None]))
+            case 'Withdrawal':
+                PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(DATE, 'transfer_out', wallet, fee=[FEE_TICKER,FEE_QUANTITY,None], loss=[TICKER,QUANTITY,None]))
+            case 'Reward':
+                PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(DATE, 'income', wallet, gain=[TICKER,QUANTITY,None]))
+            case other: 
+                Message(main_app, 'IMPORT ERROR!', f'||ERROR|| Failed to import Gemini with API: Unknown transfer type \'{other}\'')
+                return 
+        
+    # type	        string	    Transfer type. Deposit, Withdrawal, or Reward.
+    # status	    string	    Transfer status. Advanced or Complete.
+    # timestampms	timestampms	The time of the transfer in milliseconds
+    # eid	        integer	    Transfer event id
+    # advanceEid	integer	    Deposit advance event id
+    # currency	    string	    Currency code, see symbols
+    # amount	    decimal	    The transfer amount
+    # feeAmount	    decimal	    The fee amount charged
+    # feeCurrency	string	    Currency that the fee was paid in
+    # method	    string	    Optional. When currency is a fiat currency, the method field will attempt to supply ACH, Wire,SEN, or CreditCard. If the transfer is an internal transfer between subaccounts the method field will return Internal.
+    # txHash	    string	    Optional. When currency is a cryptocurrency, supplies the transaction hash when available.
+    # withdrawalId	string	    Optional. When currency is a cryptocurrency and type is Withdrawal, supplies the withdrawalId1.
+    # outputIdx	    integer	    Optional. When currency is a cryptocurrency, supplies the output index in the transaction when available.
+    # destination	string	    Optional. When currency is a cryptocurrency, supplies the destination address when available.
+    # purpose	    string	    Optional. Administrative field used to supply a reason for certain types of advances.
+
+
+
+    # From "https://docs.gemini.com/rest-api/#get-orders-history"
+    # order_id	            string	    The order id
+    # symbol	            string	    The symbol of the order
+    # exchange	            string	    Will always be "gemini"
+    # avg_execution_price	decimal	    The average price at which this order as been executed so far. 0 if the order has not been executed at all.
+    # side	                string	    Either "buy" or "sell".
+    # type	                string	    Description of the order:
+    #                                   exchange limit
+    #                                   market buy
+    #                                   market sell
+    # timestamp	            timestamp	The timestamp the order was submitted. Note that for compatibility reasons, this is returned as a string. We recommend using the timestampms field instead.
+    # timestampms	        timestampms The timestamp the order was submitted in milliseconds.
+    # is_live	            boolean	    true if the order is active on the book (has remaining quantity and has not been canceled)
+    # is_cancelled	        boolean	    true if the order has been canceled. Note the spelling, "cancelled" instead of "canceled". This is for compatibility reasons.
+    # is_hidden	            boolean	    Will always return false.
+    # was_forced	        boolean	    Will always be false.
+    # executed_amount	    decimal	    The amount of the order that has been filled.
+    # client_order_id	    string	    An optional client-specified order id
+    # options	            string	    An array containing at most one supported order execution option. See Order execution options for details.
+    # price	                decimal	    The price the order was issued at
+    # original_amount	    decimal	    The originally submitted amount of the order.
+    # remaining_amount	    decimal	    The amount of the order that has not been filled.
+    # trades	            array	    Optional. Contains an array of JSON objects with trade details.
+

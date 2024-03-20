@@ -1,6 +1,25 @@
 
 
+def get_windows_accent():
+    '''Returns the two colors used by Windows 10/11 for its accent palette
+    \nThe first color is lighter, the second color is darker'''
+    viable=[]
+    try:
+        import winreg
+        access_registry = winreg.ConnectRegistry(None,winreg.HKEY_CURRENT_USER)
 
+        accentcolorkey = winreg.OpenKey(access_registry,'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent')
+        value = str(winreg.QueryValueEx(accentcolorkey, 'AccentPalette')[0]).removeprefix('b')
+        value = value.replace(value[0],'')
+        value = value.split('\\x00')
+        for S in value: 
+            if S.count('\\x') == 3: viable.append('#'+S.replace('\\x',''))
+        if '#881798' in viable: viable.remove('#881798') # Some weird hexadecimal that appears sometimes, some random purple color
+    except: pass
+    
+    if len(viable) < 1: # We failed to retrieve the windows palette, so just use some generic color palette instead
+        return '#1A72BB'
+    return viable[0]
 
 def mix_hex(hex1:str, hex2:str, factor:float=0.5):
     '''factor=0.25 results in 25% hex1 and 75% hex2. Default is 50/50'''
@@ -30,7 +49,7 @@ def palette_qdarkstyle():   # The default color palette of qdarkstyle
     }
 
 def palette_file_explorer():    # uses blacks/grays of Windows file explorer for main colors, accent color uses Windows' accent color (nifty!)
-    accent = '#00abff'
+    accent = get_windows_accent()
     return {
     # Grays
     '#19232D': '#191919', 
@@ -49,7 +68,7 @@ def palette_file_explorer():    # uses blacks/grays of Windows file explorer for
     }
 
 
-def palette_accentless():    # uses blacks/grays of Windows file explorer for main colors, accent color uses Windows' accent color (nifty!)
+def palette_accentless():    # Uses blacks/grays for primary colors, accented with "jeans blue"
     accent = '#00abff' #'#888888'
     return {
     # Grays
@@ -94,10 +113,10 @@ class UNI_PALETTE:  # This is how we (more easily) access the palette from withi
     A4 = UNIVERSAL_PALETTE['#259AE9'] # Brightest
 
 
-def get_custom_qdarkstyle():
-    '''IMPORTANT!!! Must be called AFTER QApplication is instantiated'''
+def get_custom_master_stylesheet():
+    '''Returns default PySide6 StyleSheet, with base and accent colors replaced with a custom palette'''
     import qdarkstyle 
-    stylesheet = qdarkstyle.load_stylesheet_pyside2()
+    stylesheet = qdarkstyle._load_stylesheet(qt_api='pyside6')
 
     for color in UNIVERSAL_PALETTE:
         stylesheet = stylesheet.replace(color, UNIVERSAL_PALETTE[color])

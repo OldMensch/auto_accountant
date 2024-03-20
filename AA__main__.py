@@ -23,6 +23,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     UNDO = [] # Undo memento stack
     REDO = [] # Redo memento stack
     loaded_data_hash = None # Reduces performance: if our current portfolio's hash is equal to this, then we haven't modified our data at all.
+    TAXES = {} # Dictionary of tax forms
 
     def __init__(self): # 681ms w/ 5600
         # NOTE: LAG PROFILE:::
@@ -30,7 +31,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # self.load(): 283 ms w/ 5600, due to transactions, ~50% due to [FORMAT_METRIC]
         # self.metrics(): 40ms w/ 5600, 20ms due to auto_account(), 20ms due to reformat_all() [FORMAT_METRIC]
         # self.showMaximized(): 175ms w/ 5600... unknown cause
-        super().__init__(windowIcon=icon('icon'), windowTitle='Portfolio Manager') # NOTE: 2ms ALWAYS
+        super().__init__(windowIcon=icon('logo'), windowTitle='Portfolio Manager') # NOTE: 2ms ALWAYS
         
         # Changes timezone labels from 'Date' to 'Date (Your Timezone)' NOTE: 0ms ALWAYS
         metric_formatting_lib['date']['name'] = metric_formatting_lib['date']['headername'] = metric_formatting_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
@@ -56,8 +57,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.render(state=self.view.PORTFOLIO, sort=True) # NOTE: 8ms w/ 38 assets in portfolio view
 
         # PYINSTALLER - Closes splash screen now that the program is loaded
-        try: exec("""import pyi_splash\npyi_splash.close()""") # exec() is used so that VSCode ignores the "I can't find this module error"
-        except: pass   
+        # TODO TODO TODO: Uncomment this when compiling!!!
+        # try:
+        #     import pyi_splash
+        #     pyi_splash.close()
+        # except: pass   
 
         # NOTE: 60ms for new, 175 ms w/ 5300 transactions
         self.showMaximized() # Pops up window as maximized
@@ -107,27 +111,25 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if set_to_offline: # Set to Offline
             if '_timestamp' in self.market_data:   # market_data -> JSON, if we have any data
                 with open('OfflineMarketData.json', 'w') as file:
-                    decimals_converted_to_float = {
+                    decimals_as_strings = {
                         class_code:{
                             ticker:{
-                                metric:float(data) 
+                                metric:str(data) 
                                 for metric,data in self.market_data[class_code][ticker].items()} 
                             for ticker in self.market_data[class_code].keys()} 
                         for class_code in class_lib.keys()}
-                    decimals_converted_to_float['_timestamp'] = self.market_data['_timestamp']
-                    json.dump(decimals_converted_to_float, file, indent=4)
+                    decimals_as_strings['_timestamp'] = self.market_data['_timestamp']
+                    json.dump(decimals_as_strings, file, indent=4)
             try: # change to offline successful
                 with open('OfflineMarketData.json', 'r') as file:
                     offline_market_data = json.load(file)
-                floats_to_decimals = {
-                    class_code:{
-                        ticker:{
-                            metric:Decimal(data) 
-                            for metric,data in offline_market_data[class_code][ticker].items()} 
-                        for ticker in offline_market_data[class_code].keys()} 
-                    for class_code in class_lib.keys()}
-                floats_to_decimals['_timestamp'] = offline_market_data['_timestamp']
-                self.market_data.update(floats_to_decimals)
+                for class_code in class_lib:
+                    for ticker in offline_market_data[class_code]:
+                        for metric,data in offline_market_data[class_code][ticker].items():
+                            try:    offline_market_data[class_code][ticker][metric] = Decimal(data)
+                            except: pass
+                offline_market_data['_timestamp'] = offline_market_data['_timestamp']
+                self.market_data.update(offline_market_data)
                 self.GUI['timestamp_indicator'].setText(f'OFFLINE MODE - Data from {self.market_data['_timestamp'][0:16]}')
                 self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_offline'))
                 self.online_event.clear()
@@ -158,7 +160,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # FILE Tab
         file = self.TASKBAR['file'] = QMenu('File')
-        taskbar.addMenu(file)
         file.addAction('New',               self.new)
         file.addAction('Load...',           self.load)
         file.addAction('Save',              self.save)
@@ -173,7 +174,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # SETTINGS Tab
         settings = self.TASKBAR['settings'] = QMenu('Settings')
-        taskbar.addMenu(settings)
 
         self.offlineMode = QAction('Offline Mode', parent=settings, triggered=self.toggle_offline_mode, checkable=True, checked=setting('is_offline'))
         settings.addAction(self.offlineMode)
@@ -193,7 +193,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             timezonemenu.addAction(QAction('('+tz+') '+timezones[tz][0], parent=timezonemenu, triggered=p(set_timezone, tz), actionGroup=timezoneActionGroup, checkable=True, checked=(setting('timezone') == tz)))
 
         def light_mode(): app.setStyleSheet('')
-        def dark_mode():  app.setStyleSheet(qdarkstyle.load_stylesheet_pyside2())
+        def dark_mode():  app.setStyleSheet(AAstylesheet.get_custom_master_stylesheet())
         appearancemenu = self.TASKBAR['appearance'] = QMenu('Appearance')
         settings.addMenu(appearancemenu)
         appearancemenu.addAction('Light Mode', light_mode)
@@ -217,7 +217,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # ABOUT
         about = self.TASKBAR['about'] = QMenu('About')
-        taskbar.addMenu(about)
         about.addAction('MIT License', self.copyright)
         
         # METRICS
@@ -225,7 +224,6 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         portfolio_metrics_menu =    self.TASKBAR['metrics_portfolio'] = QMenu('Portfolio View')
         grand_ledger_metrics_menu = self.TASKBAR['metrics_grand_ledger'] = QMenu('Grand Ledger View')
         asset_metrics_menu =        self.TASKBAR['metrics_asset'] = QMenu('Asset View')
-        taskbar.addMenu(metrics_menu)
         metrics_menu.addMenu(portfolio_metrics_menu)
         metrics_menu.addMenu(grand_ledger_metrics_menu)
         metrics_menu.addMenu(asset_metrics_menu)
@@ -249,14 +247,22 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 
         # TAXES
         taxes = self.TASKBAR['taxes'] = QMenu('Taxes')
-        taskbar.addMenu(taxes)
         taxes.addAction('Generate data for IRS Form 8949', self.tax_Form_8949)
         taxes.addAction('Generate data for IRS Form 1099-MISC', self.tax_Form_1099MISC)
 
-        #'DEBUG' Tab
-        DEBUG = self.TASKBAR['DEBUG'] = QMenu('DEBUG')
-        taskbar.addMenu(DEBUG)
-        DEBUG.addAction('DEBUG find all missing price data',     self.DEBUG_find_all_missing_prices)
+        #'ERRORS' Tab
+        ERRORS = self.TASKBAR['DEBUG'] = QMenu('Errors')
+        ERRORS.addAction('Report',          self.error_report)
+        ERRORS.addSeparator()
+        ERRORS.addAction('Download missing price data',     self.errors_download_missing_prices)
+
+        # Add all menus to taskbar
+        taskbar.addMenu(file)
+        taskbar.addMenu(metrics_menu)
+        taskbar.addMenu(taxes)
+        taskbar.addMenu(ERRORS)
+        taskbar.addMenu(settings)
+        taskbar.addMenu(about)
 
 
     def tax_Form_8949(self):
@@ -264,21 +270,57 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         if dir == '':   return
         self.metrics(tax_report='8949')
         with open(dir, 'w', newline='') as file:
-            file.write(TEMP['taxes']['8949'].to_csv())
+            file.write(self.TAXES['8949'].to_csv())
     def tax_Form_1099MISC(self):
         dir = QFileDialog.getOpenFileName(self, 'Save data for IRS Form 1099-MISC', setting('lastSaveDir'), "CSV Files (*.csv)")[0]
         if dir == '':   return
         self.metrics(tax_report='1099-MISC')
         with open(dir, 'w', newline='') as file:
-            file.write(TEMP['taxes']['1099-MISC'].to_csv())
+            file.write(self.TAXES['1099-MISC'].to_csv())
 
-    def DEBUG_find_all_missing_prices(self):
+    def error_report(self):
+        # dict of {error type : # errors of that type}
+        errors = {}
+        missing_data_totals = {}
+        for t in self.PORTFOLIO.transactions():
+            if not t.ERROR: continue
+            if t.ERROR_TYPE not in errors: errors[t.ERROR_TYPE] = 0
+            errors[t.ERROR_TYPE] += 1
+            if t.ERROR_TYPE == 'data':
+                for missing_data in t.get_metric('missing'):
+                    if missing_data not in missing_data_totals: missing_data_totals[missing_data] = 0
+                    missing_data_totals[missing_data] += 1
+        toDisplay = ''
+        # No errors:
+        if len(errors) == 0: toDisplay += 'No errors to report!'
+        # missing data error handled independently
+        if 'data' in errors:
+            toDisplay += f'• {errors['data']} \'data\' errors\n'
+            for error,count in missing_data_totals.items():
+                toDisplay += f'        • {count} transactions missing \'{error}\'\n'
+        # display all errors and their counts
+        for error,count in errors.items():
+            if error=='data': continue
+            toDisplay += f'• {count} \'{error}\' errors\n'
+
+        Message(self, 'Error Report', toDisplay, scrollable=True, size=0.5)
+    def errors_download_missing_prices(self):
+        total_attempts = 0
+        total_successes = 0
         for t in self.PORTFOLIO.transactions():
             DATE = t.iso_date()
             MISSING = t.get_metric('missing')
             for part in ('loss_','fee_','gain_'):
-                if part+'price' in MISSING:   t.get_raw[part+'price'] = getMissingPrice(DATE, t.get_raw(part+'ticker'), t.get_raw(part+'class'))
+                if part+'price' in MISSING:   
+                    new_price = getMissingPrice(DATE, t.get_raw(part+'ticker'), t.get_raw(part+'class'))
+                    t.get_raw[part+'price'] = new_price
+                    total_attempts += 1
+                    if new_price is not None: total_successes += 1
             t.precalculate()
+        if total_attempts == 0:
+            Message(self, 'Fixed Missing Prices', f'No missing price data found')
+        else:
+            Message(self, 'Fixed Missing Prices', f'Successfully replaced {total_successes}/{total_attempts} instances of missing price data')
         self.metrics()
         self.render(sort=True)
 
@@ -559,6 +601,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 m.addAction(f'Open {item.ticker()} Ledger', open_ledger)
                 m.addAction(f'Show {item.ticker()} info/stats', p(self.asset_stats_and_info, item.ticker(), item.class_code()))
                 m.addAction(f'Edit {item.ticker()}', p(AssetEditor, self, item))
+                m.addSeparator()
+                if item.class_code() == 'c' and item.get_metric('cmc_name') != None:
+                    m.addAction(f'Open {item.ticker()} on CoinMarketCap.com', 
+                                p(webbrowser.open, f'https://coinmarketcap.com/currencies/{item.get_metric('cmc_name')}/'))
+                if item.class_code() == 's':
+                    m.addAction(f'Open {item.ticker()} on StockAnalysis.com', 
+                                p(webbrowser.open, f'https://stockanalysis.com/stocks/{item.ticker().lower()}/'))
+                m.addAction(f'Open {item.ticker()} on YahooFinance.com', 
+                            p(webbrowser.open, f'https://finance.yahoo.com/quote/{item.ticker()}{class_lib[item.class_code()]['yahooFinanceSuffix']}'))
+
+                    
             else:
                 trans_title = item.iso_date() + ' ' + item.type()
                 m.addAction('Edit ' + trans_title, p(TransEditor, self, old_transaction=item, copy=False))
@@ -823,11 +876,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #########################
         # SORTING
         #########################
-        # DEFAULT SORT pre-sorting for assets/transactions
-        if self.view.isPortfolio():    
-            filtered_unsorted.sort(reverse=not reverse)     # Assets base sort is by ticker, then class
-        elif self.view.isAsset() or self.view.isGrandLedger():       
-            filtered_unsorted.sort(reverse=not reverse)    # Transactions base sort is by date mostly, but other minor conditional cases (integrated into sort function)
+        # DEFAULT SORT
+        # Assets base sort is by ticker, then class
+        # Transactions base sort is by date, then by type (based on type sorting priorities)
+        filtered_unsorted.sort(reverse=not reverse)     
         
         # Sorting based on the column we've selected to sort by
         def alpha_key(e):    
@@ -839,11 +891,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if toReturn:    return toReturn
             else:           return (reverse-0.5)*float('inf') #Sends missing data values to the bottom of the sorted list
 
-        if   info == 'date': pass  #This is here to ensure that the default date order is newest to oldest. This means reverse alphaetical
+        if   info == 'date': pass  # We already sorted by date
         elif metric_formatting_lib[info]['format'] in ('alpha','type','desc','class'):      
             filtered_unsorted.sort(reverse=reverse, key=alpha_key)
         else:                                                       
-            filtered_unsorted.sort(reverse=not reverse, key=numeric_key)
+            filtered_unsorted.sort(reverse=not reverse, key=numeric_key) 
 
         # Applies the sorted & filtered results, to be used in the rendering pipeline
         self.sorted = filtered_unsorted  
@@ -961,11 +1013,11 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 #=============================================================
     def metrics(self, tax_report:str=''): # Recalculates all dynamic metrics
         '''Calculates and renders all metrics (including market metrics) for all assets and the portfolio.'''
-        metr = metrics(self.PORTFOLIO, TEMP, self)
+        metr = metrics(self.PORTFOLIO, self.TAXES, self)
         metr.recalculate_all(tax_report) #NOTE 22ms w/ 5300
         metr.reformat_all() # ~20ms w/ 5600 
     def market_metrics(self):   # Recalculates only all market-dependent metrics
-        metr = metrics(self.PORTFOLIO, TEMP, self)
+        metr = metrics(self.PORTFOLIO, self.TAXES, self)
         metr.recalculate_market_dependent()
         metr.reformat_all()
 
@@ -1205,9 +1257,7 @@ if __name__ == '__main__':
     loadIcons() #~50ms on startup
 
     #Applies more stylish darkmode to the rest of the application
-    import qdarkstyle
-    qdarkstyle._load_stylesheet(qt_api='pyside6') #~50ms on startup
-    app.setStyleSheet(AAstylesheet.get_custom_qdarkstyle())
+    app.setStyleSheet(AAstylesheet.get_custom_master_stylesheet())
     app.setFont(QFont('Calibri', 10))
 
     

@@ -155,13 +155,13 @@ class market_data_thread:
                             'month%' :      Decimal(data['data'][crypto]['quote']['USD']['percent_change_30d']/100),
                             'price' :       Decimal(data['data'][crypto]['quote']['USD']['price']),
                             'volume24h' :   Decimal(data['data'][crypto]['quote']['USD']['volume_24h']),
+                            'cmc_name':     data['data'][crypto]['slug'], # special name for their website
                             } for crypto in data['data']}}
 
                 InvokeMethod(p(self.finalize_market_import, TO_EXPORT))
             
             #Ok, we've got the market data. Wait 5 minutes, then start the loop again.
             time.sleep(300)
-
 
 
 def getMissingPrice(date:str, TICKER:str, CLASS:str) -> str|None:

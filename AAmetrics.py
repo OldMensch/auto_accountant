@@ -63,10 +63,9 @@ class gain_heap(): #Sorts the gains depending on the accounting method chosen. H
 
 
 class metrics:
-    # We initialize the metrics object with a reference to our Portfolio, and TEMP data
-    def __init__(self, portfolio:Portfolio, temp, main_app):
+    def __init__(self, portfolio:Portfolio, taxdata, main_app):
         self.PORTFOLIO = portfolio
-        self.TEMPDATA = temp
+        self.TAX = taxdata
         self.main_app = main_app
         
 
@@ -77,7 +76,8 @@ class metrics:
         # TRANSACTIONS - NOTE: ~18ms w/ ~5600 cycles
         for t in self.PORTFOLIO.transactions():
             for TICKER,CLASS in t._metrics['all_assets']:
-                t._formatted['balance'][CLASS][TICKER] = format_metric(t._metrics['balance'][CLASS][TICKER], metric_formatting_lib['balance']['format'], metric_formatting_lib['balance']['color'])  
+                if TICKER in t._metrics['balance'][CLASS]:
+                    t._formatted['balance'][CLASS][TICKER] = format_metric(t._metrics['balance'][CLASS][TICKER], metric_formatting_lib['balance']['format'], metric_formatting_lib['balance']['color'])  
         # ASSETS - NOTE: ~1ms w/ 38 assets
         for asset in self.PORTFOLIO.assets():
             asset.calc_formatting_dynamic()
@@ -88,7 +88,7 @@ class metrics:
     def recalculate_market_independent(self, tax_report:str=None): # Recalculates all market-independent asset metrics: also triggers portfolio recalculation
         '''ALL market independent, for ASSETS and PORTFOLIO'''
         if tax_report:
-            self.TEMPDATA['taxes'] = { 
+            self.TAX = { 
                 '8949':     pd.DataFrame(columns=['Description of property','Date acquired','Date sold or disposed of','Proceeds','Cost or other basis','Gain or (loss)']) ,
                 '1099-MISC':pd.DataFrame(columns=['Date acquired', 'Value of assets']),
                 }
@@ -270,7 +270,7 @@ class metrics:
                 'Cost or other basis':          str(cost_basis),        # the cost basis of these tokens
                 'Gain or (loss)':               str(post_fee_value - cost_basis)  # the Capital Gains from this. The P&L. 
                 }
-            self.TEMPDATA['taxes']['8949'] = self.TEMPDATA['taxes']['8949'].append(form8949, ignore_index=True)
+            self.TAX['8949'] = self.TAX['8949'].append(form8949, ignore_index=True)
 
         # AUTO-ACCOUNTING: This is the heart of hearts, true core of the program right here.
         for t in transactions:  # ~15ms 2/ 5600
@@ -343,7 +343,7 @@ class metrics:
             if TYPE in ('card_reward','income'):    #This accounts for all transactions taxable as INCOME: card rewards, and staking rewards
                 asset_metrics[GC][GT]['tax_income'] += GV
                 if tax_report=='1099-MISC':  
-                    self.TEMPDATA['taxes']['1099-MISC'] = self.TEMPDATA['taxes']['1099-MISC'].append( {'Date acquired':t.iso_date(), 'Value of assets':str(GV)}, ignore_index=True)
+                    self.TAX['1099-MISC'] = self.TAX['1099-MISC'].append( {'Date acquired':t.iso_date(), 'Value of assets':str(GV)}, ignore_index=True)
 
             #*** *** *** DONE FOR THIS TRANSACTION *** *** ***#
                     

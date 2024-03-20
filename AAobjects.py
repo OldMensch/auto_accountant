@@ -258,7 +258,7 @@ class Transaction():
         if type(__o) != Transaction: return False
         return self.get_hash() == __o.get_hash()
     def __lt__(self, __o: object) -> bool:
-        # Basically, we try to sort transactions by date, unless they're the same, then we sort by type, unless that's also the same, then... we assume its always false
+        # Sort by date, then by type based on type sorting priorities
         #date
         if 'date' in self._metrics['missing']: return True
         S,O = self._data['date'],__o._data['date']
@@ -729,12 +729,15 @@ class GRID_HEADER(QPushButton):
         
 class GRID_ROW(QFrame): # One of the rows in the GRID, which can be selected, colored, etc.
     def __init__(self, row, set_highlight, click, double_click):
-        super().__init__(styleSheet=style('GRID_none')) #Contructs the tk.Frame object
+        super().__init__() #Contructs the tk.Frame object
         self.setMouseTracking(True)
         self.mouseMoveEvent = p(set_highlight, row+1)           # Hovering over rows highlights them
         self.leaveEvent = p(set_highlight, None)                # Causes highlight to disappear when mouse leaves GRID area
         self.mousePressEvent = p(click, row)                    # Single-clicking only selects items
         self.mouseDoubleClickEvent = p(double_click, row)       # Double clicking opens next level of hierarchy
+        self.row_index = row
+        if self.row_index % 2 == 0:     self.setStyleSheet(style('GRID_row_even'))
+        else:                           self.setStyleSheet(style('GRID_row_odd'))
         self.hover_state = False
         self.select_state = False
         self.error_state = False
@@ -758,9 +761,10 @@ class GRID_ROW(QFrame): # One of the rows in the GRID, which can be selected, co
             elif self.select_state: self.setStyleSheet(style('GRID_error_selection'))
             else:                   self.setStyleSheet(style('GRID_error_none'))
         else:
-            if self.hover_state:    self.setStyleSheet(style('GRID_hover'))
-            elif self.select_state: self.setStyleSheet(style('GRID_selection'))
-            else:                   self.setStyleSheet(style('GRID_none'))
+            if self.hover_state:            self.setStyleSheet(style('GRID_hover'))
+            elif self.select_state:         self.setStyleSheet(style('GRID_selection'))
+            elif self.row_index % 2 == 0:   self.setStyleSheet(style('GRID_row_even'))
+            else:                           self.setStyleSheet(style('GRID_row_odd'))
 
 class GRID(QGridLayout): # Displays all the rows of info for assets/transactions/whatever
     def __init__(self, upper, header_left_click, header_right_click, left_click, right_click):
@@ -789,7 +793,6 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.addWidget(header, 0, 0) # Upper-left corner of the GRID
         self.addWidget(text, 1, 0, self.pagelength, 1)
         text.setAttribute(Qt.WA_TransparentForMouseEvents) # Our mouse cursor penetrates the text, goes right to the highlight layer
-
 
     def _click(self, row, event): # Single-click event
         if event.button() == Qt.MouseButton.LeftButton:
@@ -931,10 +934,16 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         stop = len(sorted_items)-1 #last index in self.sorted
         for c in range(len(self.columns)):
             # Column header
-            header_ID = view.getHeaders()[c]
-            self.columns[c][0].setText(metric_formatting_lib[header_ID]['headername']) # Sets text to proper header name
-            self.columns[c][0].info = header_ID # Sets info quick-access variable, to current header's variable
-            self.columns[c][0].setToolTip('\n'.join(textwrap.wrap(view.getHeaderTooltip(header_ID), 40))) # Sets header tooltip
+            header_metric = view.getHeaders()[c]
+            header_obj = self.columns[c][0]
+            header_obj.setText(metric_formatting_lib[header_metric]['headername']) # Sets text to proper header name
+            header_obj.info = header_metric # Sets info quick-access variable, to current header's variable
+            header_obj.setToolTip('\n'.join(textwrap.wrap(view.getHeaderTooltip(header_metric), 40))) # Sets header tooltip
+            sort_setting = setting('sort_'+view.state)
+            if sort_setting[0] == header_metric: # up/down arrow indicating sorting method
+                if sort_setting[1]: header_obj.setIcon(icon('arrow_up'))
+                else:               header_obj.setIcon(icon('arrow_down'))
+            else:                   header_obj.setIcon(QIcon())
 
             # Column rows' text
             toDisplay = '' # This will be the string of text for this column
@@ -944,7 +953,7 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
                     item = sorted_items[r]
                     if item.ERROR:   self.highlights[r%self.pagelength].error(True) # if transaction/asset has an error, highlights it in red
                     # adds this row of text to the display
-                    toDisplay += f'{item.get_formatted(metric=header_ID, ticker=view.getAsset()[0], class_code=view.getAsset()[1])}<br>'
+                    toDisplay += f'{item.get_formatted(metric=header_metric, ticker=view.getAsset()[0], class_code=view.getAsset()[1])}<br>'
             self.columns[c][1].setText(toDisplay.removesuffix('<br>')) # Sets column text to toDisplay
             
 

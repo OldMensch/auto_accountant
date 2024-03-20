@@ -6,105 +6,96 @@
 
 ### Design/GUI
 
-* MEMENTO CHANGE NOTIFICATION
-	- add a little text message to the bottom-bar, when undo/redo triggered, it pops up displaying a message for 5, 10 or so seconds
-	- might also be able to have other messages in it
+* UNDO/REDO NOTIFICATION
+	- add a little text message to the bottom-bar, when memento loaded, it pops up displaying a message for 5, 10 or so seconds
+	- maybe make it more generalized: consider other messages to put into it like "saved"! when saving the portfolio
 
-* INFO/STATS INTEGRATION: Integrate info/stats panels into the main window where the GRID is currently
+- NEW VIEWS: 
+	- INFO/STATS
+		- Integrate info/stats panels into the main window where the GRID is currently
+		- have a giant scrollable textbox replace the GRID 
+	- WALLETS
+		- Like the "portfolio" view, but shows wallets instead of assets,
+		and shows new wallet-specific metrics like USD and such
+		- opening a wallet will show transactions under it
+			- transactions here same as under grandledger: same metrics shown
+		- requires calculating a lot more wallet-specific metrics like total USD value, asset balances, etc.
+	* ERRORS/WARNINGS LOG
+		- all printed program messages are saved to a log, which can be displayed.
 
-- NEW VIEW: WALLETS
-	- Like the "portfolio" view, but shows wallets instead of assets,
-	and shows new wallet-specific metrics like USD and such
-	- opening a wallet will show transactions under it
-		- transactions here same as under grandledger: same metrics shown
-	- requires calculating a lot more wallet-specific metrics like total USD value, asset balances, etc.
-
-* NEW VIEW: ERRORS/WARNINGS LOG
-	- all printed program messages are saved to a log, which can be displayed.
-
-* "BROWSER TABS" FOR VIEW SELECTION
+* "BROWSER TABS" FOR VIEWS
 	- For selecting different views, the user can simply click on tabs at the top of the screen like in a browser
-	- Will not include asset_ledger view and wallet_ledger view
-
-* THE GRID: Fancier GRID functionality ideas:
-	- Alternating lighter/darker gray for rows of the table to improve readability
+	- tabs for: portfolio_assets, portfolio_wallets, grand_ledger, error_log
+	- no tabs for: portfolio_stats, asset_stats, wallet_stats, asset_ledger, wallet_ledger
 
 * GRAPHS
 	- Create informative graphs which show chronological data displayed daily/monthly/annually, for individual cryptos or the whole portfolio
 		- shows total holdings over time
-		- shows 
+		- shows value of holdings over time (requires historical market data)
+	- these are probably accessible via the GRID row right click menu 
 
 ### User-Friendliness
 
-* SEAMLESS PAGES
-	- Use QScrollArea to implement "Lazy Loading"
-	- Lazy Loading:
-		- Only what's visible is rendered
-	- Upside: no more pages, user can just scroll though an entire ledger
-	- Upside: Zoom is way more flexible: no complex rescaling neccesary anymore
-	- Downside: GRID totally needs revamping: now will need to be multiple rows instead of one QLabel per column
+* GRID
+	- SEAMLESS PAGES
+		- Use QScrollArea to implement "Lazy Loading"
+		- Lazy Loading:
+			- Only what's visible is rendered
+		- Upside: no more pages, user can just scroll though an entire ledger
+		- Upside: Zoom is way more flexible: no complex rescaling neccesary anymore
+		- Downside: GRID totally needs revamping: now will need to be multiple rows instead of one QLabel per column
 
-* EASIER IMPORTING
+	* "NEW TRANSACTION" COLOR
+		- After creating/importing transactions, they should be highlighted green or smthg
+		- Need to decide: how does "new" color state clear? should user press a button?
+
+* BETTER IMPORTING
 	- Current problems:
-		- Gemini Earn "admin" withdrawals to nowhere (must wait for case to end)
-		- Gemini Earn -> Gemini "tardy transfers": several times, transfers fail to link because they are recorded days apart by each side of Gemini
-		- Lack of transaction data to import:
+		1. Gemini Earn "admin" withdrawals to nowhere (must wait for case to end)
+		2. Gemini Earn -> Gemini "tardy transfers": several times, transfers fail to link because they are recorded days apart by each side of Gemini
+		3. Lack of transaction data to import:
 			- Old Electrum Wallet
 			- Alchemix Farm
 			- FTX
 			- Flexa Capacity
-		- Coinbase data has duplicate transactions, and cut-off descriptions for newer transactions, making it needlessly difficult to remove the bad transactions. I can remove most, but there are two (under ADA) which have to be manually removed. 
+		4. Coinbase data has duplicate transactions, and cut-off descriptions for newer transactions, making it needlessly difficult to remove the bad transactions. I can remove most, but there are two (under ADA) which have to be manually removed. 
 	- Consider implementing a way for users to more easily manually link unlinked transfers
-		- or instead, maybe, after failing to link normally, it "tries harder" and expands the time-delay bubble to like 3 days or smthg
+		- or instead, maybe, after failing to link normally, it "tries harder", and looks for the most likely transaction? One nearest in date/quantity?
 
-* AUTOFIND PRICE FOR TRANSACTION EDITOR
-	- Button next to loss/fee/gain price, which automatically estimates the price based on what the user put in for the respective asset/class
-
-* HEADER COLORING
-	- Make it more obvious which metric we're sorting by, and the direction it's sorting in.
-	- Something like a light blue shade when sorting by it. and an up/down arrow based on direction
-	- re-coloring/-formatting of header title controlled by GRID
-
-* NEW TRANSACTION COLORING
-	- After creating/importing transactions, they are highlighted green or smthg
-	- Need to decide: how does "new" color state clear? should user press a button?
-
-* WEBSITE LINKS FOR MORE INFO
-	- When in "Portfolio_Assets" view, right clicking on a row will give you the option to:
-		- Go to YahooFinance.com for stocks/fiats
-		- Go to StockAnalysis.com for stocks/fiats/cryptocurrencies
-		- Go to CoinMarketCap.com for cryptocurrencies <- this requires knowing CMC's special long name for the crypto, retrievable from market data library
-	- Then, it's as easy as:
-		```python
-		import webbrowser
-		webbrowser.open("http://THE_WEBSITE.com")
-		```
+* AUTOFIND PRICE BUTTONS IN TRANSACTION EDITOR
+	- Button next to loss/fee/gain price, which automatically estimates the price based on what the user put in for the respective asset/class and date
 
 * HELP BUTTONS
 	- Provide detailed information about metric calculation
-	- Provide detailed information in the transaction editor about transactions 
+	- Provide detailed information in the transaction editor about transactions
+	- Some kind of tutorial on how to use the program
+		- how to import/create transactions
+		- how to fix different kinds of errors
+	 
 
 * EXCHANGE API INTEGRATION: Integrate APIs into my program so that I can instantly and effortlessly import new transactions without having to download stupid files first
 	- Coinbase API
 	- Gemini API
 
 - TAX FORM CALCULATION
-	- Rewrite tax code
-	- Create a variable, using user-defined tax rate(s), to calculate how much they owe in taxes since january 1 this year. Maybe let the user pull up a chart which shows their
+	- Rewrite tax form code
+	- New tax dialog window, prompts user to select desired form, and desired fiscal year
+	- try and figure out if I can automatically generate a PDF or fill out the IRS form, programmatically
 
-- AUTOSAVES: Automatically save the portfolio every minute, or maybe every so many changes, to a "temp" file. The file is deleted if the program terminates normally. If not, the file is automatically loaded and a prompt pops up, "the program was terminated abnormally, load autosave file?"
-	- DON'T save UNDO saves to disk: this would be a huge waste of processing power
+- AUTOSAVES: 
+	- Automatically save the portfolio every minute or 30 secs, to a "temp" file. 
+	- The file is deleted if the program terminates normally. Otherwise, the file is detected on boot and a prompt pops up, "the program was terminated abnormally, load autosave file?"
+	- Autosave file only needs to contain data from UNDO mementos. When the autosave is loaded, it just re-applies the user's changes to the original file
 	
 - SAVE FILES OPEN PROGRAM: Have windows open Auto-Accountant w/ the save file loaded when you double-click on one of these save files. This means having a custom file extension associated with my program, and having the program recognize that it is receiving a file to load in.
 
 * SHORTCUTS - more keyboard shortcuts? Intuitive functionality? Drag&Drop?
-	- Ctrl-Shift-S: Save as
 	- Ctrl-O: Open/Load
 	- Ctrl-C: Copy transactions
 	- Ctrl-V: paste transactions
 	- ... others?
 
-* FEWER POPUP MENUS
+* FEWER POPUP MENUS - more direct integration into the main window
 	
 - Properly implement Fiats as an asset class
 	- Implementing non-USD fiats themselves is easy, and I can load their market data from YahooFinance just like stocks
@@ -112,12 +103,10 @@
 
 # Refactoring
 
-- MAKE TRANSACTIONS CLEAN RAW_DATA ON IMPORT, NOT EXPORT
+- MAKE TRANSACTIONS CLEAN RAW_DATA ON IMPORT INSTEAD OF EXPORT
 	- clean based on trans. type if type is defined
 	- if type undefined, clean based on default_trans_data
-
-- DESTROY "TEMP", make its variables part of AutoAccountant class
-
+	
 * DESTROY METRICS CLASS
 	- most methods are specific to assets, portfolios, even wallets. these methods should be moved to their respective object classes
 	- the only method that should remain is auto_account, which when given a portfolio object will do its thing
