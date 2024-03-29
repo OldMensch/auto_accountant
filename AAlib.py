@@ -14,10 +14,10 @@ decimal.getcontext().prec = 100
 from decimal import Decimal
 
 # 3rd-party
-from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar,
+from PySide6.QtWidgets import (QLabel, QFrame, QGridLayout, QVBoxLayout, QPushButton, QHBoxLayout, QMenu, QMenuBar, QLayout, QAbstractScrollArea,
     QApplication, QMainWindow, QDialog, QWidget, QTextEdit, QDateTimeEdit, QLineEdit, QPlainTextEdit,
     QComboBox, QListWidget, QAbstractItemView, QListWidgetItem, QFileDialog, QProgressBar, QScrollArea)
-from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QDrag, QDoubleValidator, 
+from PySide6.QtGui import (QPixmap, QFont, QIcon, QKeySequence, QWheelEvent, QMouseEvent, QFontMetrics, QHoverEvent, QDrag, QDoubleValidator, QColor, QPainter,
     QDropEvent, QDragEnterEvent, QActionGroup, QAction, QShortcut, QGuiApplication, QTextOption)
 from PySide6.QtCore import (Qt, QSize, QTimer, QObject, Signal, Slot, QDateTime, QModelIndex, QEvent, QMargins, QMimeData, QPoint) 
 import pandas as pd
@@ -175,13 +175,13 @@ def format_metric(data, textFormat:str, colorFormat:str=None, charLimit:int=0, s
     # Like 20ms out of 450ms for 230000 cycles
     if styleSheet == '' and colorFormat is not None: # Only calculate color formatting if colorFormat specified and no stylesheet
         match colorFormat:
-            case 'type':        styleSheet = style(data)
+            case 'type':        styleSheet = css(data)
             case 'profitloss':
-                if   data > 0:  styleSheet = style('profit')
-                elif data < 0:  styleSheet = style('loss')
-                else:           styleSheet = style('neutral')
+                if   data > 0:  styleSheet = css('profit')
+                elif data < 0:  styleSheet = css('loss')
+                else:           styleSheet = css('neutral')
             case 'accounting':
-                if data < 0:    styleSheet = style('loss')
+                if data < 0:    styleSheet = css('loss')
             case other:         raise Exception(f'||ERROR|| Unknown metric color formatting style {colorFormat}')
               
     return HTMLify(toReturn, styleSheet)
@@ -236,7 +236,7 @@ def format_number(number, formatting_code:str=None, charLimit:int=0) -> str:
 ###==========================================
 
 # STYLESHEETS
-styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
+cssLib = { # NOTE: Partial transparency doesn't seem to work
 
     # Good fonts: 
     #   Courier New - monospaced
@@ -245,44 +245,53 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'universal':            "font-family: 'Calibri';",
 
     'GRID':                 "border: 0; border-radius: 0;",
-    'GRID_data':            "background: transparent; border-color: transparent; font-size: px; font-family: \'Inconsolata Medium\';",
-    'GRID_header':          f"background: {UNI_PALETTE.B3}; font-size: px; font-family: \'Inconsolata Medium\';",
-    'GRID_error_hover':     "background: #ff0000;",
-    'GRID_error_selection': "background: #cc0000;",
-    'GRID_error_none':      "background: #880000;",
+    'GRID_data':            "background: transparent; border-color: transparent; font-family: \'Inconsolata Medium\';",
+    'GRID_header':          f"background: {UNI_PALETTE.B3}; font-family: \'Inconsolata Medium\';",
+    'GRID_error_hover':     f"background: {UNI_PALETTE.R3};",
+    'GRID_error_selection': f"background: {UNI_PALETTE.R2};",
+    'GRID_error_none':      f"background: {UNI_PALETTE.R1};",
     'GRID_hover':           f"background: {UNI_PALETTE.A2};",
     'GRID_selection':       f"background: {UNI_PALETTE.A1};",
     'GRID_row_even':        "background: transparent;",
     'GRID_row_odd':         f"background: {UNI_PALETTE.B2};",
     
-    'timestamp_indicator_online':   "background-color: transparent; color: #ffffff;",
-    'timestamp_indicator_offline':  "background-color: #ff0000; color: #ffffff;",
+    'timestamp_indicator_online':   f"background-color: transparent;",
+    'timestamp_indicator_offline':  f"background-color: {UNI_PALETTE.R3};",
 
-    'title':                "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 30px;",
-    'subtitle':             "background-color: transparent; color: #ffff00; font-family: 'Calibri'; font-size: 15px;",
-    'error':                "background-color: transparent; color: #ff0000; font-family: 'Courier New'; font-size: 15px;",
+    'title':                f"background-color: transparent; color: {UNI_PALETTE.H}; font-family: 'Calibri'; font-size: 30px;",
+    'subtitle':             f"background-color: transparent; color: {UNI_PALETTE.H}; font-family: 'Calibri'; font-size: 15px;",
+    'error':                f"background-color: transparent; color: {UNI_PALETTE.R3}; font-family: 'Courier New'; font-size: 15px;",
     'dialog':               "font-family: 'Calibri'; font-size: 20px;",
     'displayFont':          "border: 0; font-family: 'Calibri'; font-size: 20px;",
     'info_pane':            "font-family: 'Calibri'; font-size: 20px;",
     'info':                 "font-family: 'Courier New';",
 
-    'save':                 "background: #0077bb;",
-    'delete':               "background: #ff0000;",
-    'new':                  "background: #00aa00;",
+    'save': f"""
+        QPushButton {{ background-color: {UNI_PALETTE.A2}; }}
+        QPushButton:hover {{ background-color: {UNI_PALETTE.A3}; }}
+        QPushButton:pressed {{ background-color: {UNI_PALETTE.A4}; }}""",
+    'delete': f"""
+        QPushButton {{ background-color: {UNI_PALETTE.R1}; }}
+        QPushButton:hover {{ background-color: {UNI_PALETTE.R2}; }}
+        QPushButton:pressed {{ background-color: {UNI_PALETTE.R3}; }}""",
+    'new':f"""
+        QPushButton {{ background-color: {UNI_PALETTE.G1}; }}
+        QPushButton:hover {{ background-color: {UNI_PALETTE.G2}; }}
+        QPushButton:pressed {{ background-color: {UNI_PALETTE.G3}; }}""",
 
-    'progressBar':          "QProgressBar, QProgressBar::Chunk {background-color: #00aa00; color: #000000}",
+    'progressBar':          f"QProgressBar, QProgressBar::Chunk {{background-color: {UNI_PALETTE.G2}; color: #000000}}",
 
     'neutral':              f"color: {UNI_PALETTE.B6};",
-    'profit':               "color: #00ff00;",
-    'loss':                 "color: #ff0000;",
+    'profit':               f"color: {UNI_PALETTE.G4};",
+    'loss':                 f"color: {UNI_PALETTE.R3};",
 
     'main_menu_button_disabled':    f"background-color: {UNI_PALETTE.B2};",
-    'main_menu_filtering':          """
-        QPushButton { background-color: #ff5500; }
-        QPushButton:hover { background-color: #ff7700; }
-        QPushButton:pressed { background-color: #ff9900; }""",
+    'main_menu_filtering': f"""
+        QPushButton {{ background-color: {UNI_PALETTE.F1}; }}
+        QPushButton:hover {{ background-color: {UNI_PALETTE.F2}; }}
+        QPushButton:pressed {{ background-color: {UNI_PALETTE.F3}; }}""",
 
-    'entry':                "color: #ffff00; background: #000000; font-family: 'Courier New';",
+    'entry':                f"color: {UNI_PALETTE.H}; background: #000000; font-family: 'Courier New';",
     'disabledEntry':        "color: #aaaaaa; font-family: 'Courier New';",
 
     'purchase':             'background: #00aa00;',  'purchase_dark':              'background: #005d00;',
@@ -297,8 +306,8 @@ styleSheetLib = { # NOTE: Partial transparency doesn't seem to work
     'transfer_out':         'background: #4488ff;',  'transfer_out_dark':          'background: #0044bb;',
     'trade':                'background: #ffc000;',  'trade_dark':                 'background: #d39700;',
 }
-def style(styleSheet:str): # returns the formatting for a given part of the GUI
-    try:    return styleSheetLib[styleSheet]
+def css(styleSheet:str): # returns the formatting for a given part of the GUI
+    try:    return cssLib[styleSheet]
     except: raise Exception(f'||ERROR|| Unknown style, \'{styleSheet}\'')
 
 # ICONS
@@ -310,6 +319,15 @@ def loadIcons(): # loads the icons for the GUI
     else:                           extra_dir = ''
     # pulls ALL icons from icons folder
     iconlib = {icon_name.split('\\').pop().split('.')[0]:QPixmap(icon_name) for icon_name in glob.glob(f'{extra_dir}icons\\*.png')}
+    # Re-colors all program icons based on our color palette
+    # for name,pixmap in iconlib.items(): 
+    #     if name == 'logo': continue # don't mess up program logo
+    #     ofColor = QPixmap(pixmap.size())
+    #     ofColor.fill(UNI_PALETTE.B7) # replacement color for all icons
+    #     ofColor.setMask(pixmap.createMaskFromColor('#ffffff', Qt.MaskMode.MaskOutColor))
+    #     icon = QIcon()
+    #     icon.addPixmap(ofColor,QIcon.Mode.Disabled)
+    #     iconlib[name] = icon
     iconlib['size'] = QSize(2.5*setting('font_size'), 2.5*setting('font_size'))
     iconlib['size2'] = QSize(3*setting('font_size'), 3*setting('font_size'))
 def icon(icon:str) -> QPixmap:      return iconlib[icon] # Returns a given icon for use in the GUI

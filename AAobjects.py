@@ -291,7 +291,7 @@ class Asset():
         # Raw data to save to JSON
         self._data = self._metrics = {'ticker':ticker,'class':class_code,'name':name,'description':description}
         # raw data converted to proper types, market data and post-instantiation calculated metrics
-        self._metrics = {'ticker':ticker,'class':class_code,'name':name,'description':description}
+        self._metrics = {}
         # Metrics formatted and ready for display
         self._formatted = {}
 
@@ -303,6 +303,7 @@ class Asset():
     # On initialization
     def precalculate(self):
         """Precalculates metrics and formatting, based only on raw data from THIS ASSET"""
+        self._metrics = dict(self._data)
         self._metrics['hash'] = self.calc_hash(self._data['ticker'], self._data['class'])
         self.calc_formatting_static()
 
@@ -736,8 +737,8 @@ class GRID_ROW(QFrame): # One of the rows in the GRID, which can be selected, co
         self.mousePressEvent = p(click, row)                    # Single-clicking only selects items
         self.mouseDoubleClickEvent = p(double_click, row)       # Double clicking opens next level of hierarchy
         self.row_index = row
-        if self.row_index % 2 == 0:     self.setStyleSheet(style('GRID_row_even'))
-        else:                           self.setStyleSheet(style('GRID_row_odd'))
+        if self.row_index % 2 == 0:     self.setStyleSheet(css('GRID_row_even'))
+        else:                           self.setStyleSheet(css('GRID_row_odd'))
         self.hover_state = False
         self.select_state = False
         self.error_state = False
@@ -757,14 +758,14 @@ class GRID_ROW(QFrame): # One of the rows in the GRID, which can be selected, co
     
     def color(self):
         if self.error_state:
-            if self.hover_state:    self.setStyleSheet(style('GRID_error_hover'))
-            elif self.select_state: self.setStyleSheet(style('GRID_error_selection'))
-            else:                   self.setStyleSheet(style('GRID_error_none'))
+            if self.hover_state:    self.setStyleSheet(css('GRID_error_hover'))
+            elif self.select_state: self.setStyleSheet(css('GRID_error_selection'))
+            else:                   self.setStyleSheet(css('GRID_error_none'))
         else:
-            if self.hover_state:            self.setStyleSheet(style('GRID_hover'))
-            elif self.select_state:         self.setStyleSheet(style('GRID_selection'))
-            elif self.row_index % 2 == 0:   self.setStyleSheet(style('GRID_row_even'))
-            else:                           self.setStyleSheet(style('GRID_row_odd'))
+            if self.hover_state:            self.setStyleSheet(css('GRID_hover'))
+            elif self.select_state:         self.setStyleSheet(css('GRID_selection'))
+            elif self.row_index % 2 == 0:   self.setStyleSheet(css('GRID_row_even'))
+            else:                           self.setStyleSheet(css('GRID_row_odd'))
 
 class GRID(QGridLayout): # Displays all the rows of info for assets/transactions/whatever
     def __init__(self, upper, header_left_click, header_right_click, left_click, right_click):
@@ -779,20 +780,21 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.left_click,self.right_click = left_click,right_click
         self.upper = upper
         self.setRowStretch(self.pagelength+1, 1)        # Headers stretch to accomodate bits of extra space
+        self.setColumnStretch(0,0) # Index numbers column does not stretch
         self.font_size_style = '' # used to store dynamic font size
 
         # Adds the first column in the grid, with the row indices
         self.item_indices = (
-            QLabel("\n", styleSheet=style('GRID_header')),
-            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_header'), margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
+            QLabel("\n", styleSheet=css('GRID_header')),
+            QLabel(alignment=Qt.AlignRight, styleSheet=css('GRID_header'), margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
         )
         self.highlights = [GRID_ROW(row, self.set_highlight, self._click, self._double_click) for row in range(self.pagelength)]
         
-        self.fake_header = QWidget(styleSheet=style('GRID_header')) # "header" right of last actual header
-        header,text = self.item_indices[0],self.item_indices[1]
-        self.addWidget(header, 0, 0) # Upper-left corner of the GRID
-        self.addWidget(text, 1, 0, self.pagelength, 1)
-        text.setAttribute(Qt.WA_TransparentForMouseEvents) # Our mouse cursor penetrates the text, goes right to the highlight layer
+        self.fake_header = QWidget(styleSheet=css('GRID_header')) # "header" right of last actual header
+        corner_header,indices = self.item_indices[0],self.item_indices[1]
+        self.addWidget(corner_header, 0, 0) # Upper-left corner of the GRID
+        self.addWidget(indices, 1, 0, self.pagelength, 1)
+        indices.setAttribute(Qt.WA_TransparentForMouseEvents) # Our mouse cursor penetrates the text, goes right to the highlight layer
 
     def _click(self, row, event): # Single-click event
         if event.button() == Qt.MouseButton.LeftButton:
@@ -836,7 +838,7 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.columns.append(
             (
             GRID_HEADER(self, p(self.header_left_click, new_index), p(self.header_right_click, new_index), fixedHeight=(icon('size').height())),
-            QLabel(alignment=Qt.AlignRight, styleSheet=style('GRID_data')+self.font_size_style, margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
+            QLabel(alignment=Qt.AlignRight, styleSheet=css('GRID_data')+self.font_size_style, margin=-2) # margin weirdly big by default, -2 sets to 0 effectively
         ))
         header,text = self.columns[new_index][0],self.columns[new_index][1]
 
@@ -907,9 +909,9 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
         self.font_size_style = f'font-size: {fontSize}px;' #CSS font-size code
 
         # Applies font size modification - only slow part of this whole thing
-        self.item_indices[1].setStyleSheet(style('GRID_header')+self.font_size_style)
+        self.item_indices[1].setStyleSheet(css('GRID_header')+self.font_size_style)
         for c in range(len(self.columns)):
-            self.columns[c][1].setStyleSheet(style('GRID_data')+self.font_size_style)
+            self.columns[c][1].setStyleSheet(css('GRID_data')+self.font_size_style)
         self.upper.set_page()
 
     # Loads all of the text and formatting for the GRID,
@@ -926,10 +928,7 @@ class GRID(QGridLayout): # Displays all the rows of info for assets/transactions
             self.highlights[r%self.pagelength].error(False)
 
         #Sets the item indices
-        toDisplay = ''
-        for r in rowrange:
-            toDisplay += str(r+1)+'<br>'
-        self.item_indices[1].setText(toDisplay.removesuffix('<br>'))
+        self.item_indices[1].setText('<br>'.join(map(str, range(first_item+1,last_item+1))))
         
         stop = len(sorted_items)-1 #last index in self.sorted
         for c in range(len(self.columns)):

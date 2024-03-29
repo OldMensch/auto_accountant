@@ -14,8 +14,8 @@ class Message(Dialog): #Simple text popup, can add text with colors to it
         super().__init__(upper, title)
 
         if message:
-            if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
-            else:           self.text = self.add_label(message, 0, 0, styleSheet=style('displayFont'), wordWrap=wordWrap)
+            if scrollable:  self.text = self.add_scrollable_text(message, 0, 0, styleSheet=css('displayFont'), wordWrap=wordWrap)
+            else:           self.text = self.add_label(message, 0, 0, styleSheet=css('displayFont'), wordWrap=wordWrap)
 
         if size is not None:         
             availableSpace = QGuiApplication.primaryScreen().availableGeometry()
@@ -55,7 +55,7 @@ class AssetEditor(Dialog):    #For editing an asset's name and description ONLY.
         if old_asset:           self.ENTRY_desc.set(self.old_asset.desc())
 
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Save', self.save, styleSheet=style('save'))
+        self.add_menu_button('Save', self.save, styleSheet=css('save'))
 
         self.show()
 
@@ -148,8 +148,8 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         #Menu buttons
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if old_transaction and not copy: self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        self.add_menu_button('Save', self.save, styleSheet=css('save'))
+        if old_transaction and not copy: self.add_menu_button('Delete', self.delete, styleSheet=css('delete'))
 
         self.update_entry_interactability()
         self.show()
@@ -160,11 +160,11 @@ class TransEditor(Dialog):    #The most important, and most complex editor. For 
 
         # TYPE - Only 'type' enabled when no type selected
         if TYPE is None:
-            self.ENTRIES['type'].setStyleSheet(style('entry'))
+            self.ENTRIES['type'].setStyleSheet(css('entry'))
             for metric in self.ENTRIES: 
                 self.ENTRIES[metric].setReadOnly(metric != 'type') # disables all entries, except type
             return
-        self.ENTRIES['type'].setStyleSheet(style('entry')+style(TYPE+'_dark'))
+        self.ENTRIES['type'].setStyleSheet(css('entry')+css(TYPE+'_dark'))
 
         # WALLET - Only 'wallet'/'type' enabled when type, but no wallet selected
         if WALLET is None:
@@ -335,7 +335,7 @@ class WalletManager(Dialog): #For selecting wallets to edit
         super().__init__(upper, 'Manage Wallets')
         self.wallet_list = self.add_list_entry(None, 0, 0, selectCommand=self.edit_wallet, sortOptions=True)
         self.add_menu_button('Ok', self.close)
-        self.add_menu_button('+ Wallet', self.new_wallet, styleSheet=style('new'))
+        self.add_menu_button('+ Wallet', self.new_wallet, styleSheet=css('new'))
         self.refresh_wallets()
         self.show()
     
@@ -368,7 +368,7 @@ class WalletEditor(Dialog): #For creating/editing Wallets
         if self.wallet_to_edit: self.ENTRY_desc.set(wallet_to_edit.desc())
 
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Save', self.save, styleSheet=style('save'))
+        self.add_menu_button('Save', self.save, styleSheet=css('save'))
         # No delete button: empty wallets are deleted when the program starts.
         self.show()
 
@@ -422,22 +422,23 @@ class FilterManager(Dialog): #For selecting filter rules to edit
         super().__init__(upper, 'Manage Filters')
         self.filterlist = self.add_list_entry(None, 0, 0, selectCommand=self.edit_filter, sortOptions=True)
         self.add_menu_button('Ok', self.close)
-        self.add_menu_button('+ Rule', self.new_filter, styleSheet=style('new'))
+        self.add_menu_button('+ Rule', self.new_filter, styleSheet=css('new'))
         self.refresh_filters()
         self.show()
     
     def new_filter(self): # Opens dialog to create new filter
-        FilterEditor(self)
+        FilterEditor(self, self.upper)
 
     def edit_filter(self, filter_name): # Opens dialog to edit existing filter
-        FilterEditor(self, filter_name)
+        FilterEditor(self, self.upper, filter_name)
 
     def refresh_filters(self):
         self.filterlist.update_dict({filter.get_rule_name():filter for filter in self.upper.PORTFOLIO.filters()})
         
 class FilterEditor(Dialog): #For creating/editing filters
     """Opens dialog for creating/editing filters"""
-    def __init__(self, filterManager:FilterManager, filter_to_edit:Filter=None):
+    def __init__(self, filterManager:FilterManager, main_app, filter_to_edit:Filter=None, new_forced=None):
+        self.main_app = main_app
         self.filter_to_edit = filter_to_edit
         self.filterManager = filterManager
         if filter_to_edit == None: #New filter
@@ -470,11 +471,15 @@ class FilterEditor(Dialog): #For creating/editing filters
                 self.ENTRY_date.set(unix_to_local_timezone(filter_to_edit.state()))
             else:
                 self.ENTRY_state.set(str(filter_to_edit.state()))
+        # CREATING FROM HEADER - if we right click on a header, we can create a filter right there! new_forced is that metric
+        if new_forced:
+            self.DROPDOWN_metric.set(new_forced)
+            self.DROPDOWN_metric.setReadOnly(True) # Can't change metric when editing
 
         self.change_metric_effect()
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Save', self.save, styleSheet=style('save'))
-        if filter_to_edit:    self.add_menu_button('Delete', self.delete, styleSheet=style('delete'))
+        self.add_menu_button('Save', self.save, styleSheet=css('save'))
+        if filter_to_edit:    self.add_menu_button('Delete', self.delete, styleSheet=css('delete'))
         self.show()
 
     def change_metric_effect(self):
@@ -488,15 +493,23 @@ class FilterEditor(Dialog): #For creating/editing filters
         self.ENTRY_state.setReadOnly(isERROR)
         self.DROPDOWN_relation.setReadOnly(isERROR)
 
+        # Can only select '!=' or '=' for text metrics
+        if metric_formatting_lib[metric]['format'] in ('alpha','class','type','desc'):
+            self.DROPDOWN_relation.update_dict({r:r for r in ('!=','=')})
+        else:
+            self.DROPDOWN_relation.update_dict({r:r for r in ('<','!=','=','>')})
+
+
 
     def delete(self):
         # Only possible when editing an existing filter
-        self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
+        self.main_app.PORTFOLIO.delete_filter(self.filter_to_edit)  #destroy the old filter
 
-        if len(self.filterManager.upper.PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet('') #Turn off filtering indicator
-        self.filterManager.upper.page = 0 # adding filter resets rendered page to 0
-        self.filterManager.upper.render(sort=True) # Always re-render and re-sort when filters are applied/removed
-        self.filterManager.refresh_filters()
+        if len(self.main_app.PORTFOLIO.filters()) == 0: self.upper.upper.MENU['filters'].setStyleSheet('') #Turn off filtering indicator
+        self.main_app.page = 0 # adding filter resets rendered page to 0
+        self.main_app.render(sort=True) # Always re-render and re-sort when filters are applied/removed
+        if type(self.filterManager) == FilterManager: # upper may be AutoAccountant itself
+            self.filterManager.refresh_filters()
         self.close()
 
     def save(self):
@@ -536,19 +549,20 @@ class FilterEditor(Dialog): #For creating/editing filters
                 self.display_error('[ERROR] Relation must be \'=\' or \'!=\' for text metrics')
                 return
         # Identical filter doesn't already exist?
-        if new_filter is not self.filter_to_edit and new_filter in self.filterManager.upper.PORTFOLIO.filters():
+        if new_filter is not self.filter_to_edit and new_filter in self.main_app.PORTFOLIO.filters():
             self.display_error('[ERROR] Identical filter already exists')
             return
 
         # SAVING
         #==============================
-        self.filterManager.upper.PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
-        if self.filter_to_edit: self.filterManager.upper.PORTFOLIO.delete_filter(self.filter_to_edit)
+        self.main_app.PORTFOLIO.add_filter(new_filter)   #Creates the new filter, or overwrites the existing one
+        if self.filter_to_edit: self.main_app.PORTFOLIO.delete_filter(self.filter_to_edit)
         
-        self.filterManager.upper.MENU['filters'].setStyleSheet(style('main_menu_filtering'))
-        self.filterManager.upper.page = 0 # adding filter resets rendered page to 0
-        self.filterManager.upper.render(sort=True)  # Always render and re-sort when filters are applied/removed
-        self.filterManager.refresh_filters()
+        self.main_app.MENU['filters'].setStyleSheet(css('main_menu_filtering'))
+        self.main_app.page = 0 # adding filter resets rendered page to 0
+        self.main_app.render(sort=True)  # Always render and re-sort when filters are applied/removed
+        if type(self.filterManager) == FilterManager: # upper may be AutoAccountant itself
+            self.filterManager.refresh_filters()
         self.close()
 
 
@@ -560,7 +574,7 @@ class ImportationDialog(Dialog): #For selecting wallets to import transactions t
         self.add_label(wallet_name,0,0)
         self.wallet_to_edit_dropdown = self.add_dropdown_list({w.name():w for w in self.upper.PORTFOLIO.wallets()}, 1, 0, default=' -SELECT WALLET- ')
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Import', p(self.complete, import_command, wallet_name), styleSheet=style('new'))
+        self.add_menu_button('Import', p(self.complete, import_command, wallet_name), styleSheet=css('new'))
         self.show()
     
     def complete(self, import_command, wallet_name, *args, **kwargs):
@@ -582,7 +596,7 @@ class DEBUGStakingReportDialog(Dialog):
         self.add_label('Quantity',0,2)
         self.ENTRY_quantity = self.add_entry('', 1, 2, format='pos_float')
         self.add_menu_button('Cancel', self.close)
-        self.add_menu_button('Report', self.report, styleSheet=style('new'))
+        self.add_menu_button('Report', self.report, styleSheet=css('new'))
         self.show()
 
     def report(self):

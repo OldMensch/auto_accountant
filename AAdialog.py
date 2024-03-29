@@ -13,14 +13,14 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
         if format == 'float':       self.setValidator(QDoubleValidator())
         if format == 'pos_float':   self.setValidator(QDoubleValidator(bottom=0))
 
-        def forceToCaps(): self.set(self.text().upper())
+        def forceToCaps():  self.setText(self.text().upper())
         if self.capsLock:
             self.textChanged.connect(forceToCaps)
             forceToCaps()
 
     def setReadOnly(self, val:bool): 
-        if val: self.setStyleSheet(style('disabledEntry'))
-        else:   self.setStyleSheet(style('entry'))
+        if val: self.setStyleSheet(css('disabledEntry'))
+        else:   self.setStyleSheet(css('entry'))
         super().setReadOnly(val)     
     def entry(self) -> str:
         toReturn = self.text().strip().replace(',','')
@@ -30,8 +30,8 @@ class Entry(QLineEdit): # For entering text, floats, and positive-only floats
     def entry_decimal(self) -> Decimal:
         return Decimal(self.entry())
     def set(self, text): # setting text resets cursor position
-        self.setCursorPosition(0)
         self.setText(str(text))
+        self.setCursorPosition(0)
     
     # Makes it so that unfocusing out of the entry box set the cursor position back to the beginning
     def focusOutEvent(self, e):
@@ -43,8 +43,8 @@ class DateEntry(QDateTimeEdit): # For entering datetimes in the ISO format yyyy-
         super().__init__(displayFormat='yyyy-MM-dd hh:mm:ss', dateTime=datetime.fromisoformat(text), *args, **kwargs)
     
     def setReadOnly(self, val:bool): 
-        if val: self.setStyleSheet(style('disabledEntry'))
-        else:   self.setStyleSheet(style('entry'))
+        if val: self.setStyleSheet(css('disabledEntry'))
+        else:   self.setStyleSheet(css('entry'))
         super().setReadOnly(val)     
         
     def entry(self) -> str:             return self.text()
@@ -55,8 +55,8 @@ class DescEntry(QPlainTextEdit): # For entering lots of text
         super().__init__(text, *args, **kwargs)
 
     def setReadOnly(self, val:bool): 
-        if val: self.setStyleSheet(style('disabledEntry'))
-        else:   self.setStyleSheet(style('entry'))
+        if val: self.setStyleSheet(css('disabledEntry'))
+        else:   self.setStyleSheet(css('entry'))
         super().setReadOnly(val)     
     def entry(self) -> str:             return self.toPlainText().rstrip().lstrip()
     def set(self, text:str):  self.setPlainText(text)
@@ -78,8 +78,8 @@ class DropdownEntry(QComboBox): #Single-selection only, dropdown version of a Li
     
     def setReadOnly(self, val:bool): 
         '''Toggles appearance and ability to use the dropdown'''
-        if val: self.setStyleSheet(style('disabledEntry'))
-        else:   self.setStyleSheet(style('entry'))
+        if val: self.setStyleSheet(css('disabledEntry'))
+        else:   self.setStyleSheet(css('entry'))
         self.setDisabled(val)
     def entry(self) -> str:
         '''returns the selected item, or None if the default item is selected'''
@@ -164,7 +164,7 @@ class ListEntry(QListWidget): # Single- or multi-item selection list
 
 
 class Dialog(QDialog):
-    def __init__(self, upper, title='', errormsg='', styleSheet=style('dialog')):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 
+    def __init__(self, upper, title='', errormsg='', styleSheet=css('dialog')):  #upper is a reference to the original PortfolioApp, master is a reference to the TopLevel GUI 
         '''The generalized dialog superclass for Auto-Accountant'''
         super().__init__(upper, styleSheet=styleSheet)
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False) # Removes the pointless question mark from the dialog box
@@ -184,7 +184,7 @@ class Dialog(QDialog):
         self.setLayout(self.GUI['masterLayout'])
 
         if title != '':     #The title of the box
-            self.GUI['title'] =     QLabel(title, alignment=Qt.AlignCenter, styleSheet=style('title'))
+            self.GUI['title'] =     QLabel(title, alignment=Qt.AlignCenter, styleSheet=css('title'))
 
         self.GUI['primaryLayout'] = QGridLayout() # Contains whatever content we really want for our dialog. Controlled by our modular system below
         self.GUI['primaryFrame'] = QFrame(self, layout=self.GUI['primaryLayout'])
@@ -194,7 +194,7 @@ class Dialog(QDialog):
         self.GUI['menuLayout'] = QHBoxLayout() # Buttons like "OK" and "CANCEL" and "SAVE", etc.
         self.GUI['menuFrame'] = QWidget(self, layout=self.GUI['menuLayout'])
 
-        self.GUI['errormsg'] =     QTextEdit(errormsg, readOnly=True, styleSheet=style('error')) # Potential error message that can popup
+        self.GUI['errormsg'] =     QTextEdit(errormsg, readOnly=True, styleSheet=css('error')) # Potential error message that can popup
         self.GUI['errormsg'].setHidden(True)
 
         ### Rendering
@@ -236,16 +236,16 @@ class Dialog(QDialog):
     def add_entry(self, text, column, row, columnspan=1,rowspan=1, format=None, maxLength=-1, capsLock=False, *args, **kwargs):
         '''A box for entering text.\n
         Format can be 'description', 'date', 'float', or 'pos_float' to restrict entry formatting'''
-        if format == 'description':     box = DescEntry(text, styleSheet=style('entry'), *args, **kwargs)
-        elif format == 'date':          box = DateEntry(text, styleSheet=style('entry'), *args, **kwargs)
-        else:                           box = Entry(text, format, maxLength=maxLength, styleSheet=style('entry'), capsLock=capsLock, *args, **kwargs)
+        if format == 'description':     box = DescEntry(text, styleSheet=css('entry'), *args, **kwargs)
+        elif format == 'date':          box = DateEntry(text, styleSheet=css('entry'), *args, **kwargs)
+        else:                           box = Entry(text, format, maxLength=maxLength, styleSheet=css('entry'), capsLock=capsLock, *args, **kwargs)
         
         self.GUI['primaryLayout'].addWidget(box, row, column, rowspan, columnspan)
         return box
     
     def add_dropdown_list(self, dictionary, column, row, columnspan=1,rowspan=1, default='', current='', selectCommand=None, sortOptions=False, *args, **kwargs) -> DropdownEntry:
         '''Adds a dropdown list, from which you can select a single item'''
-        dropdown = DropdownEntry(dictionary, default, current, selectCommand, styleSheet=style('entry'), sortOptions=sortOptions, *args, **kwargs)
+        dropdown = DropdownEntry(dictionary, default, current, selectCommand, styleSheet=css('entry'), sortOptions=sortOptions, *args, **kwargs)
         self.GUI['primaryLayout'].addWidget(dropdown, row, column, rowspan, columnspan)
         return dropdown
 

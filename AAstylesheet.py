@@ -1,3 +1,5 @@
+import qdarkstyle 
+
 
 
 def get_windows_accent():
@@ -8,7 +10,7 @@ def get_windows_accent():
         import winreg
         access_registry = winreg.ConnectRegistry(None,winreg.HKEY_CURRENT_USER)
 
-        accentcolorkey = winreg.OpenKey(access_registry,'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent')
+        accentcolorkey = winreg.OpenKey(access_registry,'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent')
         value = str(winreg.QueryValueEx(accentcolorkey, 'AccentPalette')[0]).removeprefix('b')
         value = value.replace(value[0],'')
         value = value.split('\\x00')
@@ -22,13 +24,15 @@ def get_windows_accent():
     return viable[0]
 
 def mix_hex(hex1:str, hex2:str, factor:float=0.5):
-    '''factor=0.25 results in 25% hex1 and 75% hex2. Default is 50/50'''
+    '''Mixes hex color codes. \'factor\' is % of first color:
+    \nfactor=0.25 results in 25% hex1 and 75% hex2. Default is 50/50'''
+    if factor < 0 or factor > 1:    raise ValueError(f'||ERROR|| Cannot mix colors with ratio of {factor}, ratio must be between 0 and 1')
     r,g,b = int(hex1[1:3], 16), int(hex1[3:5], 16), int(hex1[5:7], 16)
     r2,g2,b2 = int(hex2[1:3], 16), int(hex2[3:5], 16), int(hex2[5:7], 16)
-    r2,g2,b2 = int(r*factor+r2*(1-factor)),int(g*factor+g2*(1-factor)),int(b*factor+b2*(1-factor))
-    r2,g2,b2 = hex(r2).removeprefix('0x'),hex(g2).removeprefix('0x'),hex(b2).removeprefix('0x')
-    r2,g2,b2 = '0'*(len(r2)==1)+r2,'0'*(len(g2)==1)+g2,'0'*(len(b2)==1)+b2 # adds 0 if hex value is 0f or smaller
-    return '#'+r2+g2+b2
+    r3,g3,b3 = int(r*(1-factor)+r2*factor),int(g*(1-factor)+g2*factor),int(b*(1-factor)+b2*factor)
+    r3,g3,b3 = hex(r3),hex(g3),hex(b3)
+    return f'#{r3[2:]:0>2}{g3[2:]:0>2}{b3[2:]:0>2}' # removes 0x prefixes, fills in with 0s if neccessary
+
 
 def palette_qdarkstyle():   # The default color palette of qdarkstyle
     return {
@@ -48,7 +52,7 @@ def palette_qdarkstyle():   # The default color palette of qdarkstyle
     '#259AE9': '#259AE9',   # QTabBar selected
     }
 
-def palette_file_explorer():    # uses blacks/grays of Windows file explorer for main colors, accent color uses Windows' accent color (nifty!)
+def palette_file_explorer():    # grays stolen from Windows file explorer, accent color is Windows' accent color (nifty!)
     accent = get_windows_accent()
     return {
     # Grays
@@ -61,30 +65,30 @@ def palette_file_explorer():    # uses blacks/grays of Windows file explorer for
     '#E0E1E3': '#ffffff',
 
     # Accent Color
-    '#26486B': mix_hex(accent,'#000000', .25),
-    '#346792': mix_hex(accent,'#000000', .40), 
-    '#1A72BB': mix_hex(accent,'#000000', .55),
-    '#259AE9': mix_hex(accent,'#000000', .70)
+    '#26486B': mix_hex('#000000',accent, .25),
+    '#346792': mix_hex('#000000',accent, .40), 
+    '#1A72BB': mix_hex('#000000',accent, .55),
+    '#259AE9': mix_hex('#000000',accent, .70)
     }
 
 
 def palette_accentless():    # Uses blacks/grays for primary colors, accented with "jeans blue"
-    accent = '#00abff' #'#888888'
+    accent = '#00abff' # jeans-blue accent color
     return {
     # Grays
-    '#19232D': '#191919', 
-    '#37414F': '#202020', 
-    '#455364': '#2D2D2D',
-    '#54687A': '#494949',
-    '#60798B': '#5d5d5d', 
-    '#9DA9B5': '#bbbbbb',#bcc0c4
-    '#E0E1E3': '#eeeeee',#e9e9ea
+    '#19232D': mix_hex('#000000','#ffffff', .1),    # The main background color
+    '#37414F': mix_hex('#000000','#ffffff', .128),  # QMenu, and QTreeView/QListView/QTableView/QColumnView in some cases
+    '#455364': mix_hex('#000000','#ffffff', .18),   # Buttons and borders
+    '#54687A': mix_hex('#000000','#ffffff', .29),   # QPushButton/QToolButton hover, QTabBar selected
+    '#60798B': mix_hex('#000000','#ffffff', .365),  # Scrollbar, button pressed/checked, QToolButton pressed/checked, QToolBox tab selected 
+    '#9DA9B5': mix_hex('#000000','#ffffff', .735),  # disabled font color
+    '#E0E1E3': mix_hex('#000000','#ffffff', .935),  # font color
 
     # Accent Color
-    '#26486B': mix_hex(accent,'#000000', .30),
-    '#346792': mix_hex(accent,'#000000', .45), 
-    '#1A72BB': mix_hex(accent,'#000000', .60),
-    '#259AE9': mix_hex(accent,'#000000', .75)
+    '#26486B': mix_hex('#000000',accent, .30),
+    '#346792': mix_hex('#000000',accent, .45), 
+    '#1A72BB': mix_hex('#000000',accent, .60),
+    '#259AE9': mix_hex('#000000',accent, .75),
     }
 
 
@@ -112,13 +116,33 @@ class UNI_PALETTE:  # This is how we (more easily) access the palette from withi
     A3 = UNIVERSAL_PALETTE['#1A72BB']
     A4 = UNIVERSAL_PALETTE['#259AE9'] # Brightest
 
+    # Reds (mainly for ERROR)
+    R1 = '#880000' # default
+    R2 = '#cc0000' # hovering(button), selected(grid)
+    R3 = '#ff0000' # pressed(button), hovering(grid)
+
+    # Oranges (mainly for filtering)
+    F1 = '#ff5500' # default
+    F2 = '#ff7700' # hovering
+    F3 = '#ff9900' # pressed
+
+    # Greens (mainly for filtering)
+    G1 = '#006600' # default
+    G2 = '#008800' # hovering
+    G3 = '#00aa00' # pressed
+    G4 = '#00ee00' # profit text color
+
+    # Header color (for titles, subtitles, entry boxes)
+    H = '#ffff00'
+
 
 def get_custom_master_stylesheet():
     '''Returns default PySide6 StyleSheet, with base and accent colors replaced with a custom palette'''
-    import qdarkstyle 
-    stylesheet = qdarkstyle._load_stylesheet(qt_api='pyside6')
+    DEFAULT_STYLESHEET = qdarkstyle._load_stylesheet(qt_api='pyside6')
+    with open('default_stylesheet.txt','w') as file:
+        file.write(DEFAULT_STYLESHEET)
 
     for color in UNIVERSAL_PALETTE:
-        stylesheet = stylesheet.replace(color, UNIVERSAL_PALETTE[color])
+        DEFAULT_STYLESHEET = DEFAULT_STYLESHEET.replace(color, UNIVERSAL_PALETTE[color])
 
-    return stylesheet
+    return DEFAULT_STYLESHEET

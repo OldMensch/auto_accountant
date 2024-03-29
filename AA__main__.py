@@ -25,20 +25,21 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     loaded_data_hash = None # Reduces performance: if our current portfolio's hash is equal to this, then we haven't modified our data at all.
     TAXES = {} # Dictionary of tax forms
 
-    def __init__(self): # 681ms w/ 5600
+    def __init__(self): # 700ms w/ 5600
         # NOTE: LAG PROFILE:::
-        # __init_place_gui__: 159 ms ALWAYS due to QScrollArea... unknown cause
+        #  self.GUI['gridScrollArea'].setWidget(): 159 ms ALWAYS due to first draw-resizing of QScrollArea
         # self.load(): 283 ms w/ 5600, due to transactions, ~50% due to [FORMAT_METRIC]
-        # self.metrics(): 40ms w/ 5600, 20ms due to auto_account(), 20ms due to reformat_all() [FORMAT_METRIC]
-        # self.showMaximized(): 175ms w/ 5600... unknown cause
+        # self.metrics(): 80ms w/ 5600, 20ms due to auto_account(), 20ms due to reformat_all() [FORMAT_METRIC]
+        # self.showMaximized(): 40ms w/ 5600 due to first draw/resizing of all widgets, 140ms due to first draw-resizing of QScrollArea
+        
         super().__init__(windowIcon=icon('logo'), windowTitle='Portfolio Manager') # NOTE: 2ms ALWAYS
         
         # Changes timezone labels from 'Date' to 'Date (Your Timezone)' NOTE: 0ms ALWAYS
         metric_formatting_lib['date']['name'] = metric_formatting_lib['date']['headername'] = metric_formatting_lib['date']['name'].split('(')[0]+'('+setting('timezone')+')'
 
-        # GUI init: NOTE: 171ms ALWAYS
+        # GUI init: NOTE: 11ms ALWAYS
         self.__init_gui__()         # NOTE: 8ms ALWAYS
-        self.__init_place_gui__()   # NOTE: 159ms ALWAYS
+        self.__init_place_gui__()   # NOTE: 2ms ALWAYS
         self.__init_taskbar__()     # NOTE: 4ms ALWAYS
         self.__init_menu__()        # NOTE: 1ms ALWAYS
         self.__init_place_menu__()  # NOTE: 0ms ALWAYS
@@ -53,7 +54,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.__init_market_data__() # Loads market data from file or internet
 
         # First metrics and rendering calculation.
-        self.metrics() # NOTE: 40ms w/ 5600
+        self.metrics() # NOTE: 80ms w/ 5600
         self.render(state=self.view.PORTFOLIO, sort=True) # NOTE: 8ms w/ 38 assets in portfolio view
 
         # PYINSTALLER - Closes splash screen now that the program is loaded
@@ -63,8 +64,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #     pyi_splash.close()
         # except: pass   
 
-        # NOTE: 60ms for new, 175 ms w/ 5300 transactions
-        self.showMaximized() # Pops up window as maximized
+        self.showMaximized() # NOTE: 45ms w/ 5300
+        # Have to set QScrollArea widget AFTER showMaximized is called, otherwise the 140ms lag happens TWICE
+        # self.GUI['gridScrollArea'].setWidget(self.GUI['gridFrame']) # NOTE: 135ms w/ 5300
 
         # AUTOMATIC GRID RESIZING FUNCTION NOTE: 0ms always
         self.waiting_to_resize = False
@@ -131,7 +133,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 offline_market_data['_timestamp'] = offline_market_data['_timestamp']
                 self.market_data.update(offline_market_data)
                 self.GUI['timestamp_indicator'].setText(f'OFFLINE MODE - Data from {self.market_data['_timestamp'][0:16]}')
-                self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_offline'))
+                self.GUI['timestamp_indicator'].setStyleSheet(css('timestamp_indicator_offline'))
                 self.online_event.clear()
             except:  # change to offline not successful, continue in online mode
                 Message(self, 'Offline File Error', 'Failed to load offline market data cache. Staying in online mode.')
@@ -140,7 +142,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             if '_timestamp' in self.market_data:
                 self.GUI['timestamp_indicator'].setText(f'Data from {self.market_data['_timestamp'][0:16]}')
             self.online_event.set()
-            self.GUI['timestamp_indicator'].setStyleSheet(style('timestamp_indicator_online'))
+            self.GUI['timestamp_indicator'].setStyleSheet(css('timestamp_indicator_online'))
         
         if not suppressMetricsAndRendering:
             self.market_metrics()
@@ -313,7 +315,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             for part in ('loss_','fee_','gain_'):
                 if part+'price' in MISSING:   
                     new_price = getMissingPrice(DATE, t.get_raw(part+'ticker'), t.get_raw(part+'class'))
-                    t.get_raw[part+'price'] = new_price
+                    t._data[part+'price'] = new_price
                     total_attempts += 1
                     if new_price is not None: total_successes += 1
             t.precalculate()
@@ -377,7 +379,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             def continue_new():
                 self.new(ignore_sure=True)
                 unsavedPrompt.close()
-            unsavedPrompt.add_menu_button('Create New Portfolio', continue_new, styleSheet=style('save'))
+            unsavedPrompt.add_menu_button('Create New Portfolio', continue_new, styleSheet=css('save'))
             return
         set_setting('lastSaveDir', '')
         self.PORTFOLIO.clear()
@@ -393,7 +395,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             def continue_load():
                 self.load(ignore_sure=True)
                 unsavedPrompt.close()
-            unsavedPrompt.add_menu_button('Continue Loading', continue_load, styleSheet=style('save'))
+            unsavedPrompt.add_menu_button('Continue Loading', continue_load, styleSheet=css('save'))
             return
         
         if dir == None: dir = QFileDialog.getOpenFileName(self, 'Load Portfolio', setting('lastSaveDir'), "JSON Files (*.json)")[0]
@@ -443,8 +445,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
                 self.save()
                 app.exit()
             unsavedPrompt = Message(self, 'Unsaved Changes', 'Are you sure you want to quit?\nYour changes will be lost!', closeMenuButtonTitle='Cancel')
-            unsavedPrompt.add_menu_button('Quit', app.exit, styleSheet=style('delete'))
-            unsavedPrompt.add_menu_button('Save and Quit', save_and_quit, styleSheet=style('save'))
+            unsavedPrompt.add_menu_button('Quit', app.exit, styleSheet=css('delete'))
+            unsavedPrompt.add_menu_button('Save and Quit', save_and_quit, styleSheet=css('save'))
         else:
             app.exit()
 
@@ -469,9 +471,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         #contains the big title and overall stats for the portfolio/asset 
         self.GUI['sidePanelLayout'] = QGridLayout()
         self.GUI['sidePanelFrame'] = QFrame(layout=self.GUI['sidePanelLayout'], frameShape=QFrame.Panel, frameShadow=QFrame.Shadow.Plain, lineWidth=20, midLineWidth=20)
-        self.GUI['title'] = QLabel('Auto-Accountant', alignment=Qt.AlignCenter, styleSheet=style('title'))
-        self.GUI['subtitle'] = QLabel('Overall Portfolio', alignment=Qt.AlignCenter, styleSheet=style('subtitle'))
-        self.GUI['info_pane'] = QLabel(alignment=Qt.AlignHCenter, styleSheet=style('info_pane'))
+        self.GUI['title'] = QLabel('Auto-Accountant', alignment=Qt.AlignCenter, styleSheet=css('title'))
+        self.GUI['subtitle'] = QLabel('Overall Portfolio', alignment=Qt.AlignCenter, styleSheet=css('subtitle'))
+        self.GUI['info_pane'] = QLabel(alignment=Qt.AlignHCenter, styleSheet=css('info_pane'))
         self.GUI['back'] = QPushButton('Return to\nPortfolio', clicked=p(self.render, self.view.PORTFOLIO, True))
         self.GUI['grand_ledger'] = QPushButton('Open\nGrand Ledger', clicked=p(self.render, self.view.GRAND_LEDGER, True))
         self.GUI['page_number'] = QLabel('Page XXX of XXX', alignment=Qt.AlignCenter)
@@ -489,7 +491,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['bottomFrame'] = QFrame(layout=self.GUI['bottomLayout'])
         self.GUI['copyright'] = QPushButton('Copyright © 2024 Shane Evanson', clicked=self.copyright)
         self.GUI['timestamp_indicator'] = QLabel(' OFFLINE MODE ')
-        self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=style('progressBar'), hidden=True)
+        self.GUI['progressBar'] = QProgressBar(fixedHeight=(self.GUI['copyright'].sizeHint().height()), styleSheet=css('progressBar'), hidden=True)
 
         #GUI TOOLTIPS
         #==============================
@@ -512,9 +514,9 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.MENU['redo'] = QPushButton(icon=icon('redo'), fixedSize=icon('size2'), iconSize=icon('size'), clicked=p(self.load_memento, 'redo'))
 
         def new_trans(*args, **kwargs):     TransEditor(self)
-        self.MENU['new_transaction'] = QPushButton('New\n  Transaction  ', clicked=new_trans, fixedHeight=icon('size2').height())
-        self.MENU['wallets'] = QPushButton('Manage\n  Wallets  ', clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
-        self.MENU['filters'] = QPushButton(icon=icon('filter'), clicked=p(FilterManager, self), fixedSize=icon('size2'), iconSize=icon('size'))
+        self.MENU['new_transaction'] = QPushButton(icon=icon('new_transaction'), iconSize=icon('size'), clicked=new_trans, fixedHeight=icon('size2').height())
+        self.MENU['wallets'] = QPushButton(icon=icon('wallet'), iconSize=icon('size'), clicked=p(WalletManager, self), fixedHeight=icon('size2').height())
+        self.MENU['filters'] = QPushButton(icon=icon('filter'), iconSize=icon('size'), clicked=p(FilterManager, self), fixedSize=icon('size2'))
 
         self.MENU['DEBUG_staking_report'] = QPushButton(':DEBUG:\nReport Staking', clicked=p(DEBUGStakingReportDialog, self), fixedHeight=icon('size2').height())
         def return_report(*args, **kwargs):    Message(self, 'Efficiency Report', ttt('report'), scrollable=True, wordWrap=False, size=.3)
@@ -553,9 +555,17 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     def _header_right_click(self, col, event=None):
         """On header right-click: Triggers menu popup, based on metric"""
         header = self.view.getHeaderID()
-        info = setting(header)[col]
+        metric = setting(header)[col]
         m = QMenu(parent=self)
-        m.addAction('Hide ' + metric_formatting_lib[info]['name'], self.metricactions[self.view.getState()][info].trigger)
+        m.addAction(f'Hide {metric_formatting_lib[metric]['name']}', self.metricactions[self.view.getState()][metric].trigger)
+        m.addAction(f'Filter by {metric_formatting_lib[metric]['name']}...', p(FilterEditor, self, self, new_forced=metric))
+        def clearFilters():
+            self.PORTFOLIO._filters = {}
+            self.MENU['filters'].setStyleSheet('') #Turn off filtering indicator if deleted all filters
+            self.render(sort=True)
+        if len(self.PORTFOLIO.filters()) > 0:
+            m.addAction(f'Clear all filters', clearFilters)
+                
         m.exec(event.globalPos())
     def move_header(self, metric, other_metric):
         """Places header \'metric\' at position of other header \'other_metric\'"""
@@ -658,10 +668,10 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         self.GUI['masterLayout'].addWidget(self.GUI['sidePanelFrame'], 1, 0)
 
         self.GUI['gridFrame'] = QWidget(layout=self.GUI['GRID'], contentsMargins=QMargins(0,0,0,0))
-        # NOTE: all 159ms of the lag is RIGHT FREAKIN HERE!
-        self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=style('GRID'))
+        # NOTE: gridFrame NOT placed into gridScrollArea here, because it causes 159ms extra lag on __init__
+        self.GUI['gridScrollArea'] = QScrollArea(widget=self.GUI['gridFrame'], widgetResizable=True, viewportMargins=QMargins(-2, -2, -2, 0), styleSheet=css('GRID'))
         # Prevents vertical scrollbar from appearing, even by accident, or while resizing the window
-        self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.GUI['gridScrollArea'].setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
 
         self.GUI['masterLayout'].addWidget(self.GUI['gridScrollArea'], 1, 1)
@@ -788,8 +798,8 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             toDisplay += metric_formatting_lib[metric]['headername'].replace('\n',' ')+'<br>'
             
             info_format = metric_formatting_lib[metric]['format']
-            if colorFormat is None:         S = style('neutral')+style('info')
-            else:                           S = style('info')
+            if colorFormat is None:         S = css('neutral')+css('info')
+            else:                           S = css('info')
             if info_format == 'percent':    ending = ' %'
             else:                           ending = ' USD'
             toDisplay += HTMLify(formatted_info.replace('%',''), S)+ending+'<br><br>'
@@ -803,13 +813,13 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
             self.GUI['page_next'].setStyleSheet('')
         else:                       
             self.GUI['page_next'].setEnabled(False)
-            self.GUI['page_next'].setStyleSheet(style('main_menu_button_disabled'))
+            self.GUI['page_next'].setStyleSheet(css('main_menu_button_disabled'))
         if self.page > 0:           
             self.GUI['page_prev'].setEnabled(True)
             self.GUI['page_prev'].setStyleSheet('')
         else:                       
             self.GUI['page_prev'].setEnabled(False)
-            self.GUI['page_prev'].setStyleSheet(style('main_menu_button_disabled'))
+            self.GUI['page_prev'].setStyleSheet(css('main_menu_button_disabled'))
         self.GUI['page_number'].setText('Page ' + str(self.page+1) + ' of ' + str(maxpage+1))
 
 
@@ -924,7 +934,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
 #=============================================================
     def portfolio_stats_and_info(self): #A wholistic display of all relevant information to the overall portfolio 
         toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
-        DEFAULT_FORMAT = style('neutral') + style('info')
+        DEFAULT_FORMAT = css('neutral') + css('info')
         maxWidth = 1
         testfont = QFont('Calibri')
         testfont.setPixelSize(20)
@@ -951,7 +961,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # MASS INFORMATION
         for data in ('cash_flow', 'day%', 'week%', 'month%', 'unrealized_profit_and_loss', 'unrealized_profit_and_loss%'):
             textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['color']
-            if colorFormat:     S = style('info')
+            if colorFormat:     S = css('info')
             else:               S = DEFAULT_FORMAT
             label = '• '+metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
@@ -966,7 +976,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
     def asset_stats_and_info(self, ticker:str, class_code:str): #A wholistic display of all relevant information to an asset 
         toDisplay = '<meta name="qrichtext" content="1" />' # VERY IMPORTANT: This makes the \t characters actually work
         asset = self.PORTFOLIO.asset(ticker, class_code)
-        DEFAULT_FORMAT = style('neutral') + style('info')
+        DEFAULT_FORMAT = css('neutral') + css('info')
         maxWidth = 1
         testfont = QFont('Calibri')
         testfont.setPixelSize(20)
@@ -993,7 +1003,7 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # MASS INFORMATION
         for data in ('price','value', 'marketcap', 'volume24h', 'cash_flow', 'day%', 'week%', 'month%', 'portfolio%','unrealized_profit_and_loss','unrealized_profit_and_loss%'):
             textFormat, colorFormat = metric_formatting_lib[data]['format'], metric_formatting_lib[data]['color']
-            if colorFormat:     S = style('info')
+            if colorFormat:     S = css('info')
             else:               S = DEFAULT_FORMAT
             label = '• '+ metric_formatting_lib[data]['name']+':'
             width = QFontMetrics(testfont).horizontalAdvance(label) + 2
@@ -1204,14 +1214,14 @@ class AutoAccountant(QMainWindow): # Ideally, this ought just to be the GUI inte
         # Change whether undo/redo buttons are visually and logically enabled
         if len(self.UNDO) == 0:
             self.MENU['undo'].setEnabled(False)
-            self.MENU['undo'].setStyleSheet(style('main_menu_button_disabled'))
+            self.MENU['undo'].setStyleSheet(css('main_menu_button_disabled'))
         else:
             self.MENU['undo'].setEnabled(True)
             self.MENU['undo'].setStyleSheet('')
 
         if len(self.REDO) == 0:
             self.MENU['redo'].setEnabled(False)
-            self.MENU['redo'].setStyleSheet(style('main_menu_button_disabled'))
+            self.MENU['redo'].setStyleSheet(css('main_menu_button_disabled'))
         else:
             self.MENU['redo'].setEnabled(True)
             self.MENU['redo'].setStyleSheet('')
@@ -1256,10 +1266,9 @@ if __name__ == '__main__':
     app = QApplication(sys.argv + ['-platform', 'windows:darkmode=1']) #Applies windows darkmode to base application
     loadIcons() #~50ms on startup
 
-    #Applies more stylish darkmode to the rest of the application
+    # Applies universal stylesheet
     app.setStyleSheet(AAstylesheet.get_custom_master_stylesheet())
     app.setFont(QFont('Calibri', 10))
-
     
     w = AutoAccountant()
     w.closeEvent = w.quit #makes closing the window identical to hitting cancel

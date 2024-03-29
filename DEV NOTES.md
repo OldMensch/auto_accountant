@@ -38,11 +38,12 @@
 
 * GRID
 	- SEAMLESS PAGES
-		- Use QScrollArea to implement "Lazy Loading"
+		- Use QTableView to implement "Lazy Loading"
 		- Lazy Loading:
 			- Only what's visible is rendered
 		- Upside: no more pages, user can just scroll though an entire ledger
 		- Upside: Zoom is way more flexible: no complex rescaling neccesary anymore
+		- Upside: should hopefully remove the QScrollArea lag spike
 		- Downside: GRID totally needs revamping: now will need to be multiple rows instead of one QLabel per column
 
 	* "NEW TRANSACTION" COLOR
@@ -51,14 +52,17 @@
 
 * BETTER IMPORTING
 	- Current problems:
-		1. Gemini Earn "admin" withdrawals to nowhere (must wait for case to end)
-		2. Gemini Earn -> Gemini "tardy transfers": several times, transfers fail to link because they are recorded days apart by each side of Gemini
-		3. Lack of transaction data to import:
+		1. * Coinbase prices inaccurate (consider omitting bad data instead, user can fix this)
+		2. * Gemini transfer-outs missing fee data
+		3. * Gemini balance inaccurate
+		4. Gemini Earn "admin" withdrawals to nowhere (must wait for case to end)
+		5. Gemini Earn -> Gemini "tardy transfers": several times, transfers fail to link because they are recorded days apart by each side of Gemini
+		6. Lack of transaction data to import:
 			- Old Electrum Wallet
 			- Alchemix Farm
 			- FTX
 			- Flexa Capacity
-		4. Coinbase data has duplicate transactions, and cut-off descriptions for newer transactions, making it needlessly difficult to remove the bad transactions. I can remove most, but there are two (under ADA) which have to be manually removed. 
+		7. Coinbase data has duplicate transactions, and cut-off descriptions for newer transactions, making it needlessly difficult to remove the bad transactions. I can remove most, but there are two (under ADA) which have to be manually removed. 
 	- Consider implementing a way for users to more easily manually link unlinked transfers
 		- or instead, maybe, after failing to link normally, it "tries harder", and looks for the most likely transaction? One nearest in date/quantity?
 
@@ -111,7 +115,7 @@
 	- most methods are specific to assets, portfolios, even wallets. these methods should be moved to their respective object classes
 	- the only method that should remain is auto_account, which when given a portfolio object will do its thing
 
-* IMPROVE ERROR HANDLING:
+* IMPROVED ERROR HANDLING:
 	- Transactions/Assets need to have new functions:
 		- .add_error(type, msg)
 		- .clear_error(type)
@@ -124,8 +128,7 @@
 	- make it faster... but how???
 
 * STARTUP PERFORMANCE BOOST
-	- Figure out how to make instantiation of QScrollArea not 160ms long
-	- figure out how to make self.showMaximized() not 175ms long
+	- Current lag is due to QScrollArea resizing - this can be fixed if I reprogram the GRID to use QTableView, combined with lazy loading for seamless pages
 
 * PRE-FORMATTING
 	- pre-format wallet metrics (once wallet view implemented)
@@ -152,31 +155,18 @@
 
 - MULTI-THREADED OBJECT INSTANTIATION
 	- This affects only large loads:
-		- Loading portfolio for the first time
-		- Importing transactions from CSV/XLSX
+		- Loading big portfolio for the first time
+		- Importing lots of transactions from CSV/XLSX
 	- Thought: Divide instantiation of transactions into multiple threads. For each transaction in the JSON, throw that transaction into the instantiation stack of another thread. Threads do hard work of creating Transaction objects, then pass these objects back to the main thread's execution stack, to be added to the MAIN_PORTFOLIO object 
 - MULTI-THREADED GRID COLUMN POPULATION
 	- will this work?
 
-# Bugs and Issues
-
-* THE IMPORT DUPLICATION ISSUE: Some kind of way to prevent transactions with missing data from re-importing	
-	- If an imported transaction was missing data, then we fill out that data, the transaction's hash code changes. Then, if we import the same transaction again, a duplicate of this transaction is added to our porfolio. This is an issue!
-		- SOLUTION 2: if a newly imported transaction has an error, it is permanently saved to the JSON in a new category "import_errors"
-			This is good since we only really care about transactions we fixed
-		- SOLUTION 3: all transactions have "origin" variable,
-			Origin tag denotes: when they were imported (and to what wallet), or that the user made it
-			EX:		origin: imported12-12-2024 12:13:23binance
-			problem: user might totally change transaction when editing, and it should not preserve the ID after that
-
 # Other
 
 ### Pythonic Tricks
-- See if f-strings can shorten code anywhere
-	* NOTE: variables in f-strings CAN BE FORMATTED! like so: f'this is normal text, this isn\'t: {my_float_var:.2f}'
-	* They can be formatted algorithmically by doing the following: f"here is a float: {the_float:{formatting_code_var}}"
-- See if I can use list/dictionary comprehension to shorten code and improve efficiency
-- See if I can use match/case statements instead of many elif elif elif...
+- More F-strings
+- list/dictionary comprehension
+- match/case statements, instead of "elif elif elif..."
 - Replace "try" statements with "in DICT" where possible. "In LIST" is actually worse, though.
 	IN DICT is better than TRY/IN SET is better than IN TUPLE is better than IN LIST
 - For any nested dictionaries, instead of using the basic dictionary, use 'from collections import defaultdict as dd'

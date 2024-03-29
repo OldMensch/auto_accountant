@@ -289,17 +289,10 @@ def etherscan(main_app, ethFileDir, erc20FileDir, wallet):      #Imports the Eth
         return 
     PORTFOLIO_TO_MERGE = Portfolio()
 
-    #1) parse ERC20s, if their txhash not in ETH, then they are a transfer_in of ERC20 tokens. 
-    #2) parse ETH. If error, expense. If TO is this wallet, then transfer_in of ETH. If Swap, trade.
-    #3) parse ETH, if their txhash not in ERC20s, then they are an independent expense
-    #4) parse ERC20s, if FROM this wallet, then a transfer out with fee. If TO this wallet, then create both a transfer_in, and a transfer_out w/ fee & MISSINGWALLET
-
-    this_wallet_address = None
-
     # REFORMATTING OUR TRANSACTIONS:
     # Fixes NA issues
-    eth_data.fillna('', inplace=True)
-    erc20_data.fillna('', inplace=True)
+    eth_data.replace({np.nan: None}, inplace=True)
+    erc20_data.replace({np.nan: None}, inplace=True)
 
     # ETH Transactions
     # Indexed by txhash:    Unixtime, from, to, value_in, value_out, fee, price, error_code, method
@@ -317,14 +310,16 @@ def etherscan(main_app, ethFileDir, erc20FileDir, wallet):      #Imports the Eth
 
     # ERC-20 Transactions
     # Indexed by txhash:    Unixtime, from, to, value, ticker
-    erc20_trans = {t[1]['Txhash']:{
+    # Problem: for swaps from L(A)+F(B)=G(C), the loss and gain both have the same transaction hash
+    # Find swaps, and give them a special datatype, essentially
+    erc20_trans = {t[1]['Txhash']:{ # All ERC-20 transactions, but swaps messed up
         'unix':int(t[1]['UnixTimestamp']),
         'from':t[1]['From'],
         'to':t[1]['To'],
         'quantity':t[1]['TokenValue'].replace(',',''), #value #NOTE: Can have commas in it, gotta remove those
         'ticker':t[1]['TokenSymbol']
         } for t in erc20_data.iterrows()}
-        
+
     # 1) FIND WALLET ADDRESS
     # This wallet's address will be present in EVERY transaction
     # Intersection of four sets of from/to/from/to data will return this wallet's address
@@ -335,15 +330,43 @@ def etherscan(main_app, ethFileDir, erc20FileDir, wallet):      #Imports the Eth
     erc20_from =    {erc20_trans[txhash]['from'] for txhash in erc20_trans}
     erc20_to =      {erc20_trans[txhash]['to']   for txhash in erc20_trans}
     this_wallet_address = eth_from.intersection(eth_to).intersection(erc20_from).intersection(erc20_to).pop()
+
+    # 1B) FIX SWAPS
+    froms = {t[1]['Txhash']:{ # ERC-20 quantities lost
+        'unix':int(t[1]['UnixTimestamp']),
+        'from':t[1]['From'],
+        'to':t[1]['To'],
+        'quantity':t[1]['TokenValue'].replace(',',''), #value #NOTE: Can have commas in it, gotta remove those
+        'ticker':t[1]['TokenSymbol']
+        } for t in erc20_data.iterrows() if t[1]['From']==this_wallet_address}
+    tos = {t[1]['Txhash']:{ # ERC-20 quantities gained
+        'unix':int(t[1]['UnixTimestamp']),
+        'from':t[1]['From'],
+        'to':t[1]['To'],
+        'quantity':t[1]['TokenValue'].replace(',',''), #value #NOTE: Can have commas in it, gotta remove those
+        'ticker':t[1]['TokenSymbol']
+        } for t in erc20_data.iterrows() if t[1]['To']==this_wallet_address}
+    for txhash, tx in froms.items(): # Fixes swaps (which have duplicate txhashes for loss/gain)
+        if txhash in tos:
+            new_swap = tx
+            new_swap['gain_quantity'] = tos[txhash]['quantity']
+            new_swap['gain_ticker'] = tos[txhash]['ticker']
+            erc20_trans[txhash] = new_swap    
     
     # 2) TRANSACTIONS IN BOTH RECORDS
     # Records:
-    #   - Trades (swaps)
+    #   - Trades (swaps (AAA+ETH=CCC))
+    #   - Trades (swaps exact ETH for tokens)
     #   - Transfer_in of ERC-20 tokens WITH FEE
     #   - Transfer_out of ERC-20 tokens WITH FEE
     for txhash in set(eth_trans.keys()).intersection(set(erc20_trans.keys())):
         eth,erc20 = eth_trans[txhash],erc20_trans[txhash]
-        if eth['method'] == 'Swap Exact ETH For Tokens':
+        if eth['method'] == 'Swap':
+            PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'trade', wallet,
+                                                                 loss=[erc20['ticker'],erc20['quantity'], None],
+                                                                 fee=['ETH',eth['eth_fee'],eth['eth_price']],
+                                                                 gain=[erc20['gain_ticker'],erc20['gain_quantity'],None]))
+        elif eth['method'] == 'Swap Exact ETH For Tokens':
             PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'trade', wallet,
                                                                  loss=['ETH',eth['eth_out'],eth['eth_price']],
                                                                  fee=['ETH',eth['eth_fee'],eth['eth_price']],
@@ -384,7 +407,7 @@ def etherscan(main_app, ethFileDir, erc20FileDir, wallet):      #Imports the Eth
         eth = eth_trans[txhash]
 
         # Expenses, due to failed transactions
-        if eth['err']!='':
+        if eth['err']!=None:
             PORTFOLIO_TO_MERGE.import_transaction(trans_from_raw(eth['unix'], 'expense', wallet, f'ETH fee due to error, \'{eth['err']}\'', 
                                                                  loss=['ETH',eth['eth_fee'],eth['eth_price']]))
         # Transfer_in of ETH tokens NO FEE (fee paid by sender)
